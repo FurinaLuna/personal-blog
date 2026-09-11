@@ -18,6 +18,7 @@ import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import Pagination from '@/components/Pagination.vue'
 import SortSelector from '@/components/SortSelector.vue'
 import { useAsyncData, toErrorMessage } from '@/composables/useAsyncData'
+import { useHead } from '@/composables/useHead'
 import type { ArticleSort, ArticleSummary, Category, Page, Tag } from '@/types'
 
 const route = useRoute()
@@ -92,6 +93,9 @@ const activeFilterLabel = computed(() => {
   if (keyword.value) return `搜索：${keyword.value}`
   return ''
 })
+
+// 浏览器标签页标题跟随当前筛选状态，多开几个标签页时不会分不清谁是谁
+useHead(computed(() => ({ title: activeFilterLabel.value || undefined })))
 
 const hasFilter = computed(() => Boolean(activeTag.value || activeCategory.value || keyword.value))
 

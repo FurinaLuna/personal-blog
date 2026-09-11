@@ -310,6 +310,18 @@ class ArticleService:
     async def archive(self) -> list[tuple[str, int]]:
         return await self.articles.list_archive(statuses=LIST_STATUSES)
 
+    async def related(self, article_id: int, *, limit: int = 5) -> list[ArticleSummary]:
+        """相关文章：同分类或共享标签，按发布时间倒序。
+
+        没有分类也没有标签的文章直接返回空列表——这时候「相关」无从谈起，
+        硬塞最新文章只会稀释详情页的语义。
+        """
+        article = await self.articles.get(article_id)
+        if article is None or article.status is ArticleStatus.DRAFT:
+            raise NotFoundError("文章不存在或尚未发布")
+        rows = await self.articles.list_related(article, statuses=LIST_STATUSES, limit=limit)
+        return [ArticleSummary.model_validate(item) for item in rows]
+
     async def list_by_month(self, year_month: str) -> list[ArchiveItem]:
         """取某个月份的文章条目。
 

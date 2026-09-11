@@ -5,7 +5,10 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api'
 import { toErrorMessage } from '@/composables/useAsyncData'
+import { useHead } from '@/composables/useHead'
 import { useToast } from '@/composables/useToast'
+
+useHead({ title: '登录' })
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()

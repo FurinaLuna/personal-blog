@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.api.feed import router as feed_router
 from app.api.v1 import api_router
 from app.config import settings
 from app.db.base import Base
@@ -118,6 +119,8 @@ def create_app() -> FastAPI:
 
     _register_exception_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+    # RSS / sitemap 挂在根路径：它们是给阅读器和搜索引擎的约定俗成地址
+    app.include_router(feed_router)
 
     @app.get("/health", tags=["运维"], summary="健康检查")
     async def health() -> dict[str, str]:

@@ -157,3 +157,13 @@ async def like_article(article_id: int, session: SessionDep) -> dict[str, int]:
     """无需登录的点赞，返回最新点赞数。"""
     count = await ArticleService(session).like(article_id)
     return {"like_count": count}
+
+
+@router.get("/{article_id}/related", response_model=list[ArticleSummary], summary="相关文章")
+async def related_articles(
+    article_id: int,
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=10)] = 5,
+) -> list[ArticleSummary]:
+    """同分类或共享标签的文章，按发布时间倒序。"""
+    return await ArticleService(session).related(article_id, limit=limit)

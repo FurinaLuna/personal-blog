@@ -17,6 +17,9 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/media': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      // RSS / sitemap 由后端在根路径直出，开发期同样走代理
+      '/feed.xml': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/sitemap.xml': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
   build: {

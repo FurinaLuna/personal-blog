@@ -3,8 +3,11 @@
 import { computed, onMounted } from 'vue'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import { useHead } from '@/composables/useHead'
 import { useSiteStore } from '@/stores/site'
 import { renderMarkdown } from '@/utils/markdown'
+
+useHead({ title: '关于' })
 
 const site = useSiteStore()
 

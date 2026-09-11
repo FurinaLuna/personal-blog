@@ -38,6 +38,10 @@ export const articleApi = {
     return api.get<ArticleDetail>(`/articles/${slugOrId}`)
   },
 
+  related(id: number, limit = 5) {
+    return api.get<ArticleSummary[]>(`/articles/${id}/related`, { params: { limit } })
+  },
+
   create(payload: ArticlePayload) {
     return api.post<ArticleDetail>('/articles', payload)
   },

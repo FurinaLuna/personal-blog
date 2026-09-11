@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 文章详情页：正文 + 目录 + 上下篇 + 评论。 */
+/** 文章详情页：正文 + 目录 + 上下篇 + 相关文章 + 评论。 */
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -10,9 +10,10 @@ import MobileToc from '@/components/MobileToc.vue'
 import ReadingProgress from '@/components/ReadingProgress.vue'
 import TableOfContents from '@/components/TableOfContents.vue'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useHead } from '@/composables/useHead'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
-import type { ArticleDetail } from '@/types'
+import type { ArticleDetail, ArticleSummary } from '@/types'
 import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 
@@ -29,11 +30,27 @@ const article = useAsyncData<ArticleDetail | null>(
   null,
 )
 
+/** 相关文章独立拉取：它依赖 article.id，且失败不该拖垮正文渲染。 */
+const related = ref<ArticleSummary[]>([])
+
 /** 正文与目录只渲染一次，两处消费（这里用 computed 天然缓存）。 */
 const rendered = computed(() => {
   const source = article.data.value?.content_md ?? ''
   return source ? renderMarkdown(source) : { html: '', toc: [] }
 })
+
+// 标题 / OG meta 跟随文章变化（摘要取后端字段，没有就退化为站点默认文案）
+useHead(
+  computed(() => {
+    const item = article.data.value
+    return {
+      title: item?.title,
+      description: item?.summary ?? undefined,
+      image: item?.cover_image ?? undefined,
+      type: 'article' as const,
+    }
+  }),
+)
 
 const canEdit = computed(
   () =>
@@ -82,7 +99,18 @@ watch(
   () => {
     // 切换文章时重置页面级状态，否则上一篇的"已点赞"会串到这一篇
     liked.value = false
-    void article.run()
+    related.value = []
+    void article.run().then(() => {
+      const item = article.data.value
+      if (!item) return
+      // 相关文章是「锦上添花」：失败只记录不打扰，正文阅读不受影响
+      articleApi
+        .related(item.id)
+        .then((list) => {
+          related.value = list
+        })
+        .catch(() => {})
+    })
     window.scrollTo({ top: 0 })
   },
   { immediate: true },
@@ -235,6 +263,29 @@ watch(
           </p>
         </RouterLink>
       </nav>
+
+      <!-- 相关文章 -->
+      <section v-if="related.length" class="mt-10 border-t border-border pt-6">
+        <h2 class="text-sm font-semibold text-ink">相关阅读</h2>
+        <ul class="mt-4 grid gap-3 sm:grid-cols-2">
+          <li v-for="item in related" :key="item.id">
+            <RouterLink :to="`/article/${item.slug}`" class="card card-hover flex gap-3 p-3">
+              <div
+                v-if="item.cover_image"
+                class="h-14 w-20 shrink-0 overflow-hidden rounded-md bg-surface-muted"
+              >
+                <img :src="item.cover_image" :alt="item.title" loading="lazy" class="h-full w-full object-cover" />
+              </div>
+              <div class="min-w-0">
+                <p class="line-clamp-2 text-sm font-medium leading-snug text-ink">{{ item.title }}</p>
+                <p class="mt-1 text-xs text-ink-faint">
+                  {{ formatDate(item.published_at ?? item.created_at) }} · {{ formatCount(item.view_count) }} 阅读
+                </p>
+              </div>
+            </RouterLink>
+          </li>
+        </ul>
+      </section>
 
       <CommentSection
         v-if="article.data.value.allow_comment"

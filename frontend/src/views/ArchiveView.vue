@@ -6,6 +6,9 @@ import { RouterLink } from 'vue-router'
 import { articleApi } from '@/api'
 import EmptyState from '@/components/EmptyState.vue'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useHead } from '@/composables/useHead'
+
+useHead({ title: '归档' })
 import type { ArchiveGroup } from '@/types'
 import { formatDate, formatYearMonth } from '@/utils/format'
 

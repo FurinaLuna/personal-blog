@@ -6,6 +6,9 @@ import { RouterLink } from 'vue-router'
 import { categoryApi } from '@/api'
 import EmptyState from '@/components/EmptyState.vue'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useHead } from '@/composables/useHead'
+
+useHead({ title: '分类' })
 import type { Category } from '@/types'
 
 const categories = useAsyncData<Category[]>(() => categoryApi.list(true), [])

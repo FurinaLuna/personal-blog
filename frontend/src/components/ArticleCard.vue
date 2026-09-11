@@ -87,14 +87,15 @@ const tagList = computed(() => props.article.tags.slice(0, 4))
       <RouterLink
         v-if="article.cover_image"
         :to="`/article/${article.slug}`"
-        class="block shrink-0 overflow-hidden rounded-lg sm:w-40"
+        class="block shrink-0 overflow-hidden rounded-lg bg-surface-muted sm:w-40"
       >
+        <!-- aspect 占位：图片加载完成前容器就有正确高度，列表不会因图片到达而上下跳动 -->
         <img
           :src="article.cover_image"
           :alt="article.title"
           loading="lazy"
           decoding="async"
-          class="h-32 w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] sm:h-28 sm:w-40"
+          class="aspect-[4/3] w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] sm:aspect-[10/7] sm:w-40"
         />
       </RouterLink>
     </div>

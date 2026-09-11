@@ -1,6 +1,10 @@
 <script setup lang="ts">
 /** 404 页。 */
 import { RouterLink } from 'vue-router'
+
+import { useHead } from '@/composables/useHead'
+
+useHead({ title: '页面不存在' })
 </script>
 
 <template>

@@ -6,6 +6,9 @@ import { tagApi } from '@/api'
 import EmptyState from '@/components/EmptyState.vue'
 import TagCloud from '@/components/TagCloud.vue'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useHead } from '@/composables/useHead'
+
+useHead({ title: '标签' })
 import type { Tag } from '@/types'
 
 const tags = useAsyncData<Tag[]>(() => tagApi.list(), [])

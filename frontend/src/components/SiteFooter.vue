@@ -28,6 +28,10 @@ const links = computed(() => site.socialLinks)
           <RouterLink to="/guestbook" class="text-ink-soft transition-colors hover:text-brand-600">
             留言板
           </RouterLink>
+          <!-- RSS 是后端直出的真实文件，不走前端路由，所以用 <a> 而不是 RouterLink -->
+          <a href="/feed.xml" target="_blank" rel="noopener noreferrer" class="text-ink-soft transition-colors hover:text-brand-600">
+            RSS
+          </a>
           <a
             v-for="link in links"
             :key="link.url"

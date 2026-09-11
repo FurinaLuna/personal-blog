@@ -57,6 +57,11 @@ class Settings(BaseSettings):
         "http://localhost:4173",
     ]
 
+    # ---------- 站点对外地址 ----------
+    # RSS / sitemap 里的链接必须是绝对 URL，否则阅读器和搜索引擎拿到相对路径会拼错。
+    # 开发默认指向 Vite 端口；生产改成正式域名（含协议、不带尾斜杠）。
+    site_base_url: str = "http://localhost:5173"
+
     # ---------- 文件上传 ----------
     storage_dir: Path = BASE_DIR / "storage"
     media_url_prefix: str = "/media"

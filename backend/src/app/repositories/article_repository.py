@@ -162,6 +162,33 @@ class ArticleRepository(BaseRepository[Article]):
         stmt = self._apply_filters(select(func.count()).select_from(Article), flt)
         return int((await self.session.execute(stmt)).scalar_one())
 
+    async def list_related(
+        self, article: Article, *, statuses: tuple[ArticleStatus, ...], limit: int = 5
+    ) -> list[Article]:
+        """相关文章：同分类或共享任一标签，按发布时间倒序，排除自身。
+
+        要求调用方保证 ``article.tags`` 已加载（本项目的详情查询走 selectin，
+        天然满足），否则异步会话里访问集合会抛惰性加载异常。
+        """
+        conditions: list[ColumnElement[Any]] = []
+        if article.category_id is not None:
+            conditions.append(Article.category_id == article.category_id)
+        tag_ids = [tag.id for tag in article.tags]
+        if tag_ids:
+            conditions.append(Article.tags.any(Tag.id.in_(tag_ids)))
+        if not conditions:
+            return []
+        stmt = (
+            select(Article)
+            .where(Article.id != article.id)
+            .where(Article.status.in_(list(statuses)))
+            .where(or_(*conditions))
+            .order_by(_EFFECTIVE_DATE.desc(), Article.id.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_by_slug(
         self, slug: str, *, statuses: tuple[ArticleStatus, ...] = ()
     ) -> Article | None:
