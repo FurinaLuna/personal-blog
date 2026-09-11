@@ -64,7 +64,8 @@ export default {
           css: {
             maxWidth: 'none',
             color: 'rgb(var(--c-ink))',
-            lineHeight: '1.85',
+            // 中文正文 1.85 偏松，1.75 在「不局促」和「读得下去」之间更合适
+            lineHeight: '1.75',
             a: {
               color: theme('colors.brand.600'),
               textDecoration: 'none',

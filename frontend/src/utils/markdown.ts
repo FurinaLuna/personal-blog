@@ -14,10 +14,47 @@
  * 所以「用了 Markdown 就安全」是错觉，必须消毒。
  */
 import DOMPurify from 'dompurify'
-import hljs from 'highlight.js/lib/common'
+// 按需注册语言而不是 import 'highlight.js/lib/common'：
+// common 打包了约 40 种语言（~230KB），这里只留博客实际会用到的，体积降到 ~1/4。
+import hljs from 'highlight.js/lib/core'
+import bash from 'highlight.js/lib/languages/bash'
+import css from 'highlight.js/lib/languages/css'
+import dockerfile from 'highlight.js/lib/languages/dockerfile'
+import go from 'highlight.js/lib/languages/go'
+import ini from 'highlight.js/lib/languages/ini'
+import java from 'highlight.js/lib/languages/java'
+import javascript from 'highlight.js/lib/languages/javascript'
+import json from 'highlight.js/lib/languages/json'
+import markdownLang from 'highlight.js/lib/languages/markdown'
+import nginx from 'highlight.js/lib/languages/nginx'
+import plaintext from 'highlight.js/lib/languages/plaintext'
+import python from 'highlight.js/lib/languages/python'
+import rust from 'highlight.js/lib/languages/rust'
+import sql from 'highlight.js/lib/languages/sql'
+import typescript from 'highlight.js/lib/languages/typescript'
+import xml from 'highlight.js/lib/languages/xml'
+import yaml from 'highlight.js/lib/languages/yaml'
 import { marked } from 'marked'
 
 import { slugifyHeading } from './format'
+
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('dockerfile', dockerfile)
+hljs.registerLanguage('go', go)
+hljs.registerLanguage('ini', ini)
+hljs.registerLanguage('java', java)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('markdown', markdownLang)
+hljs.registerLanguage('nginx', nginx)
+hljs.registerLanguage('plaintext', plaintext)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('rust', rust)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('typescript', typescript)
+hljs.registerLanguage('xml', xml) // html 是 xml 语言的别名，无需单独注册
+hljs.registerLanguage('yaml', yaml)
 
 export interface TocItem {
   id: string

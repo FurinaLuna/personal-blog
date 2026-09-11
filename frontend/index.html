@@ -13,7 +13,8 @@
         try {
           var saved = localStorage.getItem('blog-theme')
           var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-          if (saved === 'dark' || (!saved && prefersDark)) {
+          // 'system' 或未设置时都跟随系统；只有显式 'light' 才强制亮色
+          if (saved === 'dark' || (saved !== 'light' && prefersDark)) {
             document.documentElement.classList.add('dark')
           }
         } catch (_) {
