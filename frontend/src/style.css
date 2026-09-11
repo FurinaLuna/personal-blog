@@ -166,6 +166,61 @@
 .prose pre {
   overflow-x: auto;
 }
+
+/* ---- 代码块容器：右上复制按钮（hover 浮现）+ 右下语言标签（常驻）----
+   两个角标分居上下，天然不重叠，也不需要 JS 去算宽度让位 */
+.code-block {
+  position: relative;
+}
+.code-block .code-lang {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgb(var(--c-ink-faint));
+  background: rgb(var(--c-surface-muted));
+  pointer-events: none;
+  user-select: none;
+}
+.code-block .code-copy {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 5px;
+  border: 1px solid rgb(var(--c-border));
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-ink-soft));
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  /* 默认隐藏，鼠标移到代码块上才浮现 —— 减少视觉噪音 */
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.code-block:hover .code-copy,
+.code-block:focus-within .code-copy {
+  opacity: 1;
+}
+.code-block .code-copy:hover {
+  color: rgb(var(--c-ink));
+  border-color: rgb(var(--c-ink-faint));
+}
+/* 已复制状态的反馈：不打断阅读，只变色 + 换文案 */
+.code-block .code-copy[data-state="done"] {
+  color: #3b6d11;
+  border-color: #97c459;
+}
+/* 触屏没有 hover，按钮必须常驻，否则用户找不到复制入口 */
+@media (hover: none) {
+  .code-block .code-copy {
+    opacity: 1;
+  }
+}
 .prose :where(img, video) {
   @apply mx-auto;
 }

@@ -104,7 +104,11 @@ export function renderMarkdown(source: string): RenderResult {
     toc.push({ id, text, depth: Number(element.tagName.slice(1)) })
   })
 
-  // 2) 代码高亮。highlight.js 直接操作 DOM，比自己拼字符串安全得多
+  // 2) 代码高亮 + 语言标签 + 复制标记。
+  //    highlight.js 直接操作 DOM，比自己拼字符串安全得多。
+  //    这里只负责「标记结构」（data-copyable / .code-lang），真正的复制交互
+  //    由 MarkdownRenderer 用事件委托绑定 —— 工具函数不该掺和 UI 行为，
+  //    否则后台编辑器复用这段渲染逻辑时会被迫引入 toast 依赖。
   container.querySelectorAll<HTMLElement>('pre code').forEach((block) => {
     block.classList.add('hljs')
     try {
@@ -112,6 +116,37 @@ export function renderMarkdown(source: string): RenderResult {
     } catch {
       // 语言没注册或识别失败时保持纯文本，不能让高亮失败把正文拖垮
     }
+  })
+
+  container.querySelectorAll<HTMLElement>('pre').forEach((block) => {
+    const code = block.querySelector('code')
+    // 语言名取自 marked 生成的 language-xxx 类（来自 ```语言 井号语法）
+    const lang = (Array.from(code?.classList ?? []).find((c) => c.startsWith('language-')) ?? '')
+      .replace('language-', '')
+      .slice(0, 16)
+    if (!lang) return
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'code-block'
+    wrapper.dataset.copyable = 'true'
+    wrapper.dataset.lang = lang
+    // 用原生 DOM API 挪节点（不碰 innerHTML，避免把已高亮的 DOM 重新序列化）
+    block.replaceWith(wrapper)
+    wrapper.append(block)
+
+    const tag = document.createElement('span')
+    tag.className = 'code-lang'
+    tag.textContent = lang
+    wrapper.append(tag)
+
+    // 按钮本体在这里生成（它属于渲染产物，要跟着 v-html 一起走），
+    // 但点击行为留给 MarkdownRenderer 用事件委托绑定 —— 结构与行为分离。
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'code-copy'
+    button.textContent = '复制'
+    button.setAttribute('aria-label', `复制 ${lang} 代码`)
+    wrapper.append(button)
   })
 
   // 3) 外链新开窗口并补 rel：没有 noopener 时，新页面能通过 window.opener 反向操作本页

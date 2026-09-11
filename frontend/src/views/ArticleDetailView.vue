@@ -6,6 +6,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { articleApi } from '@/api'
 import CommentSection from '@/components/CommentSection.vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import MobileToc from '@/components/MobileToc.vue'
 import TableOfContents from '@/components/TableOfContents.vue'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
@@ -178,6 +179,9 @@ watch(
           </div>
         </aside>
       </div>
+
+      <!-- 移动端浮动目录：xl 以下没有常驻侧栏，用抽屉补上跳转能力 -->
+      <MobileToc :items="rendered.toc" />
 
       <!-- 点赞 -->
       <div class="mt-10 flex justify-center">
