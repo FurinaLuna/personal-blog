@@ -1092,8 +1092,25 @@ async function restore(force = false) {
 | 方向 | 说明 |
 |---|---|
 | 全文检索 | 当前用 `LIKE` 模糊匹配。文章量上万后建议上 PostgreSQL 的 `tsvector` + GIN 索引，或接入 Meilisearch |
-| RSS / Sitemap | 新增 `/rss.xml` 与 `/sitemap.xml`，对个人博客的传播很重要 |
 | 图片处理 | 接入对象存储（S3/COS）+ 按需裁剪（`?w=800`），减轻服务器带宽 |
 | 评论反垃圾 | 接入 Akismet，或加基于 IP + 时间窗的限流 |
 | 文章版本历史 | 新增 `article_revisions` 表，支持回滚 |
 | 可访问性审计 | 补齐 ARIA 标注，用 axe / Lighthouse 跑一轮 |
+
+### 6.6 迭代记录
+
+**2026-09-12 第三批（`c2bc4b6`）**：主题三态（亮/暗/跟随系统）、阅读进度条、
+highlight.js 按需注册（markdown chunk 233KB → 90KB）、正文行高 1.85 → 1.75。
+
+**2026-09-12 第四批（`f0e6e47`）**：SEO 与内容发现。
+
+- `GET /feed.xml` —— RSS 2.0，最近 20 篇已发布，绝对链接（`SITE_BASE_URL` 配置项），`Cache-Control: 1h`
+- `GET /sitemap.xml` —— 静态页 + 最近 1000 篇文章，含 `lastmod`
+- `GET /api/v1/articles/{id}/related` —— 相关文章：同分类或共享标签，按发布时间倒序，排除自身与草稿
+- 前端 `useHead` composable：每页标题 + `og:*` / `twitter:card` meta。
+  与路由 afterEach 的分工是「路由标题为底、业务标题为盖」，卸载时交还路由层
+- 详情页新增「相关阅读」区块；ArticleCard 封面改 `aspect-*` 占位消除布局跳动；
+  页脚 RSS 链接 + `index.html` RSS autodiscovery；vite/nginx 增加 `/feed.xml`、`/sitemap.xml` 路由
+
+> SPA 说明：per-page OG meta 是 JS 写入的，对不执行 JS 的分享卡片抓取器不可见。
+> 要彻底解决需 SSR/预渲染（Astro/Nuxt），属重写级成本，暂未采纳。
