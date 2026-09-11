@@ -1,0 +1,374 @@
+<script setup lang="ts">
+/** 文章编辑器（新建 / 编辑共用）。 */
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+
+import { ApiError, articleApi, attachmentApi, categoryApi, tagApi } from '@/api'
+import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useToast } from '@/composables/useToast'
+import type { ArticleDetail, ArticleStatus, Category, Tag } from '@/types'
+import { formatBytes } from '@/utils/format'
+
+const route = useRoute()
+const router = useRouter()
+const toast = useToast()
+
+const articleId = computed(() => {
+  const raw = route.params.id
+  return raw ? Number(raw) : null
+})
+const isEdit = computed(() => articleId.value !== null)
+
+const form = ref({
+  title: '',
+  slug: '',
+  summary: '',
+  content_md: '',
+  cover_image: '',
+  status: 'draft' as ArticleStatus,
+  is_top: false,
+  allow_comment: true,
+  category_id: null as number | null,
+  tags: [] as string[],
+})
+const tagInput = ref('')
+const saving = ref(false)
+const uploadingCover = ref(false)
+const coverInput = ref<HTMLInputElement | null>(null)
+/** 字段级错误，key 与后端返回的 field 对齐（如 "title" / "content_md"） */
+const fieldErrors = ref<Record<string, string>>({})
+const formError = ref('')
+
+const categories = useAsyncData<Category[]>(() => categoryApi.list(false), [])
+const allTags = ref<Tag[]>([])
+
+const isDraft = computed(() => form.value.status === 'draft')
+
+/* -------------------------------------------------- 载入 */
+
+async function loadArticle(): Promise<void> {
+  if (articleId.value === null) return
+  try {
+    const detail: ArticleDetail = await articleApi.detail(articleId.value)
+    form.value = {
+      title: detail.title,
+      slug: detail.slug,
+      summary: detail.summary ?? '',
+      content_md: detail.content_md,
+      cover_image: detail.cover_image ?? '',
+      status: detail.status,
+      is_top: detail.is_top,
+      allow_comment: detail.allow_comment,
+      category_id: detail.category?.id ?? null,
+      tags: detail.tags.map((tag) => tag.name),
+    }
+  } catch (error) {
+    formError.value = toErrorMessage(error, '文章加载失败')
+  }
+}
+
+/* -------------------------------------------------- 标签输入 */
+
+function addTag(name: string): void {
+  const value = name.trim()
+  if (!value) return
+  if (form.value.tags.includes(value)) {
+    tagInput.value = ''
+    return
+  }
+  if (form.value.tags.length >= 10) {
+    toast.error('一篇文章最多 10 个标签')
+    return
+  }
+  form.value.tags = [...form.value.tags, value]
+  tagInput.value = ''
+}
+
+function removeTag(name: string): void {
+  form.value.tags = form.value.tags.filter((item) => item !== name)
+}
+
+/** 键盘操作：Enter / 逗号 添加，Backspace 在输入框为空时删掉最后一个 */
+function onTagKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter' || event.key === ',') {
+    event.preventDefault()
+    addTag(tagInput.value)
+  } else if (event.key === 'Backspace' && !tagInput.value && form.value.tags.length) {
+    form.value.tags = form.value.tags.slice(0, -1)
+  }
+}
+
+/* -------------------------------------------------- 封面上传 */
+
+async function uploadCover(file: File): Promise<void> {
+  uploadingCover.value = true
+  try {
+    const result = await attachmentApi.upload(file)
+    form.value.cover_image = result.url
+    toast.success('封面已上传')
+  } catch (error) {
+    toast.error(toErrorMessage(error, '封面上传失败'))
+  } finally {
+    uploadingCover.value = false
+    if (coverInput.value) coverInput.value.value = ''
+  }
+}
+
+function onCoverChange(event: Event): void {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (file) {
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error(`图片过大（${formatBytes(file.size)}），请压缩到 5MB 以内`)
+      if (coverInput.value) coverInput.value.value = ''
+      return
+    }
+    void uploadCover(file)
+  }
+}
+
+/* -------------------------------------------------- 保存 */
+
+function buildPayload(status: ArticleStatus) {
+  return {
+    title: form.value.title.trim(),
+    // 传 null 而不是空串，让后端走「按标题自动生成 slug」
+    slug: form.value.slug.trim() || null,
+    summary: form.value.summary.trim() || null,
+    content_md: form.value.content_md,
+    cover_image: form.value.cover_image.trim() || null,
+    status,
+    is_top: form.value.is_top,
+    allow_comment: form.value.allow_comment,
+    category_id: form.value.category_id,
+    tags: form.value.tags,
+  }
+}
+
+async function save(status: ArticleStatus): Promise<void> {
+  fieldErrors.value = {}
+  formError.value = ''
+
+  if (!form.value.title.trim()) {
+    fieldErrors.value = { title: '标题不能为空' }
+    toast.error('请先填写标题')
+    return
+  }
+
+  saving.value = true
+  try {
+    const payload = buildPayload(status)
+    const saved = isEdit.value
+      ? await articleApi.update(articleId.value as number, payload)
+      : await articleApi.create(payload)
+
+    toast.success(status === 'draft' ? '草稿已保存' : '文章已发布')
+
+    // 新建时把 URL 换成编辑态，避免用户继续点"保存"又创建一篇重复文章
+    if (!isEdit.value) {
+      await router.replace(`/admin/articles/${saved.id}/edit`)
+      if (saved.slug) form.value.slug = saved.slug
+    }
+    // 后端可能会规范化 slug，回填以免下次保存又用旧的
+    form.value.slug = saved.slug
+  } catch (error) {
+    if (error instanceof ApiError) {
+      fieldErrors.value = error.fields
+      formError.value = error.message
+    } else {
+      formError.value = toErrorMessage(error, '保存失败')
+    }
+    toast.error(formError.value)
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(async () => {
+  void categories.run()
+  try {
+    allTags.value = await tagApi.list({ withCounts: false })
+  } catch {
+    allTags.value = []
+  }
+  await loadArticle()
+})
+</script>
+
+<template>
+  <div class="mx-auto max-w-4xl space-y-5">
+    <div class="flex flex-wrap items-center gap-3">
+      <h2 class="text-sm text-ink-soft">
+        {{ isEdit ? '编辑已有文章' : '新建文章' }}
+      </h2>
+      <div class="ml-auto flex items-center gap-2">
+        <span v-if="form.slug" class="hidden font-mono text-xs text-ink-faint sm:inline">
+          /article/{{ form.slug }}
+        </span>
+        <button type="button" class="btn-ghost" :disabled="saving" @click="save('draft')">
+          保存草稿
+        </button>
+        <button type="button" class="btn-primary" :disabled="saving" @click="save('published')">
+          {{ saving ? '保存中…' : isDraft ? '发布' : '更新' }}
+        </button>
+      </div>
+    </div>
+
+    <p
+      v-if="formError"
+      class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
+    >
+      {{ formError }}
+    </p>
+
+    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <!-- 主编辑区 -->
+      <div class="space-y-4">
+        <div>
+          <input
+            v-model="form.title"
+            class="input text-lg font-medium"
+            placeholder="文章标题"
+            maxlength="200"
+            @input="fieldErrors.title = ''"
+          />
+          <p v-if="fieldErrors.title" class="mt-1 text-xs text-red-600">{{ fieldErrors.title }}</p>
+        </div>
+
+        <MarkdownEditor v-model="form.content_md" :min-height="480" />
+        <p v-if="fieldErrors.content_md" class="text-xs text-red-600">
+          {{ fieldErrors.content_md }}
+        </p>
+      </div>
+
+      <!-- 右侧设置 -->
+      <aside class="space-y-4">
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">发布设置</h3>
+
+          <label class="block text-xs text-ink-soft">
+            状态
+            <select v-model="form.status" class="input mt-1.5">
+              <option value="draft">草稿</option>
+              <option value="published">已发布</option>
+              <option value="archived">已归档</option>
+            </select>
+          </label>
+
+          <label class="mt-3 flex items-center gap-2 text-sm text-ink-soft">
+            <input v-model="form.is_top" type="checkbox" class="rounded border-border" />
+            置顶到列表最前
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-sm text-ink-soft">
+            <input v-model="form.allow_comment" type="checkbox" class="rounded border-border" />
+            允许评论
+          </label>
+        </div>
+
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">分类</h3>
+          <select v-model="form.category_id" class="input">
+            <option :value="null">未分类</option>
+            <option v-for="item in categories.data.value" :key="item.id" :value="item.id">
+              {{ item.name }}
+            </option>
+          </select>
+        </div>
+
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">
+            标签 <span class="text-xs font-normal text-ink-faint">{{ form.tags.length }}/10</span>
+          </h3>
+
+          <div class="mb-2 flex flex-wrap gap-1.5">
+            <span
+              v-for="name in form.tags"
+              :key="name"
+              class="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2 py-0.5 text-xs text-ink-soft"
+            >
+              {{ name }}
+              <button
+                type="button"
+                class="text-ink-faint hover:text-red-500"
+                :aria-label="`移除标签 ${name}`"
+                @click="removeTag(name)"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+
+          <input
+            v-model="tagInput"
+            class="input"
+            placeholder="输入后回车添加"
+            :list="'tag-suggestions'"
+            @keydown="onTagKeydown"
+            @blur="addTag(tagInput)"
+          />
+          <datalist id="tag-suggestions">
+            <option v-for="tag in allTags" :key="tag.id" :value="tag.name" />
+          </datalist>
+          <p class="mt-2 text-xs text-ink-faint">不存在的标签会自动创建。</p>
+        </div>
+
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">摘要</h3>
+          <textarea
+            v-model="form.summary"
+            class="input min-h-[88px] resize-y"
+            placeholder="留空则自动从正文提取"
+            maxlength="500"
+          />
+        </div>
+
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">封面图</h3>
+          <img
+            v-if="form.cover_image"
+            :src="form.cover_image"
+            alt="封面预览"
+            class="mb-2 w-full rounded-lg object-cover"
+          />
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="btn-ghost flex-1 text-xs"
+              :disabled="uploadingCover"
+              @click="coverInput?.click()"
+            >
+              {{ uploadingCover ? '上传中…' : form.cover_image ? '更换封面' : '上传封面' }}
+            </button>
+            <button
+              v-if="form.cover_image"
+              type="button"
+              class="btn-ghost text-xs"
+              @click="form.cover_image = ''"
+            >
+              移除
+            </button>
+          </div>
+          <input
+            ref="coverInput"
+            type="file"
+            accept="image/*"
+            class="hidden"
+            @change="onCoverChange"
+          />
+        </div>
+
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">URL 别名</h3>
+          <input v-model="form.slug" class="input font-mono text-xs" placeholder="留空自动生成" />
+          <p class="mt-2 text-xs text-ink-faint">
+            已发布文章的别名一旦改动，原有外链会失效，请谨慎修改。
+          </p>
+        </div>
+      </aside>
+    </div>
+
+    <div class="flex justify-between">
+      <RouterLink to="/admin/articles" class="btn-ghost">← 返回列表</RouterLink>
+    </div>
+  </div>
+</template>

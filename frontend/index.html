@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>个人博客</title>
+    <meta name="description" content="记录技术、生活，以及一切值得写下来的东西。" />
+    <script>
+      // 在样式加载前就把主题类打到 <html> 上，避免暗色模式用户看到一次白屏闪烁。
+      // 这段必须内联放在 head 里，不能放到打包产物里——那时代码执行已经晚了。
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('blog-theme')
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          if (saved === 'dark' || (!saved && prefersDark)) {
+            document.documentElement.classList.add('dark')
+          }
+        } catch (_) {
+          /* 隐私模式下 localStorage 可能不可用，忽略即可 */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

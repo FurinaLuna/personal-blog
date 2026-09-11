@@ -1,0 +1,60 @@
+# 后端镜像
+#
+# 多阶段构建的意义有限（Python 不像 Node 有"构建产物"），
+# 但显式区分 builder / runtime 仍然值得：编译型依赖只在 builder 里装，
+# 运行时镜像不带编译工具链，体积更小、攻击面更小。
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# asyncpg / pillow 的 wheel 是预编译的，这里只需要最基本的构建环境
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --upgrade pip \
+ && /opt/venv/bin/pip install ".[postgres]"
+
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    TZ=Asia/Shanghai
+
+# 用非 root 用户跑应用：容器被攻破时能造成的破坏面小一个量级。
+# curl 用于 HEALTHCHECK。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 1000 app \
+ && useradd --uid 1000 --gid app --create-home app
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY --chown=app:app pyproject.toml README.md ./
+COPY --chown=app:app src ./src
+COPY --chown=app:app alembic ./alembic
+COPY --chown=app:app alembic.ini ./
+
+# storage 会在 compose 里挂成卷，这里先建好并交出属主
+RUN mkdir -p /app/storage/uploads /app/storage/avatars && chown -R app:app /app/storage
+
+USER app
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+
+# 生产不开 --reload；worker 数按 CPU 核数调整
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]

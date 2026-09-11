@@ -1,0 +1,72 @@
+[project]
+name = "personal-blog-backend"
+version = "1.0.0"
+description = "个人博客后端 API —— FastAPI + SQLAlchemy 2.0(异步) + JWT"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "greenlet>=3.1",
+    "aiosqlite>=0.20",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.12",
+    "pyjwt>=2.10",
+    "bcrypt>=4.2",
+    "pillow>=11.0",
+]
+
+[project.optional-dependencies]
+# 生产环境换 PostgreSQL 时安装： uv sync --extra postgres
+postgres = ["asyncpg>=0.30"]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+source = ["src/app"]
+omit = ["src/app/main.py", "alembic/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "B008",    # FastAPI 的 Depends() 必须写在默认值位置
+    "RUF001",  # 全角标点（。，：「」）在中文注释里是正常写法，不是笔误
+    "RUF002",  # 同上，作用于 docstring
+    "RUF003",  # 同上，作用于注释
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/*" = ["E501", "I001"]
+"tests/*" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"

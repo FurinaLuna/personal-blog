@@ -1,0 +1,58 @@
+# ---------------- Python ----------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# ---------------- 环境与密钥 ----------------
+# .env.example 要提交，.env 绝对不能提交（里面有 JWT 密钥和数据库密码）
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------------- 数据库 ----------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ---------------- 用户上传的媒体文件 ----------------
+# 目录结构要保留（靠 .gitkeep），但内容不进版本库
+backend/storage/uploads/*
+backend/storage/avatars/*
+!backend/storage/uploads/.gitkeep
+!backend/storage/avatars/.gitkeep
+
+# ---------------- Node / 前端 ----------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+.npm-cache/
+*.local
+
+# ---------------- 编辑器与系统 ----------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ---------------- 日志与临时文件 ----------------
+*.log
+npm-debug.log*
+yarn-error.log*
+alembic_boot.db
+
+# ---------------- 冒烟验证产物 ----------------
+smoke-shots/

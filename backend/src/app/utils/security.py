@@ -1,0 +1,132 @@
+"""密码哈希与 JWT 签发/校验。
+
+安全约定：
+- 密码用 bcrypt（自带盐、抗暴力破解），**从不**在日志里输出明文或哈希。
+- bcrypt 的输入上限是 72 字节（注意是字节不是字符），超过会直接抛 ValueError，
+  因此这里显式校验字节长度，而不是静默截断——截断会让"前 72 字节相同"的两个
+  不同密码互相能登录。
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
+import bcrypt
+import jwt
+
+from app.config import settings
+
+BCRYPT_MAX_BYTES = 72
+TokenType = Literal["access", "refresh"]
+
+
+class PasswordTooLongError(ValueError):
+    """密码字节长度超过 bcrypt 上限。"""
+
+
+def password_byte_length(password: str) -> int:
+    """返回密码的 UTF-8 字节长度（BCRYPT 的真实限制口径）。"""
+    return len(password.encode("utf-8"))
+
+
+def hash_password(password: str) -> str:
+    """生成 bcrypt 哈希。
+
+    Args:
+        password: 明文密码。
+
+    Returns:
+        形如 ``$2b$12$...`` 的哈希串。
+
+    Raises:
+        PasswordTooLongError: 密码 UTF-8 字节数超过 72。
+    """
+    raw = password.encode("utf-8")
+    if len(raw) > BCRYPT_MAX_BYTES:
+        raise PasswordTooLongError(
+            f"密码 UTF-8 字节数不得超过 {BCRYPT_MAX_BYTES}（当前 {len(raw)}）"
+        )
+    return bcrypt.hashpw(raw, bcrypt.gensalt(rounds=12)).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """校验密码。哈希串损坏或格式不符时返回 False 而不是抛异常（避免 500）。"""
+    if not plain_password or not hashed_password:
+        return False
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class TokenPayload:
+    """解析后的 JWT 载荷。"""
+
+    sub: int
+    role: str
+    type: TokenType
+    exp: datetime
+    jti: str
+
+
+def _create_token(subject: int, role: str, token_type: TokenType, expires_delta: timedelta) -> str:
+    now = datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "sub": str(subject),  # JWT 规范要求 sub 是字符串
+        "role": role,
+        "type": token_type,
+        "iat": now,
+        "exp": now + expires_delta,
+        "jti": uuid.uuid4().hex,  # 便于将来做黑名单/单点登出
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def create_access_token(user_id: int, role: str) -> str:
+    return _create_token(
+        user_id, role, "access", timedelta(minutes=settings.access_token_expire_minutes)
+    )
+
+
+def create_refresh_token(user_id: int, role: str) -> str:
+    return _create_token(
+        user_id, role, "refresh", timedelta(days=settings.refresh_token_expire_days)
+    )
+
+
+def decode_token(token: str, *, expected_type: TokenType | None = None) -> TokenPayload:
+    """解码并校验 JWT。
+
+    Args:
+        token: 客户端传来的 token。
+        expected_type: 期望的 token 类型；传入后类型不符会抛 ``InvalidTokenError``，
+            防止用 refresh token 直接访问业务接口。
+
+    Raises:
+        jwt.InvalidTokenError: 签名不对、过期、结构非法或类型不符。
+    """
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret_key,
+        algorithms=[settings.jwt_algorithm],
+        options={"require": ["exp", "sub", "type"]},
+    )
+    token_type = payload.get("type")
+    if expected_type is not None and token_type != expected_type:
+        raise jwt.InvalidTokenError(f"token 类型不符：期望 {expected_type}，实际 {token_type}")
+    return TokenPayload(
+        sub=int(payload["sub"]),
+        role=payload.get("role", ""),
+        type=token_type,
+        exp=datetime.fromtimestamp(payload["exp"], tz=UTC),
+        jti=payload.get("jti", ""),
+    )
+
+
+def access_token_ttl_seconds() -> int:
+    """access token 有效期（秒），用于响应体里的 ``expires_in``。"""
+    return settings.access_token_expire_minutes * 60

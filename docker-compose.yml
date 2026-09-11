@@ -1,0 +1,69 @@
+# 个人博客 · 一键启动
+#
+#   cp backend/.env.example backend/.env   # 然后按提示改生产配置
+#   docker compose up -d --build
+#   docker compose exec backend alembic upgrade head
+#
+# 前端 http://localhost:8080    后端 http://localhost:8000/docs
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-blog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-blog}
+      # 中文排序与大小写行为更可预期
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # backend 依赖这个健康检查，避免"数据库还没起来应用就连"导致启动失败
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blog} -d ${POSTGRES_DB:-blog}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # 数据库不对公网暴露，只在 compose 网络内可达
+    expose:
+      - "5432"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blog}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-blog}
+      STORAGE_DIR: /app/storage
+      TZ: Asia/Shanghai
+    volumes:
+      # 媒体文件必须挂出来，否则容器重建就全丢了
+      - mediadata:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # 只为便于本地调试暴露；生产建议删掉这两行，只让前端容器通过内网访问
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../deploy/Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
+    driver: local
+  mediadata:
+    driver: local

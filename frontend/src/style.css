@@ -1,0 +1,197 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------- 主题变量
+   全站颜色只在这里定义两套。组件里一律用 bg-surface / text-ink 这类语义类，
+   不写死具体色值——这样"换皮肤"只需要改这一个文件。
+   注意：变量值必须是「R G B」三个数字，不能带 rgb() 包裹，
+   因为 Tailwind 的 <alpha-value> 要靠它拼接透明度。 */
+:root {
+  --c-bg: 248 250 252;
+  --c-surface: 255 255 255;
+  --c-surface-muted: 241 245 249;
+  --c-border: 226 232 240;
+  --c-ink: 15 23 42;
+  --c-ink-soft: 71 85 105;
+  --c-ink-faint: 148 163 184;
+  --c-code-bg: 246 248 252;
+  --c-code-ink: 30 41 59;
+  --c-shadow: 15 23 42;
+}
+
+.dark {
+  --c-bg: 15 19 28;
+  --c-surface: 22 27 38;
+  --c-surface-muted: 30 37 51;
+  --c-border: 44 53 71;
+  --c-ink: 232 237 246;
+  --c-ink-soft: 168 180 199;
+  --c-ink-faint: 120 133 153;
+  --c-code-bg: 17 22 32;
+  --c-code-ink: 219 228 240;
+  --c-shadow: 0 0 0;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* 锚点跳转时给固定头部留出空间，否则标题会被顶栏盖住 */
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+  }
+
+  /* 键盘 Tab 聚焦必须可见——这是可访问性的底线，不能因为"不好看"就去掉 */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-bg;
+  }
+
+  ::selection {
+    @apply bg-brand-200 text-brand-900;
+  }
+
+  /* 滚动条（仅 WebKit）：默认样式在暗色模式下非常刺眼 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full;
+    background-color: rgb(var(--c-border));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--c-ink-faint));
+  }
+  ::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+}
+
+@layer components {
+  /* 全站统一卡片：一处改动，全站生效 */
+  .card {
+    @apply rounded-xl border border-border bg-surface transition-shadow;
+  }
+  .card-hover:hover {
+    box-shadow: 0 8px 24px -12px rgb(var(--c-shadow) / 0.25);
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg px-4 py-2
+      text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+  }
+  .btn-ghost {
+    @apply btn border border-border bg-surface text-ink-soft hover:bg-surface-muted hover:text-ink;
+  }
+  .btn-danger {
+    @apply btn border border-red-200 bg-surface text-red-600 hover:bg-red-50
+      dark:border-red-900/50 dark:hover:bg-red-950/40;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink
+      placeholder:text-ink-faint focus:border-brand-400 focus:outline-none
+      focus:ring-2 focus:ring-brand-500/25;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted
+      px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-brand-300
+      hover:text-brand-600;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded bg-surface-muted;
+  }
+}
+
+/* ---------------------------------------------------------------- 代码高亮
+   亮色用 highlight.js 的 github 主题，暗色在这里叠加覆盖。
+   两套一起 import 会互相覆盖，所以只 import 一套再手动补另一套。 */
+.hljs {
+  background: transparent !important;
+  color: rgb(var(--c-code-ink));
+}
+
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: #7d8799;
+}
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-literal,
+.dark .hljs-section,
+.dark .hljs-link {
+  color: #ff7b72;
+}
+.dark .hljs-string,
+.dark .hljs-title,
+.dark .hljs-name,
+.dark .hljs-type,
+.dark .hljs-attribute,
+.dark .hljs-symbol,
+.dark .hljs-bullet,
+.dark .hljs-addition {
+  color: #a5d6ff;
+}
+.dark .hljs-number,
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-meta {
+  color: #79c0ff;
+}
+.dark .hljs-function .hljs-title,
+.dark .hljs-title.function_ {
+  color: #d2a8ff;
+}
+.dark .hljs-built_in,
+.dark .hljs-class .hljs-title,
+.dark .hljs-title.class_ {
+  color: #ffa657;
+}
+.dark .hljs-emphasis {
+  font-style: italic;
+}
+.dark .hljs-strong {
+  font-weight: 600;
+}
+
+/* 文章正文里的代码块与图片细节 */
+.prose pre {
+  overflow-x: auto;
+}
+.prose :where(img, video) {
+  @apply mx-auto;
+}
+.prose :where(table) {
+  display: block;
+  overflow-x: auto;
+}
+
+/* ---------------------------------------------------------------- 过渡动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
