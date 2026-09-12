@@ -7,13 +7,13 @@ import { commentApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
+import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
-import { useToast } from '@/composables/useToast'
 import type { Comment, Page } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 
 const route = useRoute()
-const toast = useToast()
+const action = useAction()
 
 const PAGE_SIZE = 20
 
@@ -41,36 +41,29 @@ const comments = useAsyncData<Page<Comment>>(
 )
 
 const pendingDelete = ref<Comment | null>(null)
-const deleting = ref(false)
+/** 行级忙碌标记：审核是按行进行的，需要知道「哪一行」在转，这个不属于通用 action 语义 */
 const busyId = ref<number | null>(null)
 
 async function moderate(comment: Comment, approved: boolean): Promise<void> {
   busyId.value = comment.id
-  try {
-    await commentApi.moderate(comment.id, approved)
-    toast.success(approved ? '已通过' : '已撤下')
-    void comments.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '操作失败'))
-  } finally {
-    busyId.value = null
-  }
+  const done = await action.run(() => commentApi.moderate(comment.id, approved), {
+    success: approved ? '已通过' : '已撤下',
+    errorMessage: '操作失败',
+  })
+  busyId.value = null
+  if (done !== undefined) void comments.run()
 }
 
 async function confirmDelete(): Promise<void> {
   const target = pendingDelete.value
   if (!target) return
-  deleting.value = true
-  try {
-    await commentApi.remove(target.id)
-    toast.success('评论已删除')
-    pendingDelete.value = null
-    void comments.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '删除失败'))
-  } finally {
-    deleting.value = false
-  }
+  const done = await action.run(() => commentApi.remove(target.id), {
+    success: '评论已删除',
+    errorMessage: '删除失败',
+  })
+  if (done === undefined) return
+  pendingDelete.value = null
+  void comments.run()
 }
 
 onMounted(() => {
@@ -192,7 +185,7 @@ onMounted(() => {
     <ConfirmDialog
       :open="pendingDelete !== null"
       danger
-      :loading="deleting"
+      :loading="action.running.value"
       title="删除评论"
       message="删除后无法恢复。如果这条评论有回复，回复也会一起被删除。"
       confirm-label="删除"

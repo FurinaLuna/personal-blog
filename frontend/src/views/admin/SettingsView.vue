@@ -2,15 +2,14 @@
 /** 站点设置（仅站长）。改完直接影响前台首页、页脚与关于页。 */
 import { onMounted, ref, watch } from 'vue'
 
-import { toErrorMessage } from '@/composables/useAsyncData'
+import { useAction } from '@/composables/useAction'
 import { useToast } from '@/composables/useToast'
 import { useSiteStore } from '@/stores/site'
 import type { SocialLink } from '@/types'
 
 const toast = useToast()
 const site = useSiteStore()
-
-const saving = ref(false)
+const action = useAction()
 
 const form = ref({
   owner_name: '',
@@ -62,35 +61,35 @@ function removeSocialLink(index: number): void {
 }
 
 async function save(): Promise<void> {
-  saving.value = true
-  try {
-    await site.update({
-      owner_name: form.value.owner_name.trim() || '个人博客',
-      headline: form.value.headline.trim() || null,
-      avatar_url: form.value.avatar_url.trim() || null,
-      bio_md: form.value.bio_md || null,
-      about_md: form.value.about_md || null,
-      email: form.value.email.trim() || null,
-      location: form.value.location.trim() || null,
-      icp: form.value.icp.trim() || null,
-      skills: form.value.skills
-        .split(/[,，]/)
-        .map((item) => item.trim())
-        .filter(Boolean),
-      // 丢掉 label 或 url 为空的半成品条目，否则前台页脚会出现空链接
-      social_links: form.value.social_links
-        .map((item) => ({ label: item.label.trim(), url: item.url.trim() }))
-        .filter((item) => item.label && item.url),
-      comment_need_approval: form.value.comment_need_approval,
-      allow_guest_comment: form.value.allow_guest_comment,
-    })
-    toast.success('站点设置已保存')
-    fillFromStore()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '保存失败'))
-  } finally {
-    saving.value = false
-  }
+  await action.run(
+    () =>
+      site.update({
+        owner_name: form.value.owner_name.trim() || '个人博客',
+        headline: form.value.headline.trim() || null,
+        avatar_url: form.value.avatar_url.trim() || null,
+        bio_md: form.value.bio_md || null,
+        about_md: form.value.about_md || null,
+        email: form.value.email.trim() || null,
+        location: form.value.location.trim() || null,
+        icp: form.value.icp.trim() || null,
+        skills: form.value.skills
+          .split(/[,，]/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+        // 丢掉 label 或 url 为空的半成品条目，否则前台页脚会出现空链接
+        social_links: form.value.social_links
+          .map((item) => ({ label: item.label.trim(), url: item.url.trim() }))
+          .filter((item) => item.label && item.url),
+        comment_need_approval: form.value.comment_need_approval,
+        allow_guest_comment: form.value.allow_guest_comment,
+      }),
+    {
+      success: '站点设置已保存',
+      errorMessage: '保存失败',
+      // 保存成功后用服务端返回值回填，避免本地草稿与服务端不一致
+      onSuccess: fillFromStore,
+    },
+  )
 }
 
 onMounted(() => {
@@ -102,8 +101,8 @@ onMounted(() => {
   <div class="mx-auto max-w-3xl space-y-6">
     <div class="flex items-center gap-3">
       <h2 class="text-sm text-ink-soft">站点信息会实时反映到前台首页、页脚与关于页</h2>
-      <button type="button" class="btn-primary ml-auto" :disabled="saving" @click="save">
-        {{ saving ? '保存中…' : '保存设置' }}
+      <button type="button" class="btn-primary ml-auto" :disabled="action.running.value" @click="save">
+        {{ action.running.value ? '保存中…' : '保存设置' }}
       </button>
     </div>
 
@@ -226,8 +225,8 @@ onMounted(() => {
     </section>
 
     <div class="flex justify-end">
-      <button type="button" class="btn-primary" :disabled="saving" @click="save">
-        {{ saving ? '保存中…' : '保存设置' }}
+      <button type="button" class="btn-primary" :disabled="action.running.value" @click="save">
+        {{ action.running.value ? '保存中…' : '保存设置' }}
       </button>
     </div>
   </div>

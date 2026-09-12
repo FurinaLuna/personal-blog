@@ -4,13 +4,15 @@ import { onMounted, ref } from 'vue'
 
 import { ApiError, categoryApi, tagApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useAction } from '@/composables/useAction'
+import { useAsyncData } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import type { Category, Tag } from '@/types'
 
 const toast = useToast()
 const auth = useAuthStore()
+const action = useAction()
 
 const categories = useAsyncData<Category[]>(() => categoryApi.list(true), [])
 const tags = useAsyncData<Tag[]>(() => tagApi.list(), [])
@@ -18,7 +20,6 @@ const tags = useAsyncData<Tag[]>(() => tagApi.list(), [])
 /* -------------------------------------------------- 分类 */
 
 const newCategory = ref({ name: '', description: '', sort_order: 0 })
-const categoryBusy = ref(false)
 const editingCategoryId = ref<number | null>(null)
 const categoryDraft = ref({ name: '', description: '' })
 const pendingCategoryDelete = ref<Category | null>(null)
@@ -29,21 +30,18 @@ async function createCategory(): Promise<void> {
     toast.error('请填写分类名称')
     return
   }
-  categoryBusy.value = true
-  try {
-    await categoryApi.create({
-      name,
-      description: newCategory.value.description.trim() || null,
-      sort_order: newCategory.value.sort_order,
-    })
-    newCategory.value = { name: '', description: '', sort_order: 0 }
-    toast.success('分类已创建')
-    await categories.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '创建失败'))
-  } finally {
-    categoryBusy.value = false
-  }
+  const created = await action.run(
+    () =>
+      categoryApi.create({
+        name,
+        description: newCategory.value.description.trim() || null,
+        sort_order: newCategory.value.sort_order,
+      }),
+    { success: '分类已创建', errorMessage: '创建失败' },
+  )
+  if (created === undefined) return
+  newCategory.value = { name: '', description: '', sort_order: 0 }
+  await categories.run()
 }
 
 function startEditCategory(item: Category): void {
@@ -54,84 +52,73 @@ function startEditCategory(item: Category): void {
 async function saveCategory(): Promise<void> {
   const id = editingCategoryId.value
   if (id === null) return
-  try {
-    await categoryApi.update(id, {
-      name: categoryDraft.value.name.trim(),
-      description: categoryDraft.value.description.trim() || null,
-    })
-    editingCategoryId.value = null
-    toast.success('分类已更新')
-    await categories.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '更新失败'))
-  }
+  const saved = await action.run(
+    () =>
+      categoryApi.update(id, {
+        name: categoryDraft.value.name.trim(),
+        description: categoryDraft.value.description.trim() || null,
+      }),
+    { success: '分类已更新', errorMessage: '更新失败' },
+  )
+  if (saved === undefined) return
+  editingCategoryId.value = null
+  await categories.run()
 }
 
 async function deleteCategory(): Promise<void> {
   const target = pendingCategoryDelete.value
   if (!target) return
-  try {
-    await categoryApi.remove(target.id)
-    toast.success('分类已删除，其下文章变为未分类')
-    pendingCategoryDelete.value = null
-    await Promise.all([categories.run(), tags.run()])
-  } catch (error) {
-    // 非站长会拿到 403，这里给出明确解释，而不是一句"操作失败"
-    toast.error(
-      error instanceof ApiError && error.isForbidden
-        ? '只有站长可以删除分类'
-        : toErrorMessage(error, '删除失败'),
-    )
-  }
+  const done = await action.run(() => categoryApi.remove(target.id), {
+    success: '分类已删除，其下文章变为未分类',
+    errorMessage: '删除失败',
+    // 非站长会拿到 403，给出明确解释而不是一句「操作失败」
+    mapError: (error) =>
+      error instanceof ApiError && error.isForbidden ? '只有站长可以删除分类' : undefined,
+  })
+  if (done === undefined) return
+  pendingCategoryDelete.value = null
+  await Promise.all([categories.run(), tags.run()])
 }
 
 /* -------------------------------------------------- 标签 */
 
 const newTagName = ref('')
-const tagBusy = ref(false)
 const pendingTagDelete = ref<Tag | null>(null)
 
 async function createTag(): Promise<void> {
   const name = newTagName.value.trim()
   if (!name) return
-  tagBusy.value = true
-  try {
-    await tagApi.create({ name })
-    newTagName.value = ''
-    toast.success('标签已创建')
-    await tags.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '创建失败'))
-  } finally {
-    tagBusy.value = false
-  }
+  const created = await action.run(() => tagApi.create({ name }), {
+    success: '标签已创建',
+    errorMessage: '创建失败',
+  })
+  if (created === undefined) return
+  newTagName.value = ''
+  await tags.run()
 }
 
 async function deleteTag(): Promise<void> {
   const target = pendingTagDelete.value
   if (!target) return
-  try {
-    await tagApi.remove(target.id)
-    toast.success('标签已删除')
-    pendingTagDelete.value = null
-    await tags.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '删除失败'))
-  }
+  const done = await action.run(() => tagApi.remove(target.id), {
+    success: '标签已删除',
+    errorMessage: '删除失败',
+  })
+  if (done === undefined) return
+  pendingTagDelete.value = null
+  await tags.run()
 }
 
 async function cleanupTags(): Promise<void> {
-  try {
-    const result = await tagApi.cleanup()
-    toast.success(result.detail)
-    await tags.run()
-  } catch (error) {
-    toast.error(
-      error instanceof ApiError && error.isForbidden
-        ? '只有站长可以清理标签'
-        : toErrorMessage(error, '清理失败'),
-    )
-  }
+  // 清理接口返回的是「清理了 N 个」这种人话，所以提示文案取接口返回值而不是固定串
+  const result = await action.run(() => tagApi.cleanup(), {
+    errorMessage: '清理失败',
+    mapError: (error) =>
+      error instanceof ApiError && error.isForbidden ? '只有站长可以清理标签' : undefined,
+  })
+  if (result === undefined) return
+  toast.success(result.detail)
+  await tags.run()
 }
 
 onMounted(() => {
@@ -149,7 +136,7 @@ onMounted(() => {
         <div class="space-y-2">
           <input v-model="newCategory.name" class="input" placeholder="分类名称" maxlength="50" />
           <input v-model="newCategory.description" class="input" placeholder="一句话描述（选填）" />
-          <button type="button" class="btn-primary w-full" :disabled="categoryBusy" @click="createCategory">
+          <button type="button" class="btn-primary w-full" :disabled="action.running.value" @click="createCategory">
             添加分类
           </button>
         </div>
@@ -219,7 +206,7 @@ onMounted(() => {
             maxlength="50"
             @keydown.enter.prevent="createTag"
           />
-          <button type="button" class="btn-primary shrink-0" :disabled="tagBusy" @click="createTag">
+          <button type="button" class="btn-primary shrink-0" :disabled="action.running.value" @click="createTag">
             添加
           </button>
         </div>

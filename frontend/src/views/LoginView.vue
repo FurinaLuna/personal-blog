@@ -4,20 +4,19 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api'
+import { useAction } from '@/composables/useAction'
 import { toErrorMessage } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
-import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
 
 useHead({ title: '登录' })
-import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const toast = useToast()
+const action = useAction()
 
 const form = ref({ username: '', password: '' })
-const submitting = ref(false)
 const errorMessage = ref('')
 
 const redirect = computed(() => {
@@ -31,19 +30,18 @@ async function submit(): Promise<void> {
     return
   }
 
-  submitting.value = true
   errorMessage.value = ''
-  try {
-    await auth.login(form.value.username.trim(), form.value.password)
-    toast.success(`欢迎回来，${auth.displayName}`)
-    await router.replace(redirect.value)
-  } catch (error) {
-    // 字段级错误优先展示在对应输入框下方，比只弹一个 toast 更容易定位问题
-    errorMessage.value =
-      error instanceof ApiError ? error.message : toErrorMessage(error, '登录失败，请稍后重试')
-  } finally {
-    submitting.value = false
-  }
+  const ok = await action.run(() => auth.login(form.value.username.trim(), form.value.password), {
+    success: `欢迎回来，${auth.displayName}`,
+    // 登录失败的错误要贴在表单里而不是弹 toast：用户的下一个动作是改输入
+    silent: true,
+    onError: (error) => {
+      errorMessage.value =
+        error instanceof ApiError ? error.message : toErrorMessage(error, '登录失败，请稍后重试')
+    },
+  })
+  if (ok === undefined) return
+  await router.replace(redirect.value)
 }
 
 onMounted(() => {
@@ -89,8 +87,8 @@ onMounted(() => {
         {{ errorMessage }}
       </p>
 
-      <button type="submit" class="btn-primary w-full" :disabled="submitting">
-        {{ submitting ? '登录中…' : '登录' }}
+      <button type="submit" class="btn-primary w-full" :disabled="action.running.value">
+        {{ action.running.value ? '登录中…' : '登录' }}
       </button>
     </form>
 

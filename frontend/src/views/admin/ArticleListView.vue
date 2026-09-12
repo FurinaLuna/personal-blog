@@ -7,15 +7,15 @@ import { articleApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
+import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
-import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import type { ArticleStatus, ArticleSummary, Page } from '@/types'
 import { formatDateTime, formatStatus } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
-const toast = useToast()
+const action = useAction()
 const auth = useAuthStore()
 
 const PAGE_SIZE = 15
@@ -45,7 +45,6 @@ const articles = useAsyncData<Page<ArticleSummary>>(
 )
 
 const pendingDelete = ref<ArticleSummary | null>(null)
-const deleting = ref(false)
 
 function reload(resetPage = true): void {
   if (resetPage) page.value = 1
@@ -55,28 +54,22 @@ function reload(resetPage = true): void {
 async function confirmDelete(): Promise<void> {
   const target = pendingDelete.value
   if (!target) return
-  deleting.value = true
-  try {
-    await articleApi.remove(target.id)
-    toast.success(`《${target.title}》已删除`)
-    pendingDelete.value = null
-    reload()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '删除失败'))
-  } finally {
-    deleting.value = false
-  }
+  const done = await action.run(() => articleApi.remove(target.id), {
+    success: `《${target.title}》已删除`,
+    errorMessage: '删除失败',
+  })
+  if (done === undefined) return
+  pendingDelete.value = null
+  reload()
 }
 
 async function togglePublish(item: ArticleSummary): Promise<void> {
   const next: ArticleStatus = item.status === 'published' ? 'draft' : 'published'
-  try {
-    await articleApi.update(item.id, { status: next })
-    toast.success(next === 'published' ? '已发布' : '已转为草稿')
-    reload(false)
-  } catch (error) {
-    toast.error(toErrorMessage(error, '操作失败'))
-  }
+  const done = await action.run(() => articleApi.update(item.id, { status: next }), {
+    success: next === 'published' ? '已发布' : '已转为草稿',
+    errorMessage: '操作失败',
+  })
+  if (done !== undefined) reload(false)
 }
 
 /** 状态徽标配色。涨红跌绿不适用，这里只求语义清晰。 */
@@ -214,7 +207,7 @@ onMounted(() => {
     <ConfirmDialog
       :open="pendingDelete !== null"
       danger
-      :loading="deleting"
+      :loading="action.running.value"
       title="删除文章"
       :message="`确定要删除《${pendingDelete?.title ?? ''}》吗？该操作不可撤销。`"
       confirm-label="删除"

@@ -9,9 +9,9 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import MobileToc from '@/components/MobileToc.vue'
 import ReadingProgress from '@/components/ReadingProgress.vue'
 import TableOfContents from '@/components/TableOfContents.vue'
+import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
-import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import type { ArticleDetail, ArticleSummary } from '@/types'
 import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
@@ -19,11 +19,12 @@ import { renderMarkdown } from '@/utils/markdown'
 
 const route = useRoute()
 const router = useRouter()
-const toast = useToast()
 const auth = useAuthStore()
 
 const liked = ref(false)
-const liking = ref(false)
+// 点赞与删除分开计数：点赞是高频轻操作，不该让删除按钮的状态跟着它变
+const likeAction = useAction()
+const action = useAction()
 
 const article = useAsyncData<ArticleDetail | null>(
   () => articleApi.detail(String(route.params.slug)),
@@ -66,32 +67,27 @@ const publishedLabel = computed(() => {
 
 async function like(): Promise<void> {
   const item = article.data.value
-  if (!item || liking.value) return
-  liking.value = true
-  try {
-    const result = await articleApi.like(item.id)
-    // 后端返回权威计数，本地不要自己 +1 ——否则并发下会和真实值越差越远
-    article.data.value = { ...item, like_count: result.like_count }
-    liked.value = true
-    toast.success('感谢支持！')
-  } catch (error) {
-    toast.error(toErrorMessage(error, '点赞失败'))
-  } finally {
-    liking.value = false
-  }
+  if (!item || likeAction.running.value) return
+  const result = await likeAction.run(() => articleApi.like(item.id), {
+    success: '感谢支持！',
+    errorMessage: '点赞失败',
+  })
+  if (result === undefined) return
+  // 后端返回权威计数，本地不要自己 +1 ——否则并发下会和真实值越差越远
+  article.data.value = { ...item, like_count: result.like_count }
+  liked.value = true
 }
 
 async function removeArticle(): Promise<void> {
   const item = article.data.value
   if (!item) return
   if (!window.confirm(`确定要删除《${item.title}》吗？该操作不可撤销。`)) return
-  try {
-    await articleApi.remove(item.id)
-    toast.success('文章已删除')
-    await router.push('/')
-  } catch (error) {
-    toast.error(toErrorMessage(error, '删除失败'))
-  }
+  const done = await action.run(() => articleApi.remove(item.id), {
+    success: '文章已删除',
+    errorMessage: '删除失败',
+  })
+  if (done === undefined) return
+  await router.push('/')
 }
 
 watch(
@@ -227,7 +223,7 @@ watch(
               ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-200'
               : 'border-border text-ink-soft hover:border-brand-300 hover:text-brand-600'
           "
-          :disabled="liking"
+          :disabled="likeAction.running.value"
           @click="like"
         >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">

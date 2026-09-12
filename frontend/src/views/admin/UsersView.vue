@@ -3,17 +3,14 @@
 import { onMounted, ref } from 'vue'
 
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import { ApiError } from '@/api'
-import { toErrorMessage } from '@/composables/useAsyncData'
-import { useToast } from '@/composables/useToast'
+import { useAction } from '@/composables/useAction'
 import { useAuthStore } from '@/stores/auth'
 import type { UserRole } from '@/types'
 import { formatDateTime } from '@/utils/format'
 
-const toast = useToast()
 const auth = useAuthStore()
+const action = useAction()
 
-const creating = ref(false)
 const newUser = ref({
   username: '',
   email: '',
@@ -24,66 +21,53 @@ const newUser = ref({
 const fieldErrors = ref<Record<string, string>>({})
 
 const pendingDelete = ref<number | null>(null)
-const deleting = ref(false)
 
 async function create(): Promise<void> {
   fieldErrors.value = {}
-  creating.value = true
-  try {
-    await auth.createUser({
-      username: newUser.value.username.trim(),
-      email: newUser.value.email.trim(),
-      password: newUser.value.password,
-      nickname: newUser.value.nickname.trim() || null,
-      role: newUser.value.role,
-    })
-    toast.success('用户已创建')
-    newUser.value = { username: '', email: '', password: '', nickname: '', role: 'author' }
-  } catch (error) {
-    // 后端返回的字段级错误直接贴到对应输入框下面，比弹一个笼统提示有用得多
-    if (error instanceof ApiError) {
-      fieldErrors.value = error.fields
-      if (!Object.keys(error.fields).length) toast.error(error.message)
-    } else {
-      toast.error(toErrorMessage(error, '创建失败'))
-    }
-  } finally {
-    creating.value = false
-  }
+  const created = await action.run(
+    () =>
+      auth.createUser({
+        username: newUser.value.username.trim(),
+        email: newUser.value.email.trim(),
+        password: newUser.value.password,
+        nickname: newUser.value.nickname.trim() || null,
+        role: newUser.value.role,
+      }),
+    {
+      success: '用户已创建',
+      errorMessage: '创建失败',
+      onFieldErrors: (fields) => {
+        fieldErrors.value = fields
+      },
+    },
+  )
+  if (created === undefined) return
+  newUser.value = { username: '', email: '', password: '', nickname: '', role: 'author' }
 }
 
 async function toggleRole(id: number, current: UserRole): Promise<void> {
-  try {
-    await auth.updateUser(id, { role: current === 'admin' ? 'author' : 'admin' })
-    toast.success('角色已更新')
-  } catch (error) {
-    toast.error(toErrorMessage(error, '更新失败'))
-  }
+  await action.run(() => auth.updateUser(id, { role: current === 'admin' ? 'author' : 'admin' }), {
+    success: '角色已更新',
+    errorMessage: '更新失败',
+  })
 }
 
 async function toggleActive(id: number, isActive: boolean): Promise<void> {
-  try {
-    await auth.updateUser(id, { is_active: !isActive })
-    toast.success(isActive ? '已停用' : '已启用')
-  } catch (error) {
-    // 「不能取消最后一个可用管理员」这类保护会返回 400，原文已经很清楚，直接展示
-    toast.error(toErrorMessage(error, '更新失败'))
-  }
+  // 「不能取消最后一个可用管理员」这类保护会返回 400，原文已经很清楚，直接展示
+  await action.run(() => auth.updateUser(id, { is_active: !isActive }), {
+    success: isActive ? '已停用' : '已启用',
+    errorMessage: '更新失败',
+  })
 }
 
 async function confirmDelete(): Promise<void> {
   const id = pendingDelete.value
   if (id === null) return
-  deleting.value = true
-  try {
-    await auth.removeUser(id)
-    toast.success('用户已删除')
-    pendingDelete.value = null
-  } catch (error) {
-    toast.error(toErrorMessage(error, '删除失败'))
-  } finally {
-    deleting.value = false
-  }
+  const removed = await action.run(() => auth.removeUser(id), {
+    success: '用户已删除',
+    errorMessage: '删除失败',
+  })
+  if (removed !== undefined) pendingDelete.value = null
 }
 
 onMounted(() => {
@@ -135,8 +119,8 @@ onMounted(() => {
         </label>
 
         <div class="flex items-end">
-          <button type="submit" class="btn-primary w-full sm:w-auto" :disabled="creating">
-            {{ creating ? '创建中…' : '创建用户' }}
+          <button type="submit" class="btn-primary w-full sm:w-auto" :disabled="action.running.value">
+            {{ action.running.value ? '创建中…' : '创建用户' }}
           </button>
         </div>
       </form>
@@ -233,7 +217,7 @@ onMounted(() => {
     <ConfirmDialog
       :open="pendingDelete !== null"
       danger
-      :loading="deleting"
+      :loading="action.running.value"
       title="删除用户"
       message="该用户名下的所有文章与附件都会被一并删除，且不可恢复。"
       confirm-label="删除用户"

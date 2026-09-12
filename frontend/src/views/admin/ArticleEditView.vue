@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { ApiError, articleApi, attachmentApi, categoryApi, tagApi } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
 import type { ArticleDetail, ArticleStatus, Category, Tag } from '@/types'
@@ -33,8 +34,9 @@ const form = ref({
   tags: [] as string[],
 })
 const tagInput = ref('')
-const saving = ref(false)
-const uploadingCover = ref(false)
+// 保存与封面上传是两个独立动作：用两个实例，避免「上传封面时保存按钮也被禁用」
+const action = useAction()
+const coverAction = useAction()
 const coverInput = ref<HTMLInputElement | null>(null)
 /** 字段级错误，key 与后端返回的 field 对齐（如 "title" / "content_md"） */
 const fieldErrors = ref<Record<string, string>>({})
@@ -102,17 +104,12 @@ function onTagKeydown(event: KeyboardEvent): void {
 /* -------------------------------------------------- 封面上传 */
 
 async function uploadCover(file: File): Promise<void> {
-  uploadingCover.value = true
-  try {
-    const result = await attachmentApi.upload(file)
-    form.value.cover_image = result.url
-    toast.success('封面已上传')
-  } catch (error) {
-    toast.error(toErrorMessage(error, '封面上传失败'))
-  } finally {
-    uploadingCover.value = false
-    if (coverInput.value) coverInput.value.value = ''
-  }
+  const result = await coverAction.run(() => attachmentApi.upload(file), {
+    success: '封面已上传',
+    errorMessage: '封面上传失败',
+  })
+  if (result !== undefined) form.value.cover_image = result.url
+  if (coverInput.value) coverInput.value.value = ''
 }
 
 function onCoverChange(event: Event): void {
@@ -155,33 +152,31 @@ async function save(status: ArticleStatus): Promise<void> {
     return
   }
 
-  saving.value = true
-  try {
-    const payload = buildPayload(status)
-    const saved = isEdit.value
-      ? await articleApi.update(articleId.value as number, payload)
-      : await articleApi.create(payload)
+  const payload = buildPayload(status)
+  const saved = await action.run(
+    () =>
+      isEdit.value
+        ? articleApi.update(articleId.value as number, payload)
+        : articleApi.create(payload),
+    {
+      success: status === 'draft' ? '草稿已保存' : '文章已发布',
+      // 字段级错误贴到输入框、整体原因留在页面顶部的提示条，
+      // 两个位置都要写，所以走 onError 而不是 onFieldErrors
+      onError: (error) => {
+        fieldErrors.value = error instanceof ApiError ? error.fields : {}
+        formError.value =
+          error instanceof ApiError ? error.message : toErrorMessage(error, '保存失败')
+      },
+    },
+  )
+  if (saved === undefined) return
 
-    toast.success(status === 'draft' ? '草稿已保存' : '文章已发布')
-
-    // 新建时把 URL 换成编辑态，避免用户继续点"保存"又创建一篇重复文章
-    if (!isEdit.value) {
-      await router.replace(`/admin/articles/${saved.id}/edit`)
-      if (saved.slug) form.value.slug = saved.slug
-    }
-    // 后端可能会规范化 slug，回填以免下次保存又用旧的
-    form.value.slug = saved.slug
-  } catch (error) {
-    if (error instanceof ApiError) {
-      fieldErrors.value = error.fields
-      formError.value = error.message
-    } else {
-      formError.value = toErrorMessage(error, '保存失败')
-    }
-    toast.error(formError.value)
-  } finally {
-    saving.value = false
+  // 新建时把 URL 换成编辑态，避免用户继续点"保存"又创建一篇重复文章
+  if (!isEdit.value) {
+    await router.replace(`/admin/articles/${saved.id}/edit`)
   }
+  // 后端可能会规范化 slug，回填以免下次保存又用旧的
+  form.value.slug = saved.slug
 }
 
 onMounted(async () => {
@@ -207,11 +202,11 @@ onMounted(async () => {
         <span v-if="form.slug" class="hidden font-mono text-xs text-ink-faint sm:inline">
           /article/{{ form.slug }}
         </span>
-        <button type="button" class="btn-ghost" :disabled="saving" @click="save('draft')">
+        <button type="button" class="btn-ghost" :disabled="action.running.value" @click="save('draft')">
           保存草稿
         </button>
-        <button type="button" class="btn-primary" :disabled="saving" @click="save('published')">
-          {{ saving ? '保存中…' : isDraft ? '发布' : '更新' }}
+        <button type="button" class="btn-primary" :disabled="action.running.value" @click="save('published')">
+          {{ action.running.value ? '保存中…' : isDraft ? '发布' : '更新' }}
         </button>
       </div>
     </div>
@@ -336,10 +331,10 @@ onMounted(async () => {
             <button
               type="button"
               class="btn-ghost flex-1 text-xs"
-              :disabled="uploadingCover"
+              :disabled="coverAction.running.value"
               @click="coverInput?.click()"
             >
-              {{ uploadingCover ? '上传中…' : form.cover_image ? '更换封面' : '上传封面' }}
+              {{ coverAction.running.value ? '上传中…' : form.cover_image ? '更换封面' : '上传封面' }}
             </button>
             <button
               v-if="form.cover_image"

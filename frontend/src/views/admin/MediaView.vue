@@ -6,12 +6,14 @@ import { attachmentApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
+import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
 import type { Attachment, Page } from '@/types'
 import { formatBytes, formatDateTime } from '@/utils/format'
 
 const toast = useToast()
+const action = useAction()
 
 const PAGE_SIZE = 24
 const page = ref(1)
@@ -19,7 +21,6 @@ const kind = ref<'all' | 'image' | 'file'>('all')
 const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const pendingDelete = ref<Attachment | null>(null)
-const deleting = ref(false)
 
 const emptyPage: Page<Attachment> = { items: [], total: 0, page: 1, page_size: PAGE_SIZE, pages: 0 }
 const attachments = useAsyncData<Page<Attachment>>(
@@ -64,17 +65,13 @@ async function copyMarkdown(item: Attachment): Promise<void> {
 async function confirmDelete(): Promise<void> {
   const target = pendingDelete.value
   if (!target) return
-  deleting.value = true
-  try {
-    await attachmentApi.remove(target.id)
-    toast.success('已删除')
-    pendingDelete.value = null
-    void attachments.run()
-  } catch (error) {
-    toast.error(toErrorMessage(error, '删除失败'))
-  } finally {
-    deleting.value = false
-  }
+  const done = await action.run(() => attachmentApi.remove(target.id), {
+    success: '已删除',
+    errorMessage: '删除失败',
+  })
+  if (done === undefined) return
+  pendingDelete.value = null
+  void attachments.run()
 }
 
 onMounted(() => {
@@ -199,7 +196,7 @@ onMounted(() => {
     <ConfirmDialog
       :open="pendingDelete !== null"
       danger
-      :loading="deleting"
+      :loading="action.running.value"
       title="删除文件"
       message="删除后会同时移除磁盘上的文件。如果它正被文章引用，文章里的图片会变成裂图。"
       confirm-label="删除"
