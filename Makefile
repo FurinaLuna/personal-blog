@@ -16,7 +16,8 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help install install-backend install-frontend dev dev-backend dev-frontend \
-        test test-cov lint fmt fmt-check check smoke migrate migration seed build \
+        test test-frontend test-all test-cov lint fmt fmt-check check smoke interaction \
+        migrate migration seed build build-preview \
         docker-up docker-down docker-logs docker-migrate clean
 
 help: ## 显示所有可用命令
@@ -52,6 +53,11 @@ dev-frontend: ## 只启动前端（Vite 开发服务器）
 test: ## 运行后端测试
 	cd $(BACKEND) && $(abspath $(VENV_PY)) -m pytest
 
+test-frontend: ## 运行前端单元测试（Vitest）
+	cd $(FRONTEND) && npm run test
+
+test-all: test test-frontend ## 前后端测试一起跑
+
 test-cov: ## 运行测试并输出覆盖率报告
 	cd $(BACKEND) && $(abspath $(VENV_PY)) -m pytest --cov=app --cov-report=term-missing
 
@@ -69,7 +75,12 @@ fmt-check: ## 检查格式是否符合规范（CI 用）
 typecheck: ## 前端类型检查
 	cd $(FRONTEND) && npm run type-check
 
-check: lint fmt-check typecheck test ## 一次跑完所有检查（提交前跑这个）
+check: lint fmt-check typecheck test-frontend test ## 一次跑完所有检查（提交前跑这个）
+
+interaction: ## 真实交互验证（点击驱动的失败路径；需先 make dev 起好前后端）
+	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
+	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
+	node tools/interaction-check.mjs ./interaction-shots
 
 smoke: ## 端到端冒烟验证（真实浏览器；需先 make dev 起好前后端）
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)

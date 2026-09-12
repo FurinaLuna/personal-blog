@@ -195,9 +195,10 @@ onMounted(() => {
       <template v-else>
         <div class="space-y-4">
           <ArticleCard
-            v-for="item in articles.data.value.items"
+            v-for="(item, index) in articles.data.value.items"
             :key="item.id"
             :article="item"
+            :priority="index === 0"
           />
         </div>
 

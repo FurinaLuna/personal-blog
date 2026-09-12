@@ -5,14 +5,35 @@ import { RouterLink } from 'vue-router'
 
 import type { ArticleSummary } from '@/types'
 import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
+import { prefetchRoute } from '@/utils/prefetch'
 
-const props = defineProps<{ article: ArticleSummary }>()
+const props = withDefaults(
+  defineProps<{
+    article: ArticleSummary
+    /**
+     * 首屏第一张卡片：封面用 eager + fetchpriority=high 参与 LCP，
+     * 其余卡片保持 lazy。传 true 的应当只有一两条。
+     */
+    priority?: boolean
+  }>(),
+  { priority: false },
+)
 
 const publishedLabel = computed(
   () => formatDate(props.article.published_at ?? props.article.created_at),
 )
 
 const tagList = computed(() => props.article.tags.slice(0, 4))
+
+/**
+ * 悬停/聚焦即预取详情页 chunk。
+ *
+ * 绑定 mouseenter 与 focusin：键盘用户 Tab 到链接时同样受益，
+ * 这两种输入方式在触屏上都不触发，等于零开销。
+ */
+function warm(): void {
+  prefetchRoute('article')
+}
 </script>
 
 <template>
@@ -45,6 +66,8 @@ const tagList = computed(() => props.article.tags.slice(0, 4))
           <RouterLink
             :to="`/article/${article.slug}`"
             class="text-ink transition-colors group-hover:text-brand-600"
+            @mouseenter="warm"
+            @focusin="warm"
           >
             {{ article.title }}
           </RouterLink>
@@ -88,12 +111,15 @@ const tagList = computed(() => props.article.tags.slice(0, 4))
         v-if="article.cover_image"
         :to="`/article/${article.slug}`"
         class="block shrink-0 overflow-hidden rounded-lg bg-surface-muted sm:w-40"
+        @mouseenter="warm"
+        @focusin="warm"
       >
         <!-- aspect 占位：图片加载完成前容器就有正确高度，列表不会因图片到达而上下跳动 -->
         <img
           :src="article.cover_image"
           :alt="article.title"
-          loading="lazy"
+          :loading="priority ? 'eager' : 'lazy'"
+          :fetchpriority="priority ? 'high' : 'auto'"
           decoding="async"
           class="aspect-[4/3] w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] sm:aspect-[10/7] sm:w-40"
         />

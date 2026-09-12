@@ -146,7 +146,17 @@ export function renderMarkdown(source: string): RenderResult {
   //    这里只负责「标记结构」（data-copyable / .code-lang），真正的复制交互
   //    由 MarkdownRenderer 用事件委托绑定 —— 工具函数不该掺和 UI 行为，
   //    否则后台编辑器复用这段渲染逻辑时会被迫引入 toast 依赖。
+  //
+  //    先取「作者声明的语言」再高亮：hljs 会对没标语言的块做自动探测，
+  //    并把探测结果写进 class（`language-nginx` 之类），如果之后再去读 class，
+  //    就会把猜测出来的语言当成作者本意显示在角标上——那是误导。
   container.querySelectorAll<HTMLElement>('pre code').forEach((block) => {
+    const declared = Array.from(block.classList)
+      .find((name) => name.startsWith('language-'))
+      ?.replace('language-', '')
+    // 没声明语言就不高亮：宁可呈现为纯文本，也不要给出一个可能是错的猜测
+    if (!declared) return
+
     block.classList.add('hljs')
     try {
       hljs.highlightElement(block)
@@ -156,12 +166,14 @@ export function renderMarkdown(source: string): RenderResult {
   })
 
   container.querySelectorAll<HTMLElement>('pre').forEach((block) => {
-    const code = block.querySelector('code')
-    // 语言名取自 marked 生成的 language-xxx 类（来自 ```语言 井号语法）
-    const lang = (Array.from(code?.classList ?? []).find((c) => c.startsWith('language-')) ?? '')
-      .replace('language-', '')
-      .slice(0, 16)
-    if (!lang) return
+    // 语言名取自 marked 生成的 language-xxx 类（来自 ```语言 井号语法）。
+    // 注意要过滤掉 hljs 自己加的类：只认 marked 写在 <code> 上的声明。
+    const lang =
+      (Array.from(block.querySelector('code')?.classList ?? []).find(
+        (name) => name.startsWith('language-'),
+      ) ?? '')
+        .replace('language-', '')
+        .slice(0, 16) || 'text'
 
     const wrapper = document.createElement('div')
     wrapper.className = 'code-block'

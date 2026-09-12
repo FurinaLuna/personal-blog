@@ -138,7 +138,7 @@ onMounted(() => {
         <div v-for="index in 3" :key="index" class="skeleton h-10 rounded-lg"></div>
       </div>
 
-      <div v-else class="overflow-x-auto">
+      <div v-else class="hidden overflow-x-auto md:block">
         <table class="w-full min-w-[680px] text-sm">
           <thead class="bg-surface-muted text-xs text-ink-soft">
             <tr>
@@ -212,6 +212,60 @@ onMounted(() => {
           </tbody>
         </table>
       </div>
+
+      <!-- 移动端：卡片列表（表格 min-w 680 在窄屏只能横向滚动） -->
+      <ul v-if="!auth.usersLoading" class="divide-y divide-border md:hidden">
+        <li v-for="item in auth.users" :key="item.id" class="p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="truncate text-sm font-medium text-ink">
+                {{ item.nickname || item.username }}
+                <span v-if="item.id === auth.user?.id" class="text-[11px] text-brand-600">（我）</span>
+              </p>
+              <p class="mt-0.5 truncate font-mono text-xs text-ink-faint">{{ item.username }}</p>
+            </div>
+            <span
+              class="shrink-0 rounded-md px-2 py-0.5 text-xs"
+              :class="
+                item.role === 'admin'
+                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                  : 'bg-surface-muted text-ink-soft'
+              "
+            >
+              {{ item.role === 'admin' ? '站长' : '作者' }}
+            </span>
+          </div>
+
+          <p class="mt-1.5 truncate text-xs text-ink-soft">{{ item.email }}</p>
+          <p class="mt-1 flex items-center gap-3 text-xs text-ink-faint">
+            <span>{{ formatDateTime(item.created_at) }}</span>
+            <span :class="item.is_active ? 'text-emerald-600' : ''">
+              {{ item.is_active ? '正常' : '已停用' }}
+            </span>
+          </p>
+
+          <div class="mt-3 flex items-center gap-4 text-xs">
+            <button
+              type="button"
+              class="text-ink-soft disabled:opacity-40"
+              :disabled="item.id === auth.user?.id"
+              @click="toggleRole(item.id, item.role)"
+            >
+              {{ item.role === 'admin' ? '降为作者' : '设为站长' }}
+            </button>
+            <button type="button" class="text-ink-soft" @click="toggleActive(item.id, item.is_active)">
+              {{ item.is_active ? '停用' : '启用' }}
+            </button>
+            <button
+              type="button"
+              class="ml-auto text-red-500"
+              @click="pendingDelete = item.id"
+            >
+              删除
+            </button>
+          </div>
+        </li>
+      </ul>
     </div>
 
     <ConfirmDialog

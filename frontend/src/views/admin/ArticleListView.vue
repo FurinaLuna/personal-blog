@@ -126,7 +126,8 @@ onMounted(() => {
 
     <template v-else>
       <div class="card overflow-hidden">
-        <div class="overflow-x-auto">
+        <!-- 桌面：表格。窄屏下 min-w 会逼出横向滚动，所以 md 以下换成卡片 -->
+        <div class="hidden overflow-x-auto md:block">
           <table class="w-full min-w-[720px] text-sm">
             <thead class="border-b border-border bg-surface-muted text-xs text-ink-soft">
               <tr>
@@ -194,6 +195,55 @@ onMounted(() => {
             </tbody>
           </table>
         </div>
+
+        <!-- 移动端：卡片列表。字段与表格一致，只是把「列」竖过来排 -->
+        <ul class="divide-y divide-border md:hidden">
+          <li v-for="item in articles.data.value.items" :key="item.id" class="p-4">
+            <div class="flex items-start justify-between gap-3">
+              <RouterLink
+                :to="`/article/${item.slug}`"
+                class="line-clamp-2 text-sm font-medium text-ink"
+              >
+                {{ item.title }}
+              </RouterLink>
+              <span
+                class="shrink-0 rounded-md px-2 py-0.5 text-xs"
+                :class="STATUS_CLASS[item.status]"
+              >
+                {{ formatStatus(item.status) }}
+              </span>
+            </div>
+
+            <p class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-faint">
+              <span>{{ formatDateTime(item.updated_at) }}</span>
+              <span>{{ item.view_count }} 阅读</span>
+              <span>{{ item.comment_count }} 评论</span>
+              <span v-if="isAdmin && item.author">
+                {{ item.author.nickname || item.author.username }}
+              </span>
+            </p>
+
+            <div class="mt-3 flex items-center gap-4 text-xs">
+              <button
+                type="button"
+                class="text-brand-600 hover:text-brand-700"
+                @click="togglePublish(item)"
+              >
+                {{ item.status === 'published' ? '转草稿' : '发布' }}
+              </button>
+              <RouterLink :to="`/admin/articles/${item.id}/edit`" class="text-ink-soft">
+                编辑
+              </RouterLink>
+              <button
+                type="button"
+                class="ml-auto text-red-500 hover:text-red-600"
+                @click="pendingDelete = item"
+              >
+                删除
+              </button>
+            </div>
+          </li>
+        </ul>
       </div>
 
       <Pagination

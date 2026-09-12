@@ -152,6 +152,49 @@ try {
   else record('设置页保存：toast 反馈', Boolean(settings.toast), settings.toast)
   await shot('04-settings-save')
 
+  // ---------- 5) 后台表格在窄屏切换成卡片列表 ----------
+  // 表格 min-w 680~720，窄屏只能横向滚动；改成 md 以下渲染卡片列表。
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 390, height: 844, deviceScaleFactor: 2, mobile: true,
+  })
+  await send('Page.navigate', { url: `${BASE}/admin/articles` })
+  await sleep(3000)
+  const narrow = await evalJs(`(() => {
+    const table = document.querySelector('table')
+    const list = document.querySelector('ul.divide-y')
+    const tableVisible = table ? getComputedStyle(table.closest('div')).display !== 'none' : false
+    const listVisible = list ? getComputedStyle(list).display !== 'none' : false
+    return {
+      tableExists: !!table,
+      tableVisible,
+      listVisible,
+      listItems: list ? list.children.length : 0,
+      hasScroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+    }
+  })()`)
+  record('窄屏：表格隐藏、卡片列表显示', !narrow.tableVisible && narrow.listVisible, `卡片 ${narrow.listItems} 项`)
+  record('窄屏：没有横向溢出', !narrow.hasScroll)
+  await shot('05-admin-articles-mobile')
+
+  // 用户管理页同样检查一遍（另一处表格）
+  await send('Page.navigate', { url: `${BASE}/admin/users` })
+  await sleep(2600)
+  const narrowUsers = await evalJs(`(() => {
+    const table = document.querySelector('table')
+    const list = document.querySelector('ul.divide-y')
+    return {
+      tableVisible: table ? getComputedStyle(table.closest('div')).display !== 'none' : false,
+      listVisible: list ? getComputedStyle(list).display !== 'none' : false,
+      items: list ? list.children.length : 0,
+    }
+  })()`)
+  record(
+    '窄屏：用户管理切换卡片列表',
+    !narrowUsers.tableVisible && narrowUsers.listVisible,
+    `卡片 ${narrowUsers.items} 项`,
+  )
+  await shot('06-admin-users-mobile')
+
   ws.close()
 } finally {
   chrome.kill()
