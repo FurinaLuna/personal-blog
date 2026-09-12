@@ -143,7 +143,7 @@ export function renderMarkdown(source: string): RenderResult {
 
   // 2) 代码高亮 + 语言标签 + 复制标记。
   //    highlight.js 直接操作 DOM，比自己拼字符串安全得多。
-  //    这里只负责「标记结构」（data-copyable / .code-lang），真正的复制交互
+  //    这里只负责「标记结构」（data-copyable / .code-block__lang），真正的复制交互
   //    由 MarkdownRenderer 用事件委托绑定 —— 工具函数不该掺和 UI 行为，
   //    否则后台编辑器复用这段渲染逻辑时会被迫引入 toast 依赖。
   //
@@ -184,7 +184,7 @@ export function renderMarkdown(source: string): RenderResult {
     wrapper.append(block)
 
     const tag = document.createElement('span')
-    tag.className = 'code-lang'
+    tag.className = 'code-block__lang'
     tag.textContent = lang
     wrapper.append(tag)
 
@@ -192,7 +192,7 @@ export function renderMarkdown(source: string): RenderResult {
     // 但点击行为留给 MarkdownRenderer 用事件委托绑定 —— 结构与行为分离。
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = 'code-copy'
+    button.className = 'code-block__copy'
     button.textContent = '复制'
     button.setAttribute('aria-label', `复制 ${lang} 代码`)
     wrapper.append(button)

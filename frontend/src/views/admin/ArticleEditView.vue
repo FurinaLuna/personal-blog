@@ -255,10 +255,10 @@ onMounted(async () => {
         <span v-if="form.slug" class="hidden font-mono text-xs text-ink-faint sm:inline">
           /article/{{ form.slug }}
         </span>
-        <button type="button" class="btn-ghost" :disabled="action.running.value" @click="save('draft')">
+        <button type="button" class="btn--ghost" :disabled="action.running.value" @click="save('draft')">
           保存草稿
         </button>
-        <button type="button" class="btn-primary" :disabled="action.running.value" @click="save('published')">
+        <button type="button" class="btn--primary" :disabled="action.running.value" @click="save('published')">
           {{ action.running.value ? '保存中…' : isDraft ? '发布' : '更新' }}
         </button>
       </div>
@@ -280,7 +280,7 @@ onMounted(async () => {
         发现本地未保存的草稿（{{ draftSavedLabel }}），可能是上次意外关闭留下的。
       </span>
       <div class="ml-auto flex items-center gap-3">
-        <button type="button" class="btn-primary" @click="applyDraft">恢复草稿</button>
+        <button type="button" class="btn--primary" @click="applyDraft">恢复草稿</button>
         <button
           type="button"
           class="text-amber-800 underline hover:no-underline dark:text-amber-200"
@@ -411,7 +411,7 @@ onMounted(async () => {
           <div class="flex gap-2">
             <button
               type="button"
-              class="btn-ghost flex-1 text-xs"
+              class="btn--ghost flex-1 text-xs"
               :disabled="coverAction.running.value"
               @click="coverInput?.click()"
             >
@@ -420,7 +420,7 @@ onMounted(async () => {
             <button
               v-if="form.cover_image"
               type="button"
-              class="btn-ghost text-xs"
+              class="btn--ghost text-xs"
               @click="form.cover_image = ''"
             >
               移除
@@ -446,7 +446,7 @@ onMounted(async () => {
     </div>
 
     <div class="flex justify-between">
-      <RouterLink to="/admin/articles" class="btn-ghost">← 返回列表</RouterLink>
+      <RouterLink to="/admin/articles" class="btn--ghost">← 返回列表</RouterLink>
     </div>
   </div>
 </template>

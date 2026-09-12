@@ -33,7 +33,7 @@ defineEmits<{ action: [] }>()
     </div>
     <p class="text-base font-medium text-ink">{{ title }}</p>
     <p v-if="description" class="mt-1.5 max-w-sm text-sm text-ink-soft">{{ description }}</p>
-    <button v-if="actionLabel" type="button" class="btn-primary mt-5" @click="$emit('action')">
+    <button v-if="actionLabel" type="button" class="btn--primary mt-5" @click="$emit('action')">
       {{ actionLabel }}
     </button>
     <slot />

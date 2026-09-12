@@ -1,0 +1,65 @@
+/**
+ * 元素级默认样式（对应 Tailwind 的 base 层）。
+ *
+ * 只做三件事：全局默认、可访问性底线、以及被 Tailwind 预置重置掉的浏览器行为。
+ * 组件级样式一律放 components.css，不要在这里写类选择器。
+ */
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* 锚点跳转时给固定头部留出空间，否则标题会被顶栏盖住 */
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+  }
+
+  /* 键盘 Tab 聚焦必须可见——这是可访问性的底线，不能因为"不好看"就去掉 */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-bg;
+  }
+
+  ::selection {
+    @apply bg-brand-200 text-brand-900;
+  }
+
+  /* 滚动条（仅 WebKit）：默认样式在暗色模式下非常刺眼 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full;
+    background-color: rgb(var(--c-border));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--c-ink-faint));
+  }
+  ::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+}
+
+/* ------------------------------------------------- 尊重「减少动态效果」偏好
+   前庭功能敏感的用户会把系统设置调成减少动效，这时平滑滚动、卡片浮起、
+   渐入动画都可能引起不适。全局关掉，而不是逐个组件去判断。
+
+   注意：这段**只允许存在一处**。重构前 style.css 里写了两份且内容不一致
+   （一份少了 animation-iteration-count），等于同一意图要维护两遍，
+   最后必然只改一处。 */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

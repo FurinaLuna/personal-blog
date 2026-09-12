@@ -87,7 +87,7 @@ onMounted(() => {
     <div class="flex flex-wrap items-center gap-3">
       <form class="flex flex-1 gap-2 sm:max-w-md" @submit.prevent="reload()">
         <input v-model="keyword" class="input" placeholder="搜索标题或正文…" />
-        <button type="submit" class="btn-ghost shrink-0">搜索</button>
+        <button type="submit" class="btn--ghost shrink-0">搜索</button>
       </form>
 
       <select
@@ -100,7 +100,7 @@ onMounted(() => {
         </option>
       </select>
 
-      <RouterLink to="/admin/articles/new" class="btn-primary ml-auto">写文章</RouterLink>
+      <RouterLink to="/admin/articles/new" class="btn--primary ml-auto">写文章</RouterLink>
     </div>
 
     <div v-if="articles.loading.value && !articles.ready.value" class="space-y-2">

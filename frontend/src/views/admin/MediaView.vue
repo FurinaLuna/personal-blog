@@ -100,7 +100,7 @@ onMounted(() => {
 
       <button
         type="button"
-        class="btn-primary ml-auto"
+        class="btn--primary ml-auto"
         :disabled="uploading"
         @click="fileInput?.click()"
       >

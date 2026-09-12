@@ -101,7 +101,7 @@ onMounted(() => {
   <div class="mx-auto max-w-3xl space-y-6">
     <div class="flex items-center gap-3">
       <h2 class="text-sm text-ink-soft">站点信息会实时反映到前台首页、页脚与关于页</h2>
-      <button type="button" class="btn-primary ml-auto" :disabled="action.running.value" @click="save">
+      <button type="button" class="btn--primary ml-auto" :disabled="action.running.value" @click="save">
         {{ action.running.value ? '保存中…' : '保存设置' }}
       </button>
     </div>
@@ -148,7 +148,7 @@ onMounted(() => {
     <section class="card p-5">
       <div class="mb-3 flex items-center gap-3">
         <h3 class="text-sm font-medium text-ink">社交链接</h3>
-        <button type="button" class="btn-ghost ml-auto px-2.5 py-1 text-xs" @click="addSocialLink">
+        <button type="button" class="btn--ghost ml-auto px-2.5 py-1 text-xs" @click="addSocialLink">
           添加
         </button>
       </div>
@@ -170,7 +170,7 @@ onMounted(() => {
           <input v-model="link.url" class="input flex-1" placeholder="https://" aria-label="链接地址" />
           <button
             type="button"
-            class="btn-ghost shrink-0 px-2.5 py-1.5 text-xs"
+            class="btn--ghost shrink-0 px-2.5 py-1.5 text-xs"
             @click="removeSocialLink(index)"
           >
             移除
@@ -225,7 +225,7 @@ onMounted(() => {
     </section>
 
     <div class="flex justify-end">
-      <button type="button" class="btn-primary" :disabled="action.running.value" @click="save">
+      <button type="button" class="btn--primary" :disabled="action.running.value" @click="save">
         {{ action.running.value ? '保存中…' : '保存设置' }}
       </button>
     </div>

@@ -52,7 +52,7 @@ onMounted(() => {
         v-for="item in categories.data.value"
         :key="item.id"
         :to="{ path: '/', query: { category: item.slug } }"
-        class="card card-hover p-5"
+        class="card card--hover p-5"
       >
         <div class="flex items-center justify-between gap-3">
           <h2 class="font-medium text-ink">{{ item.name }}</h2>

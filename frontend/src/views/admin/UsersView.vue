@@ -119,7 +119,7 @@ onMounted(() => {
         </label>
 
         <div class="flex items-end">
-          <button type="submit" class="btn-primary w-full sm:w-auto" :disabled="action.running.value">
+          <button type="submit" class="btn--primary w-full sm:w-auto" :disabled="action.running.value">
             {{ action.running.value ? '创建中…' : '创建用户' }}
           </button>
         </div>

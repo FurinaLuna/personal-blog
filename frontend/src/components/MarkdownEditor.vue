@@ -106,28 +106,28 @@ function onPaste(event: ClipboardEvent): void {
   <div class="overflow-hidden rounded-xl border border-border bg-surface">
     <!-- 工具栏 -->
     <div class="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="加粗" @click="wrap('**', '**', '加粗文字')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="加粗" @click="wrap('**', '**', '加粗文字')">
         <strong>B</strong>
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs italic" title="斜体" @click="wrap('*', '*', '斜体文字')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs italic" title="斜体" @click="wrap('*', '*', '斜体文字')">
         I
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="行内代码" @click="wrap('`', '`', 'code')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="行内代码" @click="wrap('`', '`', 'code')">
         &lt;/&gt;
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="链接" @click="wrap('[', '](https://)', '链接文字')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="链接" @click="wrap('[', '](https://)', '链接文字')">
         链接
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="引用" @click="insertLine('> ')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="引用" @click="insertLine('> ')">
         引用
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="二级标题" @click="insertLine('## ')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="二级标题" @click="insertLine('## ')">
         H2
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="列表" @click="insertLine('- ')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="列表" @click="insertLine('- ')">
         列表
       </button>
-      <button type="button" class="btn-ghost px-2 py-1 text-xs" title="代码块" @click="wrap('\n```\n', '\n```\n', 'code')">
+      <button type="button" class="btn--ghost px-2 py-1 text-xs" title="代码块" @click="wrap('\n```\n', '\n```\n', 'code')">
         代码块
       </button>
 
@@ -135,7 +135,7 @@ function onPaste(event: ClipboardEvent): void {
 
       <button
         type="button"
-        class="btn-ghost px-2 py-1 text-xs"
+        class="btn--ghost px-2 py-1 text-xs"
         :disabled="uploading"
         title="上传图片并插入"
         @click="fileInput?.click()"

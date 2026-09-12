@@ -29,6 +29,6 @@ withDefaults(defineProps<{ heading?: string; hint?: string }>(), {
       页面结构已经预留，内容补上后无需改动路由。
     </p>
 
-    <RouterLink to="/" class="btn-ghost mt-6">返回首页</RouterLink>
+    <RouterLink to="/" class="btn--ghost mt-6">返回首页</RouterLink>
   </div>
 </template>

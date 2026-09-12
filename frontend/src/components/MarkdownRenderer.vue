@@ -52,7 +52,7 @@ async function copyText(text: string): Promise<boolean> {
 /** 事件委托：整块正文只挂一个监听器，几十个代码块也只有一个监听器开销。 */
 async function handleClick(event: MouseEvent): Promise<void> {
   const target = event.target as HTMLElement | null
-  const button = target?.closest<HTMLButtonElement>('.code-copy')
+  const button = target?.closest<HTMLButtonElement>('.code-block__copy')
   if (!button || !root.value?.contains(button)) return
 
   // 从按钮往上找最近的代码块，取其中的 code 文本（高亮后的 textContent 就是源码本身）

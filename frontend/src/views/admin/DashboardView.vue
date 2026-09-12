@@ -85,10 +85,10 @@ onMounted(() => {
       <div class="card p-5">
         <h2 class="mb-3 text-sm font-medium text-ink">快捷操作</h2>
         <div class="flex flex-wrap gap-3">
-          <RouterLink to="/admin/articles/new" class="btn-primary">写新文章</RouterLink>
-          <RouterLink to="/admin/taxonomy" class="btn-ghost">管理分类标签</RouterLink>
-          <RouterLink to="/admin/media" class="btn-ghost">媒体库</RouterLink>
-          <RouterLink v-if="site.stats.pending_comment_total > 0" to="/admin/comments?approved=false" class="btn-ghost">
+          <RouterLink to="/admin/articles/new" class="btn--primary">写新文章</RouterLink>
+          <RouterLink to="/admin/taxonomy" class="btn--ghost">管理分类标签</RouterLink>
+          <RouterLink to="/admin/media" class="btn--ghost">媒体库</RouterLink>
+          <RouterLink v-if="site.stats.pending_comment_total > 0" to="/admin/comments?approved=false" class="btn--ghost">
             审核评论（{{ site.stats.pending_comment_total }}）
           </RouterLink>
         </div>

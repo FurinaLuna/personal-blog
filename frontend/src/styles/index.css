@@ -1,0 +1,26 @@
+/**
+ * 样式唯一入口。
+ *
+ * 为什么 @import 放在最前：CSS 规范要求 @import 先于其他语句出现，
+ * Vite 的 postcss-import 会按此顺序内联。分层与优先级不受影响——
+ * Tailwind 会把各文件里 `@layer xxx` 的内容归入对应层，与书写位置无关；
+ * 未包裹在 @layer 里的规则（.code-block、.prose 覆盖、.hljs）天然高于任何
+ * 分层规则，因此能稳定覆盖第三方样式与工具类。
+ *
+ * 文件职责（详见 docs/STYLEGUIDE.md）：
+ *   tokens.css      设计令牌：颜色 / 字体 / 动效时长（全站唯一定义处）
+ *   base.css        元素级默认 + 可访问性底线 + 减少动效
+ *   components.css  可复用组件类（BEM 命名）
+ *   prose.css       文章正文里 typography 插件表达不了的部分
+ *   vendor.css      第三方样式覆盖（highlight.js 暗色主题）
+ */
+
+@import './tokens.css';
+@import './base.css';
+@import './components.css';
+@import './prose.css';
+@import './vendor.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -87,7 +87,7 @@ onMounted(() => {
         {{ errorMessage }}
       </p>
 
-      <button type="submit" class="btn-primary w-full" :disabled="action.running.value">
+      <button type="submit" class="btn--primary w-full" :disabled="action.running.value">
         {{ action.running.value ? '登录中…' : '登录' }}
       </button>
     </form>

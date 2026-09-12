@@ -105,7 +105,7 @@ const brandName = computed(() => site.title)
 
         <button
           type="button"
-          class="btn-icon inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft hover:bg-surface-muted hover:text-ink md:hidden"
+          class="btn--icon inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft hover:bg-surface-muted hover:text-ink md:hidden"
           :aria-expanded="mobileOpen"
           aria-label="切换导航菜单"
           @click="mobileOpen = !mobileOpen"

@@ -67,7 +67,7 @@ const rangeText = computed(() => {
     <div class="flex items-center gap-1">
       <button
         type="button"
-        class="btn-ghost px-2.5 py-1.5"
+        class="btn--ghost px-2.5 py-1.5"
         :disabled="page <= 1"
         aria-label="上一页"
         @click="go(page - 1)"
@@ -97,7 +97,7 @@ const rangeText = computed(() => {
 
       <button
         type="button"
-        class="btn-ghost px-2.5 py-1.5"
+        class="btn--ghost px-2.5 py-1.5"
         :disabled="page >= totalPages"
         aria-label="下一页"
         @click="go(page + 1)"

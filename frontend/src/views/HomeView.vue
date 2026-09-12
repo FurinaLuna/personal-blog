@@ -151,7 +151,7 @@ onMounted(() => {
           <button
             v-if="hasFilter"
             type="button"
-            class="btn-ghost px-2.5 py-1.5 text-xs"
+            class="btn--ghost px-2.5 py-1.5 text-xs"
             @click="clearFilters"
           >
             清除筛选
@@ -172,7 +172,7 @@ onMounted(() => {
           placeholder="搜索标题、摘要或正文…"
           maxlength="100"
         />
-        <button type="submit" class="btn-primary shrink-0">搜索</button>
+        <button type="submit" class="btn--primary shrink-0">搜索</button>
       </form>
 
       <LoadingSkeleton v-if="articles.loading.value && !articles.ready.value" :rows="4" />
@@ -182,7 +182,7 @@ onMounted(() => {
         class="card p-6 text-center text-sm text-ink-soft"
       >
         <p>{{ toErrorMessage(articles.error.value) }}</p>
-        <button type="button" class="btn-ghost mt-4" @click="articles.run()">重试</button>
+        <button type="button" class="btn--ghost mt-4" @click="articles.run()">重试</button>
       </div>
 
       <EmptyState

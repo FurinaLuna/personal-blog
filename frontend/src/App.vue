@@ -46,8 +46,8 @@ onErrorCaptured((error) => {
       页面渲染时发生了意外。可以先返回首页，或刷新重试；问题持续存在时请联系站长。
     </p>
     <div class="mt-6 flex items-center justify-center gap-3">
-      <a href="/" class="btn-primary">返回首页</a>
-      <button type="button" class="btn-ghost" @click="crashed = false">
+      <a href="/" class="btn--primary">返回首页</a>
+      <button type="button" class="btn--ghost" @click="crashed = false">
         重试
       </button>
     </div>

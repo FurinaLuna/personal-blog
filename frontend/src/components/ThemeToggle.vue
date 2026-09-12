@@ -18,7 +18,7 @@ const label = computed(() => LABELS[theme.mode])
 <template>
   <button
     type="button"
-    class="btn-icon inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-muted hover:text-ink"
+    class="btn--icon inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-muted hover:text-ink"
     :title="label"
     :aria-label="label"
     @click="theme.cycle()"

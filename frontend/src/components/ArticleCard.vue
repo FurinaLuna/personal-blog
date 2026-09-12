@@ -38,7 +38,7 @@ function warm(): void {
 </script>
 
 <template>
-  <article class="card card-hover group p-5 sm:p-6">
+  <article class="card card--hover group p-5 sm:p-6">
     <div class="flex flex-col gap-4 sm:flex-row">
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">

@@ -1,0 +1,164 @@
+/**
+ * 可复用组件样式。
+ *
+ * 命名约定（BEM，全站统一，详见 docs/STYLEGUIDE.md）：
+ *   .block              块：独立可复用的组件（card / btn / input / chip …）
+ *   .block__element     元素：块的组成部分，**不能脱离块使用**
+ *   .block--modifier    修饰符：块或元素的变体
+ *   状态用 data-* 属性表达（如 [data-state='done']），不用 .is-xxx 类
+ *
+ * 重构前的三个反例（已修正）：
+ *   .btn-primary   → 修饰符用单连字符，与 .btn-icon 混在一起分不清块与变体
+ *   .card-hover    → 同上
+ *   .code-lang     → 元素名没有归属块，改块名时根本找不到它
+ *
+ * 选择器保持扁平：能一层选中就不要两层。BEM 的类名已经携带归属关系，
+ * 再用后代选择器抬高特异性，只会让后续覆盖变困难。
+ */
+
+@layer components {
+  /* ================================================================ 按钮 */
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg px-4 py-2
+      text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn--primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+  }
+
+  .btn--ghost {
+    @apply btn border border-border bg-surface text-ink-soft hover:bg-surface-muted hover:text-ink;
+  }
+
+  .btn--danger {
+    @apply btn border border-red-200 bg-surface text-red-600 hover:bg-red-50
+      dark:border-red-900/50 dark:hover:bg-red-950/40;
+  }
+
+  /* 图标按钮：视觉保持 36px，但把可点击区域扩到 44px。
+     做法是用伪元素向外撑 4px，而不是直接把按钮做成 44px——后者在密集的
+     头部里会显得笨重。WCAG 2.5.5 要求的是「命中区域」，不是「视觉尺寸」。 */
+  .btn--icon {
+    position: relative;
+  }
+
+  /* 刻意不写成 .btn--icon 的嵌套（&::after）：本项目的 postcss 只挂了
+     tailwindcss + autoprefixer，没有嵌套插件，写嵌套等于把兼容性押在浏览器上 */
+  .btn--icon::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+  }
+
+  /* ================================================================ 卡片 */
+
+  .card {
+    @apply rounded-xl border border-border bg-surface transition-shadow;
+  }
+
+  .card--hover:hover {
+    box-shadow: 0 8px 24px -12px rgb(var(--c-shadow) / 0.25);
+  }
+
+  /* ================================================================ 表单 */
+
+  .input {
+    @apply w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink
+      placeholder:text-ink-faint focus:border-brand-400 focus:outline-none
+      focus:ring-2 focus:ring-brand-500/25;
+  }
+
+  /* ================================================================ 其他 */
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted
+      px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-brand-300
+      hover:text-brand-600;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded bg-surface-muted;
+  }
+}
+
+/* ================================================================ 代码块增强
+   结构由 utils/markdown.ts 生成（.code-block / __lang / __copy），
+   这里只负责外观。两个角标分居上下：语言标签在右下常驻、复制按钮在右上 hover 浮现，
+   天然不重叠，不需要 JS 去算宽度让位。 */
+
+.code-block {
+  position: relative;
+}
+
+.code-block__lang {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--badge-radius);
+  font-family: var(--font-mono);
+  font-size: var(--badge-font-size);
+  line-height: 1.4;
+  color: rgb(var(--c-ink-faint));
+  background: rgb(var(--c-surface-muted));
+  pointer-events: none;
+  user-select: none;
+}
+
+.code-block__copy {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--badge-radius-copy);
+  border: 1px solid rgb(var(--c-border));
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-ink-soft));
+  font-size: var(--badge-font-size);
+  line-height: 1.4;
+  cursor: pointer;
+  /* 默认隐藏，鼠标移到代码块上才浮现 —— 减少视觉噪音 */
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
+}
+
+/* 悬停/聚焦显示：写成一层的 .code-block__copy 无法表达「父级 hover」，
+   所以这里保留一层后代选择器——这是必要的，不是为了嵌套而嵌套 */
+.code-block:hover .code-block__copy,
+.code-block:focus-within .code-block__copy {
+  opacity: 1;
+}
+
+.code-block__copy:hover {
+  color: rgb(var(--c-ink));
+  border-color: rgb(var(--c-ink-faint));
+}
+
+/* 已复制状态的反馈：不打断阅读，只变色 + 换文案 */
+.code-block__copy[data-state='done'] {
+  color: rgb(var(--c-success));
+  border-color: rgb(var(--c-success-border));
+}
+
+/* 触屏没有 hover，按钮必须常驻，否则用户找不到复制入口 */
+@media (hover: none) {
+  .code-block__copy {
+    opacity: 1;
+  }
+}
+
+/* ================================================================ 路由过渡 */
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--duration-base) ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}

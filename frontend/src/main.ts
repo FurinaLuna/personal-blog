@@ -1,10 +1,10 @@
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
 
-// 顺序很重要：先引入 highlight.js 的亮色主题，再引入自己的 style.css。
+// 顺序很重要：先引入 highlight.js 的亮色主题，再引入自己的样式入口。
 // 反过来的话，我们的暗色覆盖会被 highlight.js 的样式盖掉。
 import 'highlight.js/styles/github.css'
-import '@/style.css'
+import '@/styles/index.css'
 
 import App from '@/App.vue'
 import router from '@/router'

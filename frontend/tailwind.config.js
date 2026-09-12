@@ -31,29 +31,11 @@ export default {
           900: '#1c2f6e',
         },
       },
+      // 字体栈在 src/styles/tokens.css 里定义（单一来源），这里只做引用，
+      // 避免「同一个字体栈写在两个文件里」——那种重复迟早只改一处
       fontFamily: {
-        sans: [
-          '"Inter var"',
-          'Inter',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          '"Segoe UI"',
-          '"PingFang SC"',
-          '"Hiragino Sans GB"',
-          '"Microsoft YaHei"',
-          '"Source Han Sans SC"',
-          'sans-serif',
-        ],
-        mono: [
-          '"JetBrains Mono"',
-          '"Fira Code"',
-          'ui-monospace',
-          'SFMono-Regular',
-          'Menlo',
-          'Consolas',
-          '"Courier New"',
-          'monospace',
-        ],
+        sans: ['var(--font-sans)'],
+        mono: ['var(--font-mono)'],
       },
       maxWidth: {
         content: '760px',

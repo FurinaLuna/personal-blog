@@ -34,7 +34,7 @@ onMounted(() => {
       </div>
       <button
         type="button"
-        class="btn-ghost ml-auto px-2.5 py-1.5 text-xs"
+        class="btn--ghost ml-auto px-2.5 py-1.5 text-xs"
         @click="hideCount = !hideCount"
       >
         {{ hideCount ? '显示篇数' : '隐藏篇数' }}

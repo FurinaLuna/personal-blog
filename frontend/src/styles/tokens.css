@@ -1,0 +1,87 @@
+/**
+ * 设计令牌（design tokens）。
+ *
+ * 全站**唯一**的颜色 / 字体 / 动效时长定义处。组件样式一律引用这里的变量，
+ * 不写死具体色值——「换皮肤」因此只需要动这一个文件。
+ *
+ * 两条硬约束：
+ * 1. 颜色变量必须是「R G B」三个数字，不带 rgb() 包裹。Tailwind 的
+ *    `<alpha-value>` 机制要靠它拼接透明度（如 `bg-ink/50`）。
+ * 2. 新增语义色时同时补亮/暗两套，否则暗色模式会漏。
+ */
+
+:root {
+  /* 让浏览器把滚动条、原生 select / 日期控件、表单自动填充一起调成亮色；
+     不声明的话暗色模式下这些原生 UI 会保持白色，非常割裂 */
+  color-scheme: light;
+
+  /* ---------- 表面与文字 ---------- */
+  --c-bg: 248 250 252;
+  --c-surface: 255 255 255;
+  --c-surface-muted: 241 245 249;
+  --c-border: 226 232 240;
+  --c-ink: 15 23 42;
+  --c-ink-soft: 71 85 105;
+  --c-ink-faint: 148 163 184;
+
+  /* ---------- 代码块 ---------- */
+  --c-code-bg: 246 248 252;
+  --c-code-ink: 30 41 59;
+
+  /* ---------- 语义状态 ----------
+     复制成功态原先写死 #3b6d11 / #97c459，导致暗色下对比度不足且无法换肤。
+     提升为语义令牌，亮/暗各一套。 */
+  --c-success: 59 109 17;
+  --c-success-border: 151 196 89;
+
+  /* ---------- 效果 ---------- */
+  /* 卡片浮起阴影的基色；暗色下置为纯黑，避免在深色背景上出现灰雾 */
+  --c-shadow: 15 23 42;
+
+  /* ---------- 字体 ----------
+     字体栈的唯一来源。tailwind.config.js 的 fontFamily 直接引用这两个变量
+     （`sans: ['var(--font-sans)']`），所以换字体只需要改这里一处。
+
+     之所以必须显式声明 `--font-mono`：Tailwind 的 fontFamily 配置会生成
+     `.font-mono` 工具类，但**不会**生成同名 CSS 变量。此前 .code-lang 引用
+     var(--font-mono) 一直取不到值，语言标签悄悄回退成了正文字体——
+     这是一个被「令牌缺失」掩盖的视觉 bug。 */
+  --font-sans:
+    'Inter var', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New',
+    monospace;
+
+  /* ---------- 动效 ---------- */
+  --duration-fast: 0.15s;
+  --duration-base: 0.18s;
+
+  /* ---------- 代码块角标参数 ----------
+     集中在此，避免「改个字号要翻三处」 */
+  --badge-font-size: 11px;
+  --badge-radius: 4px;
+  --badge-radius-copy: 5px;
+}
+
+.dark {
+  /* 配套暗色：原生滚动条 / 输入框 / 自动填充背景都会跟着变暗 */
+  color-scheme: dark;
+
+  --c-bg: 15 19 28;
+  --c-surface: 22 27 38;
+  --c-surface-muted: 30 37 51;
+  --c-border: 44 53 71;
+  --c-ink: 232 237 246;
+  --c-ink-soft: 168 180 199;
+  --c-ink-faint: 120 133 153;
+
+  --c-code-bg: 17 22 32;
+  --c-code-ink: 219 228 240;
+
+  /* 暗色下提亮成功态，保证深色底上有足够对比度 */
+  --c-success: 151 196 89;
+  --c-success-border: 59 109 17;
+
+  --c-shadow: 0 0 0;
+}

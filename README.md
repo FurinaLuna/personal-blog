@@ -204,19 +204,25 @@ personal-blog/
 │   │   ├── layouts/                # Default / Admin / Blank 三套布局
 │   │   ├── router/                 # 路由表 + 守卫
 │   │   ├── stores/                 # Pinia：auth / site / theme
-│   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取
+│   │   ├── styles/                 # ★ 样式：tokens / base / components / prose / vendor
+│   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 状态元数据
 │   │   └── views/                  # 前台 9 页 + 后台 8 页
 │   └── src/**/*.spec.ts            # 48 个 Vitest 用例
 ├── deploy/                         # Dockerfile × 2 + nginx.conf
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
 │   ├── ASSESSMENT.md               # 全面评估（风险 / 升级 / 功能 / 性能）
+│   ├── CODE-REVIEW.md              # 代码评审（臃肿 / 冗余 / 重复 / 内聚耦合）
+│   ├── STYLEGUIDE.md               # ★ 样式规范（文件组织 / BEM 命名 / 验证方法）
 │   ├── ROADMAP.md                  # 迭代路线图与进度
 │   ├── devlog/                     # 逐日开发日志（决策 / 验证 / 踩坑）
 │   └── screenshots/                # 界面截图
 ├── tools/
 │   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互
-│   └── interaction-check.mjs       # CDP 交互：写操作与失败路径
+│   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径
+│   ├── style-baseline.mjs          # 采集关键元素的计算样式（样式重构前/后比对）
+│   ├── style-diff.mjs              # 比对两份样式基线，有差异即报
+│   └── style-ab-font.mjs           # 针对字体令牌修复的 A/B 验证
 ├── Makefile                        # 常用命令入口
 ├── docker-compose.yml
 ├── CONTRIBUTING.md                 # 贡献指南

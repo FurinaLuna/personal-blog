@@ -63,10 +63,10 @@ describe('renderMarkdown 代码块增强', () => {
   it('包上 .code-block 并给出语言标签与复制按钮', () => {
     const { html } = renderMarkdown('```python\nprint(1)\n```')
     expect(html).toContain('code-block')
-    expect(html).toContain('code-lang')
+    expect(html).toContain('code-block__lang')
     expect(html).toContain('python')
     // 复制按钮由渲染流水线生成，行为绑定在组件层
-    expect(html).toContain('code-copy')
+    expect(html).toContain('code-block__copy')
     expect(html).toContain('data-copyable="true"')
   })
 

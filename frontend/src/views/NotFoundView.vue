@@ -16,8 +16,8 @@ useHead({ title: '页面不存在' })
     </p>
 
     <div class="mt-7 flex justify-center gap-3">
-      <RouterLink to="/" class="btn-primary">返回首页</RouterLink>
-      <RouterLink to="/archive" class="btn-ghost">查看归档</RouterLink>
+      <RouterLink to="/" class="btn--primary">返回首页</RouterLink>
+      <RouterLink to="/archive" class="btn--ghost">查看归档</RouterLink>
     </div>
   </div>
 </template>

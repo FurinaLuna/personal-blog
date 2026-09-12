@@ -1,0 +1,24 @@
+/**
+ * 文章正文（Markdown 渲染区）的样式。
+ *
+ * 绝大多数排版由 `@tailwindcss/typography` 在 tailwind.config.js 里配置，
+ * 这里只放它**表达不了**的部分：
+ *   - 需要 display 改造的（表格横向滚动、图片居中）
+ *   - 会被 v-html 注入、走不到 Vue 模板的节点（代码块系列见 components.css）
+ *
+ * 判断标准：能用 config 表达的就不写在这里。排版规则分散在两处时，
+ * 改版式的人必须先知道有两处——这是可维护性最贵的成本。
+ */
+
+.prose pre {
+  overflow-x: auto;
+}
+
+.prose :where(img, video) {
+  @apply mx-auto;
+}
+
+.prose :where(table) {
+  display: block;
+  overflow-x: auto;
+}

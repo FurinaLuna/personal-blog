@@ -136,8 +136,8 @@ watch(
       </p>
       <p class="mt-4 text-sm text-ink-soft">{{ toErrorMessage(article.error.value) }}</p>
       <div class="mt-6 flex justify-center gap-3">
-        <RouterLink to="/" class="btn-primary">返回首页</RouterLink>
-        <button type="button" class="btn-ghost" @click="article.run()">重试</button>
+        <RouterLink to="/" class="btn--primary">返回首页</RouterLink>
+        <button type="button" class="btn--ghost" @click="article.run()">重试</button>
       </div>
     </div>
 
@@ -245,7 +245,7 @@ watch(
         <RouterLink
           v-if="article.data.value.prev"
           :to="`/article/${article.data.value.prev.slug}`"
-          class="card card-hover p-4"
+          class="card card--hover p-4"
         >
           <p class="text-xs text-ink-faint">← 上一篇</p>
           <p class="mt-1.5 line-clamp-2 text-sm font-medium text-ink">
@@ -257,7 +257,7 @@ watch(
         <RouterLink
           v-if="article.data.value.next"
           :to="`/article/${article.data.value.next.slug}`"
-          class="card card-hover p-4 sm:text-right"
+          class="card card--hover p-4 sm:text-right"
         >
           <p class="text-xs text-ink-faint">下一篇 →</p>
           <p class="mt-1.5 line-clamp-2 text-sm font-medium text-ink">
@@ -271,7 +271,7 @@ watch(
         <h2 class="text-sm font-semibold text-ink">相关阅读</h2>
         <ul class="mt-4 grid gap-3 sm:grid-cols-2">
           <li v-for="item in related" :key="item.id">
-            <RouterLink :to="`/article/${item.slug}`" class="card card-hover flex gap-3 p-3">
+            <RouterLink :to="`/article/${item.slug}`" class="card card--hover flex gap-3 p-3">
               <div
                 v-if="item.cover_image"
                 class="h-14 w-20 shrink-0 overflow-hidden rounded-md bg-surface-muted"

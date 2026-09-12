@@ -72,12 +72,12 @@ watch(
           <p v-if="message" class="mt-2 text-sm leading-relaxed text-ink-soft">{{ message }}</p>
 
           <div class="mt-5 flex justify-end gap-2">
-            <button type="button" class="btn-ghost" :disabled="loading" @click="emit('cancel')">
+            <button type="button" class="btn--ghost" :disabled="loading" @click="emit('cancel')">
               {{ cancelLabel }}
             </button>
             <button
               type="button"
-              :class="danger ? 'btn-danger' : 'btn-primary'"
+              :class="danger ? 'btn--danger' : 'btn--primary'"
               :disabled="loading"
               @click="emit('confirm')"
             >

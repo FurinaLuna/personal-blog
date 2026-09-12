@@ -1,0 +1,65 @@
+/**
+ * 第三方样式的必要覆盖（vendor overrides）。
+ *
+ * 这里是全站唯一允许出现**硬编码色值**的地方——那些颜色不是我们的设计决策，
+ * 而是上游主题的原始配色，套进自己的令牌反而会失真。每条都标注来源。
+ *
+ * 目前只有一项：highlight.js 的暗色主题。
+ * 亮色直接用官方的 github 主题（在 main.ts 里 import）；暗色官方没有对应主题，
+ * 因此按 GitHub 暗色（Primer）的配色手工补齐。
+ */
+
+/* 代码块底色交给设计令牌——这是我们的视觉决策，不是上游的 */
+.hljs {
+  background: transparent !important;
+  color: rgb(var(--c-code-ink));
+}
+
+/* 以下色值对应 Primer 的语法配色（上游色值，刻意不 token 化）：
+   #7d8799 = fg.muted（注释）   #ff7b72 = coral（关键字）
+   #a5d6ff = blue.2（字符串）   #79c0ff = blue.3（数字/变量）
+   #d2a8ff = purple.3（函数名） #ffa657 = orange.3（内置/类名） */
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: #7d8799;
+}
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-literal,
+.dark .hljs-section,
+.dark .hljs-link {
+  color: #ff7b72;
+}
+.dark .hljs-string,
+.dark .hljs-title,
+.dark .hljs-name,
+.dark .hljs-type,
+.dark .hljs-attribute,
+.dark .hljs-symbol,
+.dark .hljs-bullet,
+.dark .hljs-addition {
+  color: #a5d6ff;
+}
+.dark .hljs-number,
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-meta {
+  color: #79c0ff;
+}
+.dark .hljs-function .hljs-title,
+.dark .hljs-title.function_ {
+  color: #d2a8ff;
+}
+.dark .hljs-built_in,
+.dark .hljs-class .hljs-title,
+.dark .hljs-title.class_ {
+  color: #ffa657;
+}
+
+/* 强调方式与主题无关，用语义属性而非颜色 */
+.dark .hljs-emphasis {
+  font-style: italic;
+}
+.dark .hljs-strong {
+  font-weight: 600;
+}

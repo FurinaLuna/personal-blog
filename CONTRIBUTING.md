@@ -77,6 +77,9 @@ make smoke          # 真实浏览器冒烟（需先 make dev 起好前后端）
 - 写操作走 `useAction()`，不要各写一套 try/catch/toast
 - 列表请求走 `useAsyncData()`（内置竞态保护）
 - 注释解释「为什么」而不是「做了什么」
+- **样式改前先读 [`docs/STYLEGUIDE.md`](docs/STYLEGUIDE.md)**：文件分层、BEM 命名、
+  选择器纪律都在那里。要点：样式只写在 `src/styles/`，组件里用工具类或已有组件类；
+  改了样式要用 `tools/style-baseline.mjs` + `style-diff.mjs` 证明视觉没变
 
 **通用**
 

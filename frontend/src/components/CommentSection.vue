@@ -214,7 +214,7 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
             <span v-else>评论会立即显示</span>
             · {{ form.content.length }}/2000
           </p>
-          <button type="button" class="btn-primary" :disabled="action.running.value" @click="submit">
+          <button type="button" class="btn--primary" :disabled="action.running.value" @click="submit">
             {{ action.running.value ? '提交中…' : '发表评论' }}
           </button>
         </div>
