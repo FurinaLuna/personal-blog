@@ -10,8 +10,8 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 183 个后端测试、48 个前端单测，
-外加两个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项）。
+**写出来能跑、改起来可验证** —— 187 个后端测试、73 个前端单测，
+外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）。
 
 ---
 
@@ -112,7 +112,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 183 例、前端 48 例 |
+| 测试 | pytest / Vitest | 后端 187 例、前端 73 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -208,7 +208,7 @@ personal-blog/
 │   │   ├── styles/                 # ★ 样式：tokens / base / components / prose / vendor
 │   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 状态元数据
 │   │   └── views/                  # 前台 9 页 + 后台 8 页
-│   └── src/**/*.spec.ts            # 48 个 Vitest 用例
+│   └── src/**/*.spec.ts            # 73 个 Vitest 用例
 ├── deploy/                         # Dockerfile × 2 + nginx.conf
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
@@ -220,8 +220,10 @@ personal-blog/
 │   ├── test-reports/               # full-check 各环境的运行报告（JSON）
 │   └── screenshots/                # 界面截图
 ├── tools/
-│   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互
-│   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径
+│   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互（34 项，只读）
+│   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径（22 项，对称还原）
+│   ├── full-check.mjs              # CDP 全功能回归：写操作生命周期 + 数据基线核对（41 项，自清理）
+│   ├── showcase-demo.mjs           # CDP 功能演示：用户视角完整旅程回放（11 步截图断言）
 │   ├── style-baseline.mjs          # 采集关键元素的计算样式（样式重构前/后比对）
 │   ├── style-diff.mjs              # 比对两份样式基线，有差异即报
 │   └── style-ab-font.mjs           # 针对字体令牌修复的 A/B 验证
@@ -303,18 +305,19 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 | 检查 | 结果 |
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
-| `pytest` | **183 passed** |
+| `pytest` | **187 passed** |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **48 passed** |
+| `vitest run` | **73 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 8 张表，干净回滚 |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 | `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
 
-**为什么要两个浏览器脚本**：单测与类型检查都是绿的情况下，
-项目里仍然出现过「登录后被弹回登录页」和「后台侧边栏渲染两遍、子页面完全不显示」
-这两个只有真实浏览器才暴露的问题。这两个脚本就是为此留下的回归网。
+**为什么要浏览器脚本**：单测与类型检查都是绿的情况下，
+项目里仍然出现过「登录后被弹回登录页」「后台侧边栏渲染两遍」和
+「登录 API 200、toast 已弹却卡在登录页不跳转」这类只有真实浏览器才暴露的问题。
+`smoke` / `interaction` / `full-check` / `showcase-demo` 四个脚本就是为此留下的回归网。
 
 ## 部署
 

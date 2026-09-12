@@ -8,13 +8,29 @@
 
 ## [Unreleased]
 
+### 已变更
+
+- 后端引入 import-linter 分层契约（`backend/.importlinter`），
+  模块依赖方向机器可验证，纳入 `make lint`；
+  seed 迁出 db 包、`BaseRepository` 收敛存在性检查、分页值对象统一下沉
+- 前端新增 `useConfirmDelete` / `useUpload` / `useTagInput` 组合式函数，
+  消除 5 处删除确认与 3 处上传的重复实现；types 按领域拆分
+- 新增 `tools/showcase-demo.mjs`：用户视角完整旅程回放（11 步截图断言）
+- 测试基线更新：后端 187 例、前端 73 例（Vitest）
+
+### 已修复
+
+- **登录成功后不跳转**：`auth` store 的 `login()` 成功时返回 `undefined`，
+  被 `LoginView` 的 `ok === undefined` 误判为失败，用户卡在登录页；
+  现改为成功返回 user 对象，并新增回归测试
+
 ### 计划中
 
 - 图片多尺寸与 AVIF 转换（上传时生成，老数据需回填脚本）
 - 文章「系列 / 合集」导航
 - 站点统计时间序列与后台趋势图
 - 评论邮件通知（含退订）
-- 服务层拆分（`ArticleService` 读写分离）与全站 API 限流扩容方案
+- 服务层读写分离（`ArticleService` 进一步拆分）与全站 API 限流扩容方案
 
 ## [1.0.0] - 2026-09-12
 
