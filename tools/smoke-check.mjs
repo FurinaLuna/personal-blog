@@ -311,7 +311,8 @@ async function main() {
         hasProse: !!document.querySelector('.prose'),
         codeBlocks: document.querySelectorAll('.prose pre code.hljs').length,
         headings: document.querySelectorAll('.prose h2, .prose h3').length,
-        tocItems: document.querySelectorAll('nav[aria-label="文章目录"] button').length,
+        // 目录项已从 button 改为锚点链接（章节可深链），选择器跟随着组件实现
+        tocItems: document.querySelectorAll('nav[aria-label="文章目录"] a[href^="#"]').length,
         commentSection: !!document.querySelector('#comments'),
         likes: !!document.querySelector('#comments'),
       }))()`,

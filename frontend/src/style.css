@@ -8,6 +8,10 @@
    注意：变量值必须是「R G B」三个数字，不能带 rgb() 包裹，
    因为 Tailwind 的 <alpha-value> 要靠它拼接透明度。 */
 :root {
+  /* 让浏览器把滚动条、原生 select / 日期控件、表单自动填充一起调成亮色；
+     不声明的话暗色模式下这些原生 UI 会保持白色，非常割裂 */
+  color-scheme: light;
+
   --c-bg: 248 250 252;
   --c-surface: 255 255 255;
   --c-surface-muted: 241 245 249;
@@ -21,6 +25,9 @@
 }
 
 .dark {
+  /* 配套暗色：原生滚动条 / 输入框 / 自动填充背景都会跟着变暗 */
+  color-scheme: dark;
+
   --c-bg: 15 19 28;
   --c-surface: 22 27 38;
   --c-surface-muted: 30 37 51;
@@ -70,7 +77,37 @@
   }
 }
 
+/* ------------------------------------------------- 尊重「减少动态效果」偏好
+   前庭功能敏感的用户会把系统设置调成减少动效，这时平滑滚动、卡片浮起、
+   渐入动画都可能引起不适。全局关掉，而不是逐个组件去判断。 */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @layer components {
+  /* 图标按钮：视觉保持 36px，但把可点击区域扩到 44px。
+     做法是用伪元素向外撑 4px，而不是直接把按钮做成 44px——后者在密集的
+     头部里会显得笨重。WCAG 2.5.5 要求的是「命中区域」，不是「视觉尺寸」。 */
+  .btn-icon {
+    position: relative;
+  }
+  .btn-icon::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+  }
+
   /* 全站统一卡片：一处改动，全站生效 */
   .card {
     @apply rounded-xl border border-border bg-surface transition-shadow;

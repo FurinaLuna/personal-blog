@@ -101,7 +101,7 @@ onMounted(() => {
       <header class="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface px-4 sm:px-6">
         <button
           type="button"
-          class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft hover:bg-surface-muted lg:hidden"
+          class="btn-icon inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft hover:bg-surface-muted lg:hidden"
           aria-label="切换侧边栏"
           @click="sidebarOpen = !sidebarOpen"
         >

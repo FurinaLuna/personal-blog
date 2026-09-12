@@ -82,6 +82,9 @@ async function loadSidebar(): Promise<void> {
     categories.value = categoryList.filter((item) => item.article_count > 0)
     tags.value = tagList
   } catch {
+    // 侧边栏的分类/标签是辅助信息，取不到就留空（文章列表本身有独立的错误处理），
+    // 不因此打断首页主流程
+    console.debug('[home] 侧边栏分类/标签加载失败，已留空')
     categories.value = []
     tags.value = []
   }

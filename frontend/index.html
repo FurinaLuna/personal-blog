@@ -8,6 +8,10 @@
     <meta name="description" content="记录技术、生活，以及一切值得写下来的东西。" />
     <!-- RSS 自动发现：阅读器输入域名就能找到订阅源 -->
     <link rel="alternate" type="application/rss+xml" title="RSS" href="/feed.xml" />
+    <!-- 移动端浏览器地址栏配色：两套随系统主题切换。
+         色值必须写成十六进制完整形式，Safari/Chrome 都不认 rgb() 与 CSS 变量 -->
+    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f131c" media="(prefers-color-scheme: dark)" />
     <script>
       // 在样式加载前就把主题类打到 <html> 上，避免暗色模式用户看到一次白屏闪烁。
       // 这段必须内联放在 head 里，不能放到打包产物里——那时代码执行已经晚了。

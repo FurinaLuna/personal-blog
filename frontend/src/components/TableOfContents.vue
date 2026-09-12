@@ -47,17 +47,39 @@ function setupObserver(): void {
   headings.forEach((heading) => observer?.observe(heading))
 }
 
-function scrollTo(id: string): void {
+/**
+ * 跳到某个标题。
+ *
+ * 用 `<a href="#id">` 而不是 `<button>`：章节是有 URL 语义的，
+ * 用户应该能右键复制链接、Cmd+点击、或者直接把 #section 发给别人。
+ * 默认行为（原生跳转）会丢掉平滑滚动，所以这里拦下来手动画，
+ * 再用 replaceState 把 hash 写回地址栏——不进历史栈，
+ * 否则用户要按十几次返回键才能离开这篇文章。
+ */
+function jumpTo(event: MouseEvent, id: string): void {
+  // 按住修饰键是「在新标签/窗口打开」的意图，交还给浏览器默认行为
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
+
   const target = document.getElementById(id)
   if (!target) return
-  // scroll-margin-top 由 style.css 的 scroll-padding-top 处理，这里只需要原生滚动
+  event.preventDefault()
+  // 与 style.css 的 scroll-padding-top 配合，标题不会被吸顶头部盖住
   target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  window.history.replaceState(null, '', `#${encodeURIComponent(id)}`)
   activeId.value = id
 }
 
 onMounted(() => {
   // 等一帧，确保 markdown 渲染出的标题已经进入 DOM 再建立观察
-  requestAnimationFrame(setupObserver)
+  requestAnimationFrame(() => {
+    setupObserver()
+    // 带 #章节 直接打开时补一次定位：SPA 渲染完 DOM 时原生锚点跳转已经错过了
+    const hash = decodeURIComponent(window.location.hash.slice(1))
+    if (hash && document.getElementById(hash)) {
+      document.getElementById(hash)?.scrollIntoView({ block: 'start' })
+      activeId.value = hash
+    }
+  })
 })
 
 onBeforeUnmount(() => observer?.disconnect())
@@ -68,8 +90,8 @@ onBeforeUnmount(() => observer?.disconnect())
     <p class="mb-3 text-xs font-medium uppercase tracking-wide text-ink-faint">目录</p>
     <ul class="space-y-1 border-l border-border">
       <li v-for="item in visible" :key="item.id">
-        <button
-          type="button"
+        <a
+          :href="`#${encodeURIComponent(item.id)}`"
           class="-ml-px block w-full border-l-2 py-1 pr-2 text-left text-[13px] leading-snug transition-colors"
           :class="[
             indentClass(item.depth),
@@ -77,10 +99,10 @@ onBeforeUnmount(() => observer?.disconnect())
               ? 'border-brand-500 font-medium text-brand-600'
               : 'border-transparent text-ink-soft hover:text-ink',
           ]"
-          @click="scrollTo(item.id)"
+          @click="jumpTo($event, item.id)"
         >
           {{ item.text }}
-        </button>
+        </a>
       </li>
     </ul>
   </nav>

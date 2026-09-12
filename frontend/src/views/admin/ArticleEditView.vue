@@ -189,6 +189,8 @@ onMounted(async () => {
   try {
     allTags.value = await tagApi.list({ withCounts: false })
   } catch {
+    // 标签列表只用于输入联想，拿不到不影响编辑正文；输入框仍可手动输入新标签
+    console.debug('[article-edit] 标签列表加载失败，改为手动输入')
     allTags.value = []
   }
   await loadArticle()

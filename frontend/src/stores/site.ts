@@ -46,6 +46,9 @@ export const useSiteStore = defineStore('site', () => {
       profile.value = await siteApi.profile()
       loaded.value = true
     } catch {
+      // 站点档案取不到是有意降级的：它只影响页脚与关于页的文案，
+      // 不该因为一个次要接口就让整站白屏。留个 debug 便于排查「为什么显示默认文案」
+      console.debug('[site] 档案加载失败，使用默认文案')
       profile.value = { ...FALLBACK }
     } finally {
       loading.value = false

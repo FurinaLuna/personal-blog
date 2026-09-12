@@ -11,11 +11,12 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app import __version__
 from app.api.feed import router as feed_router
@@ -129,6 +130,29 @@ def create_app() -> FastAPI:
         只报进程存活与配置环境，不暴露版本细节之外的内部信息。
         """
         return {"status": "ok", "env": settings.app_env, "version": __version__}
+
+    @app.get("/ready", tags=["运维"], summary="就绪检查")
+    async def ready() -> JSONResponse:
+        """就绪探针：除了进程存活，还要真的能查到数据库。
+
+        ``/health`` 是存活探针（liveness），挂了就重启实例；
+        ``/ready`` 是就绪探针（readiness），数据库连不上时应该先把流量摘掉，
+        而不是重启——重启解决不了依赖故障，还会让故障面扩大。
+        按约定用 503 表示「未就绪」，编排系统据此摘除实例。
+        """
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+        except Exception as exc:  # 探针语义就是「任何异常都算不就绪」，这里刻意宽捕获
+            logger.warning("就绪检查失败：%s", exc)
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unavailable", "database": "down"},
+            )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "ready", "database": "up", "env": settings.app_env},
+        )
 
     @app.get("/", tags=["运维"], summary="服务信息")
     async def root() -> dict[str, str]:

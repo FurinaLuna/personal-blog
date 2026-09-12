@@ -109,7 +109,11 @@ watch(
         .then((list) => {
           related.value = list
         })
-        .catch(() => {})
+        .catch(() => {
+          // 有意忽略：相关文章是锦上添花，失败时区块自然隐藏，
+          // 绝不能因为推荐接口挂了就在正文下面弹一个错误
+          console.debug('[article] 相关文章加载失败，区块已隐藏')
+        })
     })
     window.scrollTo({ top: 0 })
   },
