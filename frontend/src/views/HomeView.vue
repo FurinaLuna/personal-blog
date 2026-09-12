@@ -20,6 +20,7 @@ import SortSelector from '@/components/SortSelector.vue'
 import { useAsyncData, toErrorMessage } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
 import type { ArticleSort, ArticleSummary, Category, Page, Tag } from '@/types'
+import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const route = useRoute()
 const router = useRouter()
@@ -53,7 +54,7 @@ function updateQuery(patch: Record<string, string | number | undefined>): void {
 
 /* -------------------------------------------------- 主列表 */
 
-const emptyPage: Page<ArticleSummary> = { items: [], total: 0, page: 1, page_size: PAGE_SIZE, pages: 0 }
+const emptyPage = emptyPageOf<ArticleSummary>(PAGE_SIZE)
 const articles = useAsyncData<Page<ArticleSummary>>(
   () =>
     articleApi.list({

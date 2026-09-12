@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # RSS / sitemap 里的链接必须是绝对 URL，否则阅读器和搜索引擎拿到相对路径会拼错。
     # 开发默认指向 Vite 端口；生产改成正式域名（含协议、不带尾斜杠）。
     site_base_url: str = "http://localhost:5173"
+    # 文章详情页的路径模板，用来拼 RSS / sitemap 里的文章链接。
+    # 之所以做成配置：后端原本硬编码 "/article/{slug}"，等于后端知道前端的路由形状，
+    # 前端改路由时后端会静默生成 404 链接。放在这里至少是一处显式约定，
+    # 并由 tests/test_feed.py 的用例与前端路由表做机器比对（不一致就测试失败）。
+    site_article_path: str = "/article/{slug}"
 
     # ---------- 可观测性与限流 ----------
     # 访问日志用 JSON 输出（日志收集器可直接按字段过滤）。

@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
 
+from app.config import settings
 from tests.conftest import login
 from tests.factories import make_article_payload, unique_suffix
-
-pytestmark = pytest.mark.asyncio
 
 
 async def _publish(client: AsyncClient, headers: dict[str, str], **overrides) -> dict:
@@ -55,6 +55,33 @@ class TestRssFeed:
             link = item.findtext("link") or ""
             assert link.startswith("http"), f"RSS 链接必须是绝对地址：{link}"
             assert "/article/" in link
+
+
+class TestArticlePathContract:
+    """文章链接模板必须与前端路由表一致。
+
+    「后端硬编码前端路由」是个会静默 404 的耦合：以前只靠注释提醒改路由的人
+    记得同步。这条用例把它变成机器检查——不一致时流水线直接红。
+    """
+
+    def test_template_matches_frontend_router(self) -> None:
+        router_file = Path(__file__).resolve().parents[2] / "frontend/src/router/index.ts"
+        if not router_file.exists():
+            pytest.skip("前端不在当前检出中（例如只部署后端），跳过跨端契约检查")
+
+        source = router_file.read_text(encoding="utf-8")
+        # 前端写作 '/article/:slug'，后端配置写作 '/article/{slug}'，语义等价
+        expected = settings.site_article_path.replace("{slug}", ":slug")
+        assert f"path: '{expected}'" in source, (
+            f"SITE_ARTICLE_PATH={settings.site_article_path} 与前端路由不一致："
+            f"前端 router/index.ts 里找不到 path: '{expected}'。"
+            "改路由时请同步 backend/.env 的 SITE_ARTICLE_PATH。"
+        )
+
+    def test_template_renders_slug(self) -> None:
+        rendered = settings.site_article_path.format(slug="hello-world")
+        assert rendered.endswith("/hello-world")
+        assert "{" not in rendered
 
 
 class TestSitemap:

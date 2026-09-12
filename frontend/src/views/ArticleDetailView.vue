@@ -15,6 +15,7 @@ import { useHead } from '@/composables/useHead'
 import { useAuthStore } from '@/stores/auth'
 import type { ArticleDetail, ArticleSummary } from '@/types'
 import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
+import { statusBadgeClass, statusLabel } from '@/utils/status'
 import { renderMarkdown } from '@/utils/markdown'
 
 const route = useRoute()
@@ -153,9 +154,10 @@ watch(
           </RouterLink>
           <span
             v-if="article.data.value.status !== 'published'"
-            class="rounded-md bg-amber-50 px-2 py-1 font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+            class="rounded-md px-2 py-1 font-medium"
+            :class="statusBadgeClass(article.data.value.status)"
           >
-            {{ article.data.value.status === 'draft' ? '草稿（仅你可见）' : '已归档' }}
+            {{ statusLabel(article.data.value.status, { preview: true }) }}
           </span>
         </div>
 

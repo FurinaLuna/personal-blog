@@ -1,10 +1,29 @@
 name: CI
 
+# 说明：本仓库的 CI 曾连续 5 次全部失败，排查后发现与代码无关——
+# 注解里写的是 "The job was not started because your account is locked due to a
+# billing issue."，即账号级账单锁，job 在启动前就被拒（steps 为空、2 秒内结束）。
+# 判别方法：`gh api repos/{owner}/{repo}/check-runs/{id}/annotations` 看注解；
+# 若注解提到 billing/locked，先去 Settings → Billing 处理，别改代码。
+# 详细记录见 docs/devlog/2026-09-12.md。
+#
+# CI 不可用时的本地等价验证（缺一不可）：
+#   make check    # ruff + 格式 + 后端测试 + 前端类型 + 前端单测
+#   make build    # 前端生产构建
+#   make smoke    # 真实浏览器冒烟（需先 make dev）
+#   make interaction  # 真实点击的交互验证（需先 make dev）
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# 最小权限：CI 只需要读代码。默认的 GITHUB_TOKEN 权限可能包含写，收敛它能降低
+# 「流水线里某个依赖被投毒后反向修改仓库」的风险。
+permissions:
+  contents: read
 
 # 同一分支连续推送时取消上一次仍在跑的流水线，避免排队浪费
 concurrency:
@@ -15,6 +34,7 @@ jobs:
   backend:
     name: 后端 · lint + 测试
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -44,6 +64,7 @@ jobs:
   frontend:
     name: 前端 · 类型 + 单测 + 构建
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
@@ -56,7 +77,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # npm ci 而不是 install：严格按 lockfile 安装，保证 CI 与本地一致
+      # npm ci 而不是 install：严格按 lockfile 安装，保证 CI 与本地一致。
+      # 若 package.json 与 lock 不同步，这一步会直接失败（这是特性，不是缺点）
       - name: 安装依赖
         run: npm ci
 
@@ -72,6 +94,7 @@ jobs:
   migration:
     name: 迁移 · 升降级可用性
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend

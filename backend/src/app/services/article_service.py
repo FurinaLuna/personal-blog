@@ -1,12 +1,17 @@
-"""文章服务：可见性判定、slug/标签解析、状态流转、上下篇与归档。"""
+"""文章服务：可见性判定、状态流转、上下篇与归档。
+
+分类与标签的规则（构造、upsert、slug 唯一化、存在性校验）在 ``TaxonomyService``，
+本服务只决定「什么时候需要它们」——领域知识的归属要清晰，多写一遍就是多一处会失修的分歧。
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Article, ArticleStatus, Category, Tag, User, UserRole
+from app.models import Article, ArticleStatus, Tag, User, UserRole
 from app.repositories import (
     ArticleFilter,
     ArticleRepository,
@@ -23,13 +28,14 @@ from app.schemas.article import (
 )
 from app.schemas.common import Page
 from app.schemas.site import ArchiveItem
+from app.services.taxonomy_service import TaxonomyService
 from app.utils.exceptions import (
     BadRequestError,
-    ConflictError,
     NotFoundError,
     PermissionDeniedError,
 )
-from app.utils.text import estimate_reading_time, slugify, strip_markdown
+from app.utils.slug import unique_slug
+from app.utils.text import estimate_reading_time, strip_markdown
 
 # 列表页可见：归档文章按定义「不再出现在默认列表」，但直达链接仍可访问
 LIST_STATUSES: tuple[ArticleStatus, ...] = (ArticleStatus.PUBLISHED,)
@@ -65,6 +71,10 @@ class ArticleService:
         self.articles = ArticleRepository(session)
         self.categories = CategoryRepository(session)
         self.tags = TagRepository(session)
+        # 分类与标签的规则（upsert / slug / 存在性校验）归 TaxonomyService，
+        # 文章服务只负责「什么时候需要它们」——同层服务组合是允许的，
+        # 因为 taxonomy_service 不反向依赖 article_service，没有循环。
+        self.taxonomy = TaxonomyService(session)
 
     # ================================================================ 查询
 
@@ -227,7 +237,7 @@ class ArticleService:
         构造函数，而不是只传 ``author_id`` / ``category_id``：新对象在内存里就把
         关系置为「已加载」，后面序列化时才不会为了取作者名去触发惰性加载。
         """
-        category = await self._resolve_category(payload.category_id)
+        category = await self.taxonomy.ensure_category(payload.category_id)
         slug = await self._resolve_slug(payload.slug or payload.title, fallback="article")
         tags = await self._resolve_tags(payload.tags)
 
@@ -274,7 +284,7 @@ class ArticleService:
                 data["summary"] = strip_markdown(data["content_md"], 200) or None
 
         if "category_id" in data:
-            data["category"] = await self._resolve_category(data.pop("category_id"))
+            data["category"] = await self.taxonomy.ensure_category(data.pop("category_id"))
 
         if data.get("status") is ArticleStatus.PUBLISHED and article.published_at is None:
             # 首次发布时补上发布时间；之后反复切状态不会覆盖原发布时间
@@ -344,64 +354,23 @@ class ArticleService:
     # ================================================================ 内部工具
 
     async def _resolve_slug(self, raw: str, *, fallback: str, exclude_id: int | None = None) -> str:
-        """生成唯一 slug：重名时依次尝试 ``-2`` / ``-3`` …"""
-        base = slugify(raw, fallback_prefix=fallback)
-        candidate = base
-        suffix = 2
-        while await self.articles.slug_exists(candidate, exclude_id=exclude_id):
-            candidate = f"{base}-{suffix}"
-            suffix += 1
-            if suffix > 200:  # pragma: no cover - 防御性上限
-                raise ConflictError("无法生成唯一 slug，请手动指定")
-        return candidate
+        """生成文章唯一 slug（唯一化规则见 ``app.utils.slug``）。"""
+        return await unique_slug(
+            raw,
+            prefix=fallback,
+            exists=partial(self.articles.slug_exists, exclude_id=exclude_id),
+        )
 
     async def _resolve_tags(self, names: list[str]) -> list[Tag]:
-        """按名称取标签，不存在的即时创建（这也是「自由打标签」体验的实现方式）。"""
-        cleaned: list[str] = []
-        for name in names:
-            trimmed = name.strip()
-            if trimmed and trimmed not in cleaned:
-                cleaned.append(trimmed)
-        if not cleaned:
-            return []
-        if len(cleaned) > MAX_TAGS_PER_ARTICLE:
-            raise BadRequestError(f"一篇文章最多 {MAX_TAGS_PER_ARTICLE} 个标签")
+        """校验数量上限后，交给标签领域做 upsert。
 
-        existing = {tag.name: tag for tag in await self.tags.get_by_names(cleaned)}
-        result: list[Tag] = []
-        for name in cleaned:
-            tag = existing.get(name)
-            if tag is None:
-                slug = await self._resolve_tag_slug(name)
-                tag = await self.tags.create(name=name, slug=slug)
-                existing[name] = tag
-            result.append(tag)
-        return result
-
-    async def _resolve_tag_slug(self, name: str) -> str:
-        base = slugify(name, fallback_prefix="tag")
-        candidate = base
-        suffix = 2
-        while await self.tags.slug_exists(candidate):
-            candidate = f"{base}-{suffix}"
-            suffix += 1
-        return candidate
-
-    async def _resolve_category(self, category_id: int | None) -> Category | None:
-        """取分类对象（而不是只校验存在性）。
-
-        Returns:
-            ``None`` 表示不分类；找不到对应分类时抛 400。
-
-        Raises:
-            BadRequestError: ``category_id`` 指向不存在的分类。
+        「一篇文章最多几个标签」是文章侧规则，所以留在这里；
+        「标签怎么建、slug 怎么取」是标签侧规则，委托给 ``TaxonomyService``。
         """
-        if category_id is None:
-            return None
-        category = await self.categories.get(category_id)
-        if category is None:
-            raise BadRequestError(f"分类 {category_id} 不存在")
-        return category
+        cleaned = [name.strip() for name in names if name.strip()]
+        if len(set(cleaned)) > MAX_TAGS_PER_ARTICLE:
+            raise BadRequestError(f"一篇文章最多 {MAX_TAGS_PER_ARTICLE} 个标签")
+        return await self.taxonomy.ensure_tags(names)
 
 
 def _is_year_month(value: str) -> bool:

@@ -30,8 +30,13 @@ _PUBLISHED_ONLY: tuple[ArticleStatus, ...] = (ArticleStatus.PUBLISHED,)
 
 
 def _article_url(article: Article) -> str:
-    """前端详情路由是 ``/article/:slug``（单数），改路由时必须同步这里。"""
-    return f"{settings.site_base_url}/article/{article.slug}"
+    """拼文章链接。
+
+    路径模板来自 ``SITE_ARTICLE_PATH``（默认 ``/article/{slug}``），
+    而不是写死在前端或这里——后端不该硬编码前端的路由形状。
+    ``tests/test_feed.py`` 里有一条用例会拿它与前端路由表比对。
+    """
+    return f"{settings.site_base_url}{settings.site_article_path.format(slug=article.slug)}"
 
 
 def _iso_date(article: Article) -> str:

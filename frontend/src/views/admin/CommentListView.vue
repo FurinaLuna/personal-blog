@@ -11,6 +11,7 @@ import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import type { Comment, Page } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
+import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const route = useRoute()
 const action = useAction()
@@ -29,7 +30,7 @@ const approvedParam = computed<boolean | undefined>(() => {
   return undefined
 })
 
-const emptyPage: Page<Comment> = { items: [], total: 0, page: 1, page_size: PAGE_SIZE, pages: 0 }
+const emptyPage = emptyPageOf<Comment>(PAGE_SIZE)
 const comments = useAsyncData<Page<Comment>>(
   () =>
     commentApi.listModeration({

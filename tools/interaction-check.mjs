@@ -31,9 +31,20 @@ async function getWsUrl() {
 
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-first-run',
-  `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(tmpdir(), 'wave2-profile')}`,
+  `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(tmpdir(), `interaction-profile-${Date.now()}`)}`,
   '--window-size=1440,1000', 'about:blank',
 ], { stdio: 'ignore' })
+
+
+/** 轮询等待某个表达式为真（替代固定 sleep：dev server 冷编译时长的差异很大）。 */
+async function waitFor(evalJs, expression, timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await evalJs(expression)) return true
+    await sleep(250)
+  }
+  return false
+}
 
 const results = []
 const record = (name, ok, detail = '') => {
@@ -56,8 +67,26 @@ try {
     const id = ++seq; pending.set(id, res)
     ws.send(JSON.stringify({ id, method, params }))
   })
-  const evalJs = async (expr, awaitPromise = false) =>
-    (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise }))?.result?.value
+  /**
+   * 执行页面内表达式。
+   *
+   * 注意：**不要**把表达式包进单行的 `(() => { ... })()`——多行表达式里常有 `//` 注释，
+   * 拼成一行会把注释后面的代码全部注释掉，报出莫名其妙的 `Invalid regular expression`。
+   * CDP 自己会在 exceptionDetails 里回传页面异常，直接读它即可。
+   */
+  const evalJs = async (expr) => {
+    const res = await send('Runtime.evaluate', {
+      expression: expr,
+      returnByValue: true,
+      awaitPromise: true,
+    })
+    if (res?.exceptionDetails) {
+      const detail = res.exceptionDetails.exception?.description ?? res.exceptionDetails.text
+      console.log('  [页面内异常]', String(detail).split('\n')[0])
+      return undefined
+    }
+    return res?.result?.value
+  }
   const shot = async (name) => {
     const { data } = await send('Page.captureScreenshot', { format: 'png' })
     return (await import('node:fs')).writeFileSync(join(OUT, `${name}.png`), Buffer.from(data, 'base64'))
@@ -67,15 +96,39 @@ try {
   await send('Runtime.enable')
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
 
+  // ---------- 0) 预热：等应用真正挂载 ----------
+  await send('Page.navigate', { url: BASE })
+  const warmed = await waitFor(
+    evalJs,
+    `(document.getElementById('app')?.childElementCount ?? 0) > 0`,
+    30000,
+  )
+  record('前端应用挂载（预热）', warmed, warmed ? '' : '30s 内 #app 仍为空，可能是 dev server 仍在编译')
+
   // ---------- 1) 登录失败：内联错误 + 不弹 toast ----------
   await send('Page.navigate', { url: `${BASE}/login` })
-  await sleep(2600)
-  await evalJs(`(() => {
-    const u = document.querySelector('#username'), p = document.querySelector('#password')
-    const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
-    set(u, 'admin'); set(p, 'wrong-password-xxx')
-  })()`)
-  await sleep(200)
+  const loginReady = await waitFor(
+    evalJs,
+    `!!document.querySelector('#username') && !!document.querySelector('#password')`,
+    20000,
+  )
+  if (!loginReady) {
+    // 前置条件不满足就直接判定失败并说明现状，不要带着 null 往下跑（那样只会看到 TypeError）
+    const diag = await evalJs(`(() => ({
+      url: location.pathname,
+      mounted: (document.getElementById('app')?.childElementCount ?? 0) > 0,
+      text: document.body.innerText.slice(0, 120),
+    }))()`)
+    record('登录页加载', false, `等待 20s 仍未出现表单：${JSON.stringify(diag)}`)
+  } else {
+    await evalJs(`(() => {
+      const u = document.querySelector('#username'), p = document.querySelector('#password')
+      const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
+      set(u, 'admin'); set(p, 'wrong-password-xxx')
+      return true
+    })()`)
+    await sleep(200)
+  }
   const badLogin = await evalJs(`(async () => {
     document.querySelector('form').requestSubmit()
     await new Promise(r => setTimeout(r, 1800))
@@ -87,8 +140,9 @@ try {
       stillOnLogin: location.pathname === '/login',
     }
   })()`, true)
-  record('登录失败：错误内联展示', badLogin.inline && badLogin.stillOnLogin)
-  record('登录失败：未弹 toast（silent 语义）', badLogin.toastCount === 0, `toast 元素 ${badLogin.toastCount} 个`)
+  const bad = badLogin ?? {}
+  record('登录失败：错误内联展示', Boolean(bad.inline && bad.stillOnLogin), bad.inline ? '' : '未捕获到内联错误')
+  record('登录失败：未弹 toast（silent 语义）', bad.toastCount === 0, `toast 元素 ${bad.toastCount ?? '未知'} 个`)
   await shot('01-login-error')
 
   // ---------- 2) 登录成功 → 评论审核 ----------
@@ -124,12 +178,19 @@ try {
   await send('Page.navigate', { url: `${BASE}/admin/articles` })
   await sleep(3000)
   const toggle = await evalJs(`(async () => {
-    const btn = [...document.querySelectorAll('button')].find(b => /转草稿|发布/.test(b.textContent))
+    const findBtn = () => [...document.querySelectorAll('button')]
+      .find(b => /转草稿|发布/.test(b.textContent.trim()))
+    const btn = findBtn()
     if (!btn) return { skipped: true }
     const label = btn.textContent.trim()
     btn.click()
     await new Promise(r => setTimeout(r, 1800))
-    return { label, toast: document.body.innerText.match(/已发布|已转为草稿/)?.[0] ?? '' }
+    const toast = document.body.innerText.match(/已发布|已转为草稿/)?.[0] ?? ''
+    // 还原：这个脚本会改数据，必须对称操作，否则多跑几轮就把所有文章切成草稿，
+    // 前台列表变空，后续断言全错（这个坑踩过一次）
+    findBtn()?.click()
+    await new Promise(r => setTimeout(r, 1800))
+    return { label, toast, restored: true }
   })()`, true)
   if (toggle.skipped) record('文章状态切换', false, '未找到状态切换按钮')
   else record('文章状态切换：toast 反馈', Boolean(toggle.toast), `${toggle.label} → ${toggle.toast}`)
@@ -265,6 +326,102 @@ try {
   if (discarded.skipped) record('放弃草稿', false, '未找到放弃按钮')
   else record('放弃后清除本地草稿', !discarded.stillThere)
   await shot('08-draft-discarded')
+
+  // ---------- 7) 访客评论全链路（含失败路径）----------
+  // 评论是全站唯一的「任何访客都能写入」入口，迁移到统一抽象后必须真实走一遍
+  const article = await (await fetch(`${BASE}/api/v1/articles?page_size=2`)).json()
+  const target = article.items[1] ?? article.items[0]
+  await send('Page.navigate', { url: `${BASE}/article/${target.slug}` })
+  await sleep(3200)
+
+  const commentUi = await evalJs(`(() => {
+    const section = document.querySelector('#comments')
+    return {
+      hasSection: !!section,
+      hasForm: !!document.querySelector('#comment-form'),
+      hasNameInput: !!document.querySelector('input[placeholder*="昵称"], #comment-name, input[name="author_name"]'),
+      listCount: document.querySelectorAll('#comments ul li, #comments ol li').length,
+    }
+  })()`)
+  record('评论区渲染（迁移后）', commentUi.hasSection && commentUi.hasForm)
+
+  // 空内容提交 → 前端校验拦住，不发请求
+  const emptySubmit = await evalJs(`(async () => {
+    const box = document.querySelector('#comment-form')
+    const textarea = box?.querySelector('textarea')
+    // #comment-form 是个 div，提交按钮是 type="button"，按文案找
+    const submitBtn = [...(box?.querySelectorAll('button') ?? [])].find(b => b.textContent.includes('发表评论'))
+    if (!textarea || !submitBtn) return { skipped: true }
+    const before = document.querySelectorAll('#comments ul li, #comments ol li').length
+    submitBtn.click()
+    await new Promise(r => setTimeout(r, 900))
+    return {
+      toast: /不能为空|请填写昵称/.test(document.body.innerText),
+      // 内容与昵称都为空时不应新增条目
+      listCount: document.querySelectorAll('#comments ul li, #comments ol li').length,
+      before,
+    }
+  })()`, true)
+  if (emptySubmit.skipped) record('评论空值校验', false, '未找到评论输入框')
+  else
+    record(
+      '评论空值校验（前端拦截，未发请求）',
+      emptySubmit.toast && emptySubmit.listCount === emptySubmit.before,
+      `条目 ${emptySubmit.before} → ${emptySubmit.listCount}`,
+    )
+
+  // 正常提交 → 成功提示 + 列表刷新
+  const posted = await evalJs(`(async () => {
+    const box = document.querySelector('#comment-form')
+    if (!box) return { skipped: true }
+    const set = (el, v) => { if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) } }
+    set(box.querySelector('input[placeholder*="昵称"]'), '交互验证访客')
+    set(box.querySelector('textarea'), '这条评论由 interaction-check 自动生成，用于验证评论链路。')
+    const submitBtn = [...box.querySelectorAll('button')].find(b => b.textContent.includes('发表评论'))
+    const before = document.querySelectorAll('#comments ul li, #comments ol li').length
+    submitBtn?.click()
+    await new Promise(r => setTimeout(r, 2600))
+    const text = document.body.innerText
+    return {
+      before,
+      after: document.querySelectorAll('#comments ul li, #comments ol li').length,
+      success: /评论已发布|等待站长审核/.test(text),
+      needApproval: /需要审核后才会公开显示/.test(text),
+      errorToast: /评论提交失败|过于频繁/.test(text),
+    }
+  })()`, true)
+  if (posted.skipped) record('评论提交', false, '未找到评论表单')
+  else {
+    record(
+      '评论提交：成功提示',
+      posted.success && !posted.errorToast,
+      `评论数 ${posted.before} → ${posted.after}`,
+    )
+
+    // 清理：评论是「立即发布」时把它删掉，保持环境干净（审核模式下不会进公开列表，无需处理）
+    if (!posted.needApproval) {
+      // 注意：要清理的是「刚才发表评论的那一篇」，不是列表里第一篇
+      const cleaned = await evalJs(`(async () => {
+        const token = localStorage.getItem('blog-access-token')
+        if (!token) return { cleaned: false, reason: '未登录，无法删除' }
+        const list = await fetch('/api/v1/comments/article/${target.id}').then(r => r.json())
+        const target = list.find(c => (c.content ?? '').includes('由 interaction-check 自动生成'))
+        if (!target) return { cleaned: false, reason: '未找到测试评论' }
+        const resp = await fetch('/api/v1/comments/' + target.id, {
+          method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+        })
+        return { cleaned: resp.ok, status: resp.status }
+      })()`, true)
+      record('测试评论已清理', Boolean(cleaned?.cleaned), `删除接口 ${cleaned?.status ?? cleaned?.reason ?? '-'}`)
+    }
+    // 站点默认「评论需审核」，此时列表不增长是正确行为，不能算失败
+    if (posted.needApproval) {
+      record('待审评论不进公开列表（符合审核策略）', posted.after === posted.before)
+    } else {
+      record('评论提交后列表刷新', posted.after > posted.before)
+    }
+  }
+  await shot('09-comment-posted')
 
   ws.close()
 } finally {

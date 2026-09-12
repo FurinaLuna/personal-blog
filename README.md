@@ -10,7 +10,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 171 个后端测试、40 个前端单测，
+**写出来能跑、改起来可验证** —— 183 个后端测试、48 个前端单测，
 外加两个真实浏览器端到端脚本（冒烟 34 项 / 交互 16 项）。
 
 ---
@@ -192,7 +192,7 @@ personal-blog/
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 171 个 pytest 用例
+│   ├── tests/                      # 183 个 pytest 用例
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -206,7 +206,7 @@ personal-blog/
 │   │   ├── stores/                 # Pinia：auth / site / theme
 │   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取
 │   │   └── views/                  # 前台 9 页 + 后台 8 页
-│   └── src/**/*.spec.ts            # 40 个 Vitest 用例
+│   └── src/**/*.spec.ts            # 48 个 Vitest 用例
 ├── deploy/                         # Dockerfile × 2 + nginx.conf
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
@@ -294,13 +294,13 @@ make interaction    # 真实点击的交互与失败路径验证（需先 make d
 | 检查 | 结果 |
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
-| `pytest` | **171 passed** |
+| `pytest` | **183 passed** |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **40 passed** |
+| `vitest run` | **48 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 8 张表，干净回滚 |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
-| `tools/interaction-check.mjs` | **16/16**（登录失败路径 / 审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复） |
+| `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 
 **为什么要两个浏览器脚本**：单测与类型检查都是绿的情况下，
 项目里仍然出现过「登录后被弹回登录页」和「后台侧边栏渲染两遍、子页面完全不显示」

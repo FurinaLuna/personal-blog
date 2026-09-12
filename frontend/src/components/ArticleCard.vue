@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 
 import type { ArticleSummary } from '@/types'
 import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
+import { statusBadgeClass, statusLabel } from '@/utils/status'
 import { prefetchRoute } from '@/utils/prefetch'
 
 const props = withDefaults(
@@ -49,9 +50,10 @@ function warm(): void {
           </span>
           <span
             v-if="article.status !== 'published'"
-            class="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium"
+            :class="statusBadgeClass(article.status)"
           >
-            {{ article.status === 'draft' ? '草稿' : '已归档' }}
+            {{ statusLabel(article.status) }}
           </span>
           <RouterLink
             v-if="article.category"

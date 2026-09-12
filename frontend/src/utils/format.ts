@@ -83,15 +83,6 @@ export function formatYearMonth(value: string): string {
   return `${year} 年 ${Number(month)} 月`
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿',
-  published: '已发布',
-  archived: '已归档',
-}
-
-export function formatStatus(status: string): string {
-  return STATUS_LABELS[status] ?? status
-}
 
 /** 生成 URL 友好的 id，中文保留（浏览器地址栏仍可读）。 */
 export function slugifyHeading(text: string): string {

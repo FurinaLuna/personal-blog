@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,8 +16,8 @@ from app.schemas.taxonomy import (
     TagUpdate,
     TagWithCount,
 )
-from app.utils.exceptions import ConflictError, NotFoundError
-from app.utils.text import slugify
+from app.utils.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.utils.slug import unique_slug
 
 # 前台统计口径：分类/标签的计数只算已发布文章，与列表页保持一致
 PUBLISHED_ONLY: tuple[ArticleStatus, ...] = (ArticleStatus.PUBLISHED,)
@@ -65,8 +65,10 @@ class TaxonomyService:
     async def create_category(self, payload: CategoryCreate) -> Category:
         if await self.categories.get_by_name(payload.name):
             raise ConflictError(f"分类「{payload.name}」已存在")
-        slug = await self._unique_slug(
-            payload.slug or payload.name, self.categories.slug_exists, "category"
+        slug = await unique_slug(
+            payload.slug or payload.name,
+            prefix="category",
+            exists=self.categories.slug_exists,
         )
         return await self.categories.create(
             name=payload.name,
@@ -85,8 +87,11 @@ class TaxonomyService:
         if new_name and new_name != category.name and await self.categories.get_by_name(new_name):
             raise ConflictError(f"分类「{new_name}」已存在")
         if new_slug := data.pop("slug", None):
-            data["slug"] = await self._unique_slug(
-                new_slug, self.categories.slug_exists, "category", exclude_id=category_id
+            data["slug"] = await unique_slug(
+                new_slug,
+                prefix="category",
+                # 更新自己时，自己的 slug 不该算冲突
+                exists=partial(self.categories.slug_exists, exclude_id=category_id),
             )
 
         # description 允许被清空为 null；其余字段收到 None 视为「不修改」
@@ -127,7 +132,9 @@ class TaxonomyService:
     async def create_tag(self, payload: TagCreate) -> Tag:
         if await self.tags.get_by_name(payload.name):
             raise ConflictError(f"标签「{payload.name}」已存在")
-        slug = await self._unique_slug(payload.slug or payload.name, self.tags.slug_exists, "tag")
+        slug = await unique_slug(
+            payload.slug or payload.name, prefix="tag", exists=self.tags.slug_exists
+        )
         return await self.tags.create(name=payload.name, slug=slug)
 
     async def update_tag(self, tag_id: int, payload: TagUpdate) -> Tag:
@@ -140,8 +147,10 @@ class TaxonomyService:
         if new_name and new_name != tag.name and await self.tags.get_by_name(new_name):
             raise ConflictError(f"标签「{new_name}」已存在")
         if new_slug := data.pop("slug", None):
-            data["slug"] = await self._unique_slug(
-                new_slug, self.tags.slug_exists, "tag", exclude_id=tag_id
+            data["slug"] = await unique_slug(
+                new_slug,
+                prefix="tag",
+                exists=partial(self.tags.slug_exists, exclude_id=tag_id),
             )
 
         for key, value in data.items():
@@ -170,21 +179,56 @@ class TaxonomyService:
                 return found
         return await self.categories.get_by_slug(key)
 
-    @staticmethod
-    async def _unique_slug(
-        raw: str,
-        exists: Callable[..., Awaitable[bool]],
-        prefix: str,
-        *,
-        exclude_id: int | None = None,
-    ) -> str:
-        """生成唯一 slug：重名时依次尝试 ``-2`` / ``-3`` …"""
-        base = slugify(raw, fallback_prefix=prefix)
-        candidate = base
-        suffix = 2
-        while await exists(candidate, exclude_id=exclude_id):
-            candidate = f"{base}-{suffix}"
-            suffix += 1
-            if suffix > 200:  # pragma: no cover - 防御性上限
-                raise ConflictError("无法生成唯一 slug，请手动指定")
-        return candidate
+    # ---------------------------------------------------------------- 供其他领域调用
+
+    async def ensure_tags(self, names: list[str]) -> list[Tag]:
+        """按名称取标签，不存在的即时创建（「自由打标签」体验的实现方式）。
+
+        提供给文章服务使用：标签的 upsert 属于标签领域，不该在文章服务里再实现一遍。
+
+        Args:
+            names: 原始标签名列表，可含重复与空白项。
+
+        Returns:
+            与去重后的输入顺序一致的标签对象列表；输入为空时返回空列表。
+        """
+        cleaned: list[str] = []
+        for name in names:
+            trimmed = name.strip()
+            if trimmed and trimmed not in cleaned:
+                cleaned.append(trimmed)
+        if not cleaned:
+            return []
+
+        existing = {tag.name: tag for tag in await self.tags.get_by_names(cleaned)}
+        result: list[Tag] = []
+        for name in cleaned:
+            tag = existing.get(name)
+            if tag is None:
+                # 自由标签允许并发创建同名：slug 唯一化会退让成 -2，不会写坏数据
+                tag = await self.tags.create(
+                    name=name,
+                    slug=await unique_slug(name, prefix="tag", exists=self.tags.slug_exists),
+                )
+                existing[name] = tag
+            result.append(tag)
+        return result
+
+    async def ensure_category(self, category_id: int | None) -> Category | None:
+        """取分类对象（而不是只校验存在性）。
+
+        Args:
+            category_id: 分类 id；``None`` 表示不分类。
+
+        Returns:
+            ``None``（不分类）或对应的分类对象。
+
+        Raises:
+            BadRequestError: ``category_id`` 指向不存在的分类。
+        """
+        if category_id is None:
+            return None
+        category = await self.categories.get(category_id)
+        if category is None:
+            raise BadRequestError(f"分类 {category_id} 不存在")
+        return category

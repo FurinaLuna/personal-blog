@@ -11,6 +11,7 @@ import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
 import type { Attachment, Page } from '@/types'
 import { formatBytes, formatDateTime } from '@/utils/format'
+import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const toast = useToast()
 const action = useAction()
@@ -22,7 +23,7 @@ const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const pendingDelete = ref<Attachment | null>(null)
 
-const emptyPage: Page<Attachment> = { items: [], total: 0, page: 1, page_size: PAGE_SIZE, pages: 0 }
+const emptyPage = emptyPageOf<Attachment>(PAGE_SIZE)
 const attachments = useAsyncData<Page<Attachment>>(
   () => attachmentApi.list(page.value, PAGE_SIZE, kind.value === 'all' ? undefined : kind.value),
   emptyPage,

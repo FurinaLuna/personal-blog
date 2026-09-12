@@ -11,7 +11,9 @@ import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useAuthStore } from '@/stores/auth'
 import type { ArticleStatus, ArticleSummary, Page } from '@/types'
-import { formatDateTime, formatStatus } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
+import { statusBadgeClass, statusLabel } from '@/utils/status'
+import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,7 +33,7 @@ const status = ref<ArticleStatus | ''>((route.query.status as ArticleStatus) || 
 const keyword = ref('')
 const page = ref(1)
 
-const emptyPage: Page<ArticleSummary> = { items: [], total: 0, page: 1, page_size: PAGE_SIZE, pages: 0 }
+const emptyPage = emptyPageOf<ArticleSummary>(PAGE_SIZE)
 const articles = useAsyncData<Page<ArticleSummary>>(
   () =>
     articleApi.listManaged({
@@ -70,13 +72,6 @@ async function togglePublish(item: ArticleSummary): Promise<void> {
     errorMessage: '操作失败',
   })
   if (done !== undefined) reload(false)
-}
-
-/** 状态徽标配色。涨红跌绿不适用，这里只求语义清晰。 */
-const STATUS_CLASS: Record<string, string> = {
-  published: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
-  draft: 'bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
-  archived: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
 }
 
 const isAdmin = computed(() => auth.isAdmin)
@@ -157,8 +152,8 @@ onMounted(() => {
                   </div>
                 </td>
                 <td class="px-4 py-3">
-                  <span class="rounded-md px-2 py-0.5 text-xs" :class="STATUS_CLASS[item.status]">
-                    {{ formatStatus(item.status) }}
+                  <span class="rounded-md px-2 py-0.5 text-xs" :class="statusBadgeClass(item.status)">
+                    {{ statusLabel(item.status) }}
                   </span>
                 </td>
                 <td class="px-4 py-3 text-right text-ink-soft">{{ item.view_count }}</td>
@@ -208,9 +203,9 @@ onMounted(() => {
               </RouterLink>
               <span
                 class="shrink-0 rounded-md px-2 py-0.5 text-xs"
-                :class="STATUS_CLASS[item.status]"
+                :class="statusBadgeClass(item.status)"
               >
-                {{ formatStatus(item.status) }}
+                {{ statusLabel(item.status) }}
               </span>
             </div>
 

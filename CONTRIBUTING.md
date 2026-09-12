@@ -85,6 +85,29 @@ make smoke          # 真实浏览器冒烟（需先 make dev 起好前后端）
 - 新增逻辑必须带测试；修 bug 要先有能复现的用例
 - 不要提交 `.env`、数据库文件、媒体文件、构建产物（`.gitignore` 已覆盖）
 
+## CI 失败时先看什么
+
+流水线红了不要急着改代码 —— 先分清是**代码问题**还是**环境问题**：
+
+| 现象 | 大概率原因 | 怎么办 |
+|---|---|---|
+| job 在 2 秒内结束、**没有任何步骤记录**、注解里出现 `billing` / `locked` | 账号级账单锁（与代码无关） | 去 **Settings → Billing** 处理，别改代码 |
+| 注解出现 `Invalid workflow file` | workflow YAML 语法错误 | 看注解指出的行号 |
+| `npm ci` 失败并提示 lock 与 package.json 不同步 | 改了 `package.json` 但没跑 `npm install` | 本地跑 `npm install` 并提交更新后的 lock |
+| `pip install -e ".[dev]"` 失败 | `backend/pyproject.toml` 的 `readme` 指向的文件不存在 | 检查 `backend/README.md` 是否在 |
+
+> 这条清单来自一次真实排查：CI 连续 5 次全红，最后发现是账号账单锁——
+> job 压根没启动。**先把「环境问题」排除掉，能省掉一轮无用的改代码。**
+
+CI 不可用时的本地等价验证（缺一不可）：
+
+```bash
+make check          # ruff + 格式 + 后端测试 + 前端类型 + 前端单测
+make build          # 前端生产构建
+make smoke          # 真实浏览器冒烟（需先 make dev）
+make interaction    # 真实点击的交互验证（需先 make dev）
+```
+
 ## 提交 Pull Request
 
 1. 从 `main` 切出分支：`git checkout -b feat/your-feature`

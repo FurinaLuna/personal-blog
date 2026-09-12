@@ -8,8 +8,9 @@
  */
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, commentApi } from '@/api'
-import { toErrorMessage } from '@/composables/useAsyncData'
+import { commentApi } from '@/api'
+import { useAction } from '@/composables/useAction'
+import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { useSiteStore } from '@/stores/site'
@@ -26,27 +27,19 @@ const auth = useAuthStore()
 const site = useSiteStore()
 const toast = useToast()
 
-const comments = ref<Comment[]>([])
-const loading = ref(false)
-const submitting = ref(false)
-const loadError = ref('')
+// 评论列表与提交走全站统一抽象：加载态/竞态/错误归一/toast 口径都不再各写一套
+const comments = useAsyncData<Comment[]>(() => commentApi.listForArticle(props.articleId), [])
+const action = useAction()
 
 const form = ref({ author_name: '', author_email: '', author_site: '', content: '' })
 const replyTo = ref<Comment | null>(null)
 /** 记录「本次提交后是否需要等审核」，用于给出更准确的提示文案 */
 const needApproval = computed(() => site.profile.comment_need_approval && !auth.isAuthor)
 
-async function load(): Promise<void> {
-  loading.value = true
-  loadError.value = ''
-  try {
-    comments.value = await commentApi.listForArticle(props.articleId)
-  } catch (error) {
-    loadError.value = toErrorMessage(error, '评论加载失败')
-  } finally {
-    loading.value = false
-  }
-}
+/** 加载失败时的可读消息（模板里直接用）。 */
+const loadError = computed(() =>
+  comments.error.value ? toErrorMessage(comments.error.value, '评论加载失败') : '',
+)
 
 function startReply(comment: Comment): void {
   replyTo.value = comment
@@ -68,31 +61,28 @@ async function submit(): Promise<void> {
     return
   }
 
-  submitting.value = true
-  try {
-    await commentApi.create(props.articleId, {
-      content,
-      author_name: form.value.author_name.trim() || null,
-      author_email: form.value.author_email.trim() || null,
-      author_site: form.value.author_site.trim() || null,
-      parent_id: replyTo.value?.id ?? null,
-    })
-    form.value.content = ''
-    replyTo.value = null
-    toast.success(needApproval.value ? '评论已提交，等待站长审核后显示' : '评论已发布')
-    await load()
-  } catch (error) {
-    if (error instanceof ApiError) {
-      toast.error(error.message)
-    } else {
-      toast.error('评论提交失败，请稍后重试')
-    }
-  } finally {
-    submitting.value = false
-  }
+  const created = await action.run(
+    () =>
+      commentApi.create(props.articleId, {
+        content,
+        author_name: form.value.author_name.trim() || null,
+        author_email: form.value.author_email.trim() || null,
+        author_site: form.value.author_site.trim() || null,
+        parent_id: replyTo.value?.id ?? null,
+      }),
+    {
+      success: needApproval.value ? '评论已提交，等待站长审核后显示' : '评论已发布',
+      errorMessage: '评论提交失败，请稍后重试',
+    },
+  )
+  if (created === undefined) return
+
+  form.value.content = ''
+  replyTo.value = null
+  await comments.run()
 }
 
-watch(() => props.articleId, load, { immediate: true })
+watch(() => props.articleId, () => void comments.run(), { immediate: true })
 
 /** 回复与被回复者之间用「你」和名字区分，避免分不清谁在跟谁说话 */
 const replyHint = computed(() =>
@@ -106,11 +96,11 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
   <section id="comments" class="mt-12 border-t border-border pt-8">
     <div class="mb-5 flex items-baseline gap-2">
       <h2 class="text-lg font-semibold text-ink">评论</h2>
-      <span class="text-sm text-ink-faint">{{ comments.length || initialCount || 0 }}</span>
+      <span class="text-sm text-ink-faint">{{ comments.data.value.length || initialCount || 0 }}</span>
     </div>
 
     <!-- 评论列表 -->
-    <div v-if="loading" class="space-y-4">
+    <div v-if="comments.loading.value && !comments.ready.value" class="space-y-4">
       <div v-for="index in 2" :key="index" class="card p-4">
         <div class="skeleton h-3.5 w-24"></div>
         <div class="skeleton mt-3 h-3 w-full"></div>
@@ -123,14 +113,14 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
     </p>
 
     <p
-      v-else-if="!comments.length"
+      v-else-if="!comments.data.value.length"
       class="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-ink-soft"
     >
       还没有评论，来说点什么吧。
     </p>
 
     <ul v-else class="space-y-4">
-      <li v-for="comment in comments" :key="comment.id" class="card p-4 sm:p-5">
+      <li v-for="comment in comments.data.value" :key="comment.id" class="card p-4 sm:p-5">
         <div class="flex items-center gap-2 text-sm">
           <span class="font-medium text-ink">{{ comment.author_name }}</span>
           <span
@@ -224,8 +214,8 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
             <span v-else>评论会立即显示</span>
             · {{ form.content.length }}/2000
           </p>
-          <button type="button" class="btn-primary" :disabled="submitting" @click="submit">
-            {{ submitting ? '提交中…' : '发表评论' }}
+          <button type="button" class="btn-primary" :disabled="action.running.value" @click="submit">
+            {{ action.running.value ? '提交中…' : '发表评论' }}
           </button>
         </div>
       </template>

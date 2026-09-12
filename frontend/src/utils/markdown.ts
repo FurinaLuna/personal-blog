@@ -223,13 +223,4 @@ export function renderMarkdown(source: string): RenderResult {
   return result
 }
 
-/** 只取纯文本，用于生成 meta description 或列表摘要。 */
-export function markdownToText(source: string, limit = 200): string {
-  const { html } = renderMarkdown(source)
-  const container = document.createElement('div')
-  container.innerHTML = html
-  const text = container.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`
-}
-
 export { hljs }
