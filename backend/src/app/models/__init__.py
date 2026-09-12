@@ -10,6 +10,7 @@ from app.models.associations import article_tags
 from app.models.attachment import Attachment
 from app.models.comment import Comment
 from app.models.enums import ArticleSort, ArticleStatus, UserRole
+from app.models.series import Series
 from app.models.site import SiteProfile
 from app.models.taxonomy import Category, Tag
 from app.models.user import User
@@ -22,6 +23,7 @@ __all__ = [
     "Base",
     "Category",
     "Comment",
+    "Series",
     "SiteProfile",
     "Tag",
     "User",

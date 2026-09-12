@@ -25,6 +25,7 @@ const NAV = [
   { to: '/admin/articles', label: '文章', icon: 'doc' },
   { to: '/admin/comments', label: '评论', icon: 'chat' },
   { to: '/admin/taxonomy', label: '分类标签', icon: 'tag' },
+  { to: '/admin/series', label: '系列', icon: 'list' },
   { to: '/admin/media', label: '媒体库', icon: 'image' },
   { to: '/admin/users', label: '用户', icon: 'users', adminOnly: true },
   { to: '/admin/settings', label: '站点设置', icon: 'cog', adminOnly: true },

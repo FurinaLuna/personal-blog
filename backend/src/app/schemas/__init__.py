@@ -7,10 +7,12 @@ from app.schemas.article import (
     ArticleSummary,
     ArticleUpdate,
     CategoryBrief,
+    SeriesWithArticles,
 )
 from app.schemas.attachment import AttachmentRead, UploadResult
 from app.schemas.comment import CommentCreate, CommentModerate, CommentRead
 from app.schemas.common import ErrorBody, Message, Page
+from app.schemas.series import SeriesBrief, SeriesCreate, SeriesRead, SeriesUpdate
 from app.schemas.site import (
     ArchiveGroup,
     ArchiveItem,
@@ -65,6 +67,11 @@ __all__ = [
     "Page",
     "PasswordChange",
     "RefreshRequest",
+    "SeriesBrief",
+    "SeriesCreate",
+    "SeriesRead",
+    "SeriesUpdate",
+    "SeriesWithArticles",
     "SiteProfileRead",
     "SiteProfileUpdate",
     "SiteStats",

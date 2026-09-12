@@ -59,6 +59,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '归档' },
   },
   {
+    path: '/series',
+    name: 'series',
+    component: () => import('@/views/SeriesView.vue'),
+    meta: { title: '系列' },
+  },
+  {
+    path: '/series/:slug',
+    name: 'series-detail',
+    component: () => import('@/views/SeriesDetailView.vue'),
+    meta: { title: '系列详情' },
+  },
+  {
     path: '/about',
     name: 'about',
     component: () => import('@/views/AboutView.vue'),
@@ -138,6 +150,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-taxonomy',
         component: () => import('@/views/admin/TaxonomyView.vue'),
         meta: { title: '分类与标签', requiresAuth: true, layout: 'admin' },
+      },
+      {
+        path: 'series',
+        name: 'admin-series',
+        component: () => import('@/views/admin/SeriesView.vue'),
+        meta: { title: '系列管理', requiresAuth: true, layout: 'admin' },
       },
       {
         path: 'media',

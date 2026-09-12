@@ -10,6 +10,7 @@ from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.comment_service import CommentService
 from app.services.feed_service import FeedService
+from app.services.series_service import SeriesService
 from app.services.site_service import SiteService
 from app.services.taxonomy_service import TaxonomyService
 
@@ -19,6 +20,7 @@ __all__ = [
     "AuthService",
     "CommentService",
     "FeedService",
+    "SeriesService",
     "SiteService",
     "TaxonomyService",
 ]

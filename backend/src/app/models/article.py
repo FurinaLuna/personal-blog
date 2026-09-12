@@ -25,6 +25,7 @@ from app.models.enums import ArticleStatus, enum_values
 
 if TYPE_CHECKING:
     from app.models.comment import Comment
+    from app.models.series import Series
     from app.models.taxonomy import Category, Tag
     from app.models.user import User
 
@@ -71,9 +72,16 @@ class Article(Base, TimestampMixin):
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), index=True
     )
+    # 系列（可选，一对多）：系列内顺序由 series_order 决定，
+    # 详情页系列导航与 prev/next 优先用它
+    series_id: Mapped[int | None] = mapped_column(
+        ForeignKey("series.id", ondelete="SET NULL"), index=True
+    )
+    series_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     author: Mapped[User] = relationship(back_populates="articles", lazy="joined")
     category: Mapped[Category | None] = relationship(back_populates="articles", lazy="joined")
+    series: Mapped[Series | None] = relationship(back_populates="articles", lazy="joined")
     tags: Mapped[list[Tag]] = relationship(
         secondary=article_tags, back_populates="articles", lazy="selectin"
     )

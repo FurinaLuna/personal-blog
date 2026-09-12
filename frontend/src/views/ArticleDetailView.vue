@@ -196,6 +196,40 @@ watch(
             # {{ tag.name }}
           </RouterLink>
         </div>
+
+        <!-- 系列导航条：只有属于某个系列时才出现，按系列内顺序出上下篇 -->
+        <div
+          v-if="article.data.value.series"
+          class="mt-5 rounded-xl border border-border bg-surface-muted/50 p-3"
+        >
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-medium text-ink">系列 · {{ article.data.value.series.name }}</span>
+            <RouterLink
+              :to="`/series/${article.data.value.series.slug}`"
+              class="ml-auto text-brand-600 hover:text-brand-700"
+            >
+              查看全部 →
+            </RouterLink>
+          </div>
+          <div class="mt-2.5 flex items-center justify-between gap-3 text-xs">
+            <RouterLink
+              v-if="article.data.value.series_prev"
+              :to="`/article/${article.data.value.series_prev.slug}`"
+              class="min-w-0 truncate text-ink-soft hover:text-brand-600"
+            >
+              ← {{ article.data.value.series_prev.title }}
+            </RouterLink>
+            <span v-else class="text-ink-faint">← 系列第一篇</span>
+            <RouterLink
+              v-if="article.data.value.series_next"
+              :to="`/article/${article.data.value.series_next.slug}`"
+              class="min-w-0 truncate text-right text-ink-soft hover:text-brand-600"
+            >
+              {{ article.data.value.series_next.title }} →
+            </RouterLink>
+            <span v-else class="text-ink-faint">系列最后一篇 →</span>
+          </div>
+        </div>
       </header>
 
       <!-- 正文 + 目录 -->

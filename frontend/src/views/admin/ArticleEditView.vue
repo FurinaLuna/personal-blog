@@ -3,7 +3,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { ApiError, articleApi, categoryApi, tagApi } from '@/api'
+import { ApiError, articleApi, categoryApi, seriesApi, tagApi } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
@@ -11,7 +11,7 @@ import { useDraftAutosave } from '@/composables/useDraftAutosave'
 import { useTagInput } from '@/composables/useTagInput'
 import { useToast } from '@/composables/useToast'
 import { useUpload } from '@/composables/useUpload'
-import type { ArticleDetail, ArticleStatus, Category, Tag } from '@/types'
+import type { ArticleDetail, ArticleStatus, Category, Series, Tag } from '@/types'
 import { formatRelative } from '@/utils/format'
 
 const route = useRoute()
@@ -34,6 +34,8 @@ const form = ref({
   is_top: false,
   allow_comment: true,
   category_id: null as number | null,
+  series_id: null as number | null,
+  series_order: 0,
   tags: [] as string[],
 })
 // 标签输入交互（键盘语义/去重/上限）交给 useTagInput；
@@ -57,6 +59,8 @@ const formError = ref('')
 
 const categories = useAsyncData<Category[]>(() => categoryApi.list(false), [])
 const allTags = ref<Tag[]>([])
+/** 系列列表（下拉选择用，不带计数） */
+const seriesOptions = useAsyncData<Series[]>(() => seriesApi.list(false), [])
 
 const isDraft = computed(() => form.value.status === 'draft')
 
@@ -115,6 +119,8 @@ async function loadArticle(): Promise<void> {
       is_top: detail.is_top,
       allow_comment: detail.allow_comment,
       category_id: detail.category?.id ?? null,
+      series_id: detail.series?.id ?? null,
+      series_order: detail.series_order ?? 0,
       tags: detail.tags.map((tag) => tag.name),
     }
     // 本地草稿比服务端更新时才提示：否则用户刚保存完又开一次，会被无意义地打扰
@@ -164,6 +170,8 @@ function buildPayload(status: ArticleStatus) {
     is_top: form.value.is_top,
     allow_comment: form.value.allow_comment,
     category_id: form.value.category_id,
+    series_id: form.value.series_id,
+    series_order: form.value.series_order,
     tags: form.value.tags,
   }
 }
@@ -210,6 +218,7 @@ async function save(status: ArticleStatus): Promise<void> {
 
 onMounted(async () => {
   void categories.run()
+  void seriesOptions.run()
   try {
     allTags.value = await tagApi.list({ withCounts: false })
   } catch {
@@ -327,6 +336,32 @@ onMounted(async () => {
               {{ item.name }}
             </option>
           </select>
+        </div>
+
+        <div class="card p-4">
+          <h3 class="mb-3 text-sm font-medium text-ink">
+            系列 <span class="text-xs font-normal text-ink-faint">（技术连载 / 合集）</span>
+          </h3>
+          <select v-model="form.series_id" class="input">
+            <option :value="null">未挂系列</option>
+            <option v-for="item in seriesOptions.data.value" :key="item.id" :value="item.id">
+              {{ item.name }}
+            </option>
+          </select>
+          <label class="mt-3 block text-xs text-ink-soft">
+            系列内顺序
+            <input
+              v-model.number="form.series_order"
+              type="number"
+              min="0"
+              class="input mt-1.5"
+              :disabled="form.series_id === null"
+              title="小者在前；用于详情页系列导航"
+            />
+          </label>
+          <p v-if="seriesOptions.error.value" class="mt-2 text-xs text-ink-faint">
+            系列列表加载失败，仍可手动输入 id（见后台系列管理）。
+          </p>
         </div>
 
         <div class="card p-4">

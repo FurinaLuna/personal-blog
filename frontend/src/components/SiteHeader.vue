@@ -16,6 +16,7 @@ const NAV = [
   { name: 'categories', label: '分类', to: '/categories' },
   { name: 'tags', label: '标签', to: '/tags' },
   { name: 'archive', label: '归档', to: '/archive' },
+  { name: 'series', label: '系列', to: '/series' },
   { name: 'links', label: '友链', to: '/links' },
   { name: 'about', label: '关于', to: '/about' },
 ]

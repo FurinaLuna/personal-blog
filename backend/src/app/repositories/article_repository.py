@@ -39,6 +39,7 @@ class ArticleFilter:
     category_slug: str | None = None
     tag_slug: str | None = None
     author_id: int | None = None
+    series_id: int | None = None
     is_top: bool | None = None
     published_from: datetime | None = None
     published_to: datetime | None = None
@@ -118,6 +119,8 @@ class ArticleRepository(BaseRepository[Article]):
             stmt = stmt.where(Article.tags.any(Tag.slug == flt.tag_slug))
         if flt.author_id is not None:
             stmt = stmt.where(Article.author_id == flt.author_id)
+        if flt.series_id is not None:
+            stmt = stmt.where(Article.series_id == flt.series_id)
         if flt.published_from is not None:
             stmt = stmt.where(Article.published_at >= flt.published_from)
         if flt.published_to is not None:
@@ -241,6 +244,56 @@ class ArticleRepository(BaseRepository[Article]):
         prev = (await self.session.execute(prev_stmt)).scalars().first()
         nxt = (await self.session.execute(next_stmt)).scalars().first()
         return prev, nxt
+
+    async def get_series_neighbors(self, article: Article) -> tuple[Article | None, Article | None]:
+        """取同系列内的相邻文章（按 ``(series_order, id)`` 排序）。
+
+        Returns:
+            ``(prev, next)``：prev 是系列内更早的一篇，next 是更后的一篇；
+            文章不属于任何系列时返回 ``(None, None)``。
+            只考虑已发布文章，与全局上下篇同口径。
+        """
+        if article.series_id is None:
+            return None, None
+        base = select(Article).where(
+            Article.series_id == article.series_id,
+            Article.status == ArticleStatus.PUBLISHED,
+        )
+        prev_stmt = (
+            base.where(
+                or_(
+                    article.series_order > Article.series_order,
+                    (article.series_order == Article.series_order) & (Article.id < article.id),
+                )
+            )
+            .order_by(Article.series_order.desc(), Article.id.desc())
+            .limit(1)
+        )
+        next_stmt = (
+            base.where(
+                or_(
+                    article.series_order < Article.series_order,
+                    (article.series_order == Article.series_order) & (Article.id > article.id),
+                )
+            )
+            .order_by(Article.series_order.asc(), Article.id.asc())
+            .limit(1)
+        )
+        prev = (await self.session.execute(prev_stmt)).scalars().first()
+        nxt = (await self.session.execute(next_stmt)).scalars().first()
+        return prev, nxt
+
+    async def list_by_series(
+        self, *, series_id: int, statuses: tuple[ArticleStatus, ...]
+    ) -> list[Article]:
+        """某系列下的文章，按 ``(series_order, id)`` 排序（系列导航的完整列表）。"""
+        stmt = (
+            select(Article)
+            .where(Article.series_id == series_id, Article.status.in_(list(statuses)))
+            .order_by(Article.series_order, Article.id)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def list_archive(self, *, statuses: tuple[ArticleStatus, ...]) -> list[tuple[str, int]]:
         """按月归档。

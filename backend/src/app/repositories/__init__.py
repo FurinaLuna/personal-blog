@@ -13,6 +13,7 @@ from app.repositories.article_repository import (
 from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.base import BaseRepository
 from app.repositories.comment_repository import CommentRepository
+from app.repositories.series_repository import SeriesRepository
 from app.repositories.site_repository import SiteRepository
 from app.repositories.taxonomy_repository import CategoryRepository, TagRepository
 from app.repositories.user_repository import UserRepository
@@ -26,6 +27,7 @@ __all__ = [
     "BaseRepository",
     "CategoryRepository",
     "CommentRepository",
+    "SeriesRepository",
     "SiteRepository",
     "TagRepository",
     "UserRepository",

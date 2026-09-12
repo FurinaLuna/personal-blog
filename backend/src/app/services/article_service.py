@@ -28,6 +28,7 @@ from app.schemas.article import (
 )
 from app.schemas.common import Page, PageParams
 from app.schemas.site import ArchiveGroup, ArchiveItem
+from app.services.series_service import SeriesService
 from app.services.taxonomy_service import TaxonomyService
 from app.utils.exceptions import (
     BadRequestError,
@@ -62,7 +63,7 @@ MAX_TAGS_PER_ARTICLE = 10
 # 允许被显式清空为 NULL 的字段（其余字段收到 None 视为「不修改」）。
 # 注意这里用的是关系名 category 而不是 category_id：赋值关系对象才能既改外键
 # 又把关系置为已加载，避免后续序列化触发惰性加载。
-NULLABLE_FIELDS = {"summary", "cover_image", "category"}
+NULLABLE_FIELDS = {"summary", "cover_image", "category", "series"}
 
 
 def build_article_filter(
@@ -107,6 +108,8 @@ class ArticleService:
         # 文章服务只负责「什么时候需要它们」——同层服务组合是允许的，
         # 因为 taxonomy_service 不反向依赖 article_service，没有循环。
         self.taxonomy = TaxonomyService(session)
+        # 系列的领域规则（唯一性 / slug）归 SeriesService，同上单向组合
+        self.series = SeriesService(session)
 
     # ================================================================ 查询
 
@@ -257,6 +260,7 @@ class ArticleService:
     async def _build_detail(self, article: Article) -> ArticleDetail:
         comment_count = await self.articles.get_comment_count(article.id)
         prev, nxt = await self.articles.get_neighbors(article)
+        series_prev, series_next = await self.articles.get_series_neighbors(article)
         data = ArticleSummary.model_validate(article).model_dump()
         data["comment_count"] = comment_count
         return ArticleDetail(
@@ -264,6 +268,8 @@ class ArticleService:
             content_md=article.content_md,
             prev=self._neighbor(prev),
             next=self._neighbor(nxt),
+            series_prev=self._neighbor(series_prev),
+            series_next=self._neighbor(series_next),
         )
 
     @staticmethod
@@ -282,6 +288,7 @@ class ArticleService:
         关系置为「已加载」，后面序列化时才不会为了取作者名去触发惰性加载。
         """
         category = await self.taxonomy.ensure_category(payload.category_id)
+        series = await self.series.ensure_series(payload.series_id)
         slug = await self._resolve_slug(payload.slug or payload.title, fallback="article")
         tags = await self._resolve_tags(payload.tags)
 
@@ -294,10 +301,12 @@ class ArticleService:
             status=payload.status,
             is_top=payload.is_top,
             allow_comment=payload.allow_comment,
+            series_order=payload.series_order,
             reading_time=estimate_reading_time(payload.content_md),
             published_at=datetime.now(UTC) if payload.status is ArticleStatus.PUBLISHED else None,
             author=author,
             category=category,
+            series=series,
             tags=tags,
         )
         return await self._build_detail(article)
@@ -329,6 +338,10 @@ class ArticleService:
 
         if "category_id" in data:
             data["category"] = await self.taxonomy.ensure_category(data.pop("category_id"))
+
+        if "series_id" in data:
+            # 显式传 null 表示移出系列（FK 置空）；系列规则由 SeriesService 校验
+            data["series"] = await self.series.ensure_series(data.pop("series_id"))
 
         if data.get("status") is ArticleStatus.PUBLISHED and article.published_at is None:
             # 首次发布时补上发布时间；之后反复切状态不会覆盖原发布时间

@@ -7,6 +7,8 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import ArticleStatus
+from app.schemas.common import Page
+from app.schemas.series import SeriesBrief, SeriesRead
 from app.schemas.taxonomy import TagBrief
 from app.schemas.user import UserBrief
 
@@ -52,16 +54,37 @@ class ArticleSummary(BaseModel):
     updated_at: datetime
     author: UserBrief | None = None
     category: CategoryBrief | None = None
+    series: SeriesBrief | None = None
+    series_order: int = 0
     tags: list[TagBrief] = Field(default_factory=list)
     comment_count: int = 0
 
 
 class ArticleDetail(ArticleSummary):
-    """详情页：在列表字段基础上补正文与上下篇。"""
+    """详情页：在列表字段基础上补正文与上下篇。
+
+    ``series_prev`` / ``series_next``：同系列内按 ``series_order`` 相邻的文章；
+    不属于任何系列时为 ``None``。它服务于详情页顶部的系列导航条
+    （全局 prev/next 仍按发布时间排，两者语义不同）。
+    """
 
     content_md: str
     prev: ArticleNeighbor | None = None
     next: ArticleNeighbor | None = None
+    series_prev: ArticleNeighbor | None = None
+    series_next: ArticleNeighbor | None = None
+
+
+class SeriesWithArticles(BaseModel):
+    """系列详情响应：系列信息 + 该系列的文章（分页）。
+
+    放在本模块而非 ``schemas.series``：它同时引用 ``SeriesRead`` 与
+    ``ArticleSummary``，而 article schema 已被 series schema 依赖（``SeriesBrief``），
+    反向放置会造成循环导入。
+    """
+
+    series: SeriesRead
+    articles: Page[ArticleSummary]
 
 
 class ArticleCreate(BaseModel):
@@ -74,6 +97,8 @@ class ArticleCreate(BaseModel):
     is_top: bool = False
     allow_comment: bool = True
     category_id: int | None = None
+    series_id: int | None = Field(default=None, description="所属系列；不传表示不挂系列")
+    series_order: int = Field(default=0, ge=0, description="系列内顺序，小者在前")
     tags: list[str] = Field(
         default_factory=list,
         max_length=10,
@@ -106,4 +131,7 @@ class ArticleUpdate(BaseModel):
     is_top: bool | None = None
     allow_comment: bool | None = None
     category_id: int | None = None
+    # 显式传 null 表示「移出系列」；只传 series_order 表示仅调整顺序
+    series_id: int | None = None
+    series_order: int | None = Field(default=None, ge=0)
     tags: list[str] | None = Field(default=None, max_length=10)

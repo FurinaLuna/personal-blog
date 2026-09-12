@@ -1,5 +1,6 @@
 /** 文章领域（含按月归档）。 */
 
+import type { SeriesBrief } from './series'
 import type { CategoryBrief, TagBrief } from './taxonomy'
 import type { UserBrief } from './user'
 
@@ -31,6 +32,8 @@ export interface ArticleSummary {
   updated_at: string
   author: UserBrief | null
   category: CategoryBrief | null
+  series: SeriesBrief | null
+  series_order: number
   tags: TagBrief[]
   comment_count: number
 }
@@ -39,6 +42,9 @@ export interface ArticleDetail extends ArticleSummary {
   content_md: string
   prev: ArticleNeighbor | null
   next: ArticleNeighbor | null
+  /** 同系列内按 series_order 相邻的文章（详情页系列导航条） */
+  series_prev: ArticleNeighbor | null
+  series_next: ArticleNeighbor | null
 }
 
 export interface ArticlePayload {
@@ -51,6 +57,8 @@ export interface ArticlePayload {
   is_top?: boolean
   allow_comment?: boolean
   category_id?: number | null
+  series_id?: number | null
+  series_order?: number
   tags?: string[]
 }
 
