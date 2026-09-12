@@ -63,6 +63,7 @@ interaction-shots/
 full-shots/
 full-shots-*/
 smoke-shots-*/
+showcase-shots/
 # 数据库一致性备份（VACUUM INTO 产物，本地用）
 blog.db.bak-*
 backend/blog.db.bak-*
