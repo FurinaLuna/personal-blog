@@ -79,6 +79,8 @@ async def update_me(payload: UserSelfUpdate, user: CurrentUser, session: Session
     """注意这里用的是 ``UserSelfUpdate``：不含 role / is_active，
     从 schema 层面就杜绝了普通用户给自己提权的可能。"""
     updated = await AuthService(session).update_self(user, payload)
+    # 写路由显式提交（原因见 db/session.py get_session 说明）
+    await session.commit()
     return UserRead.model_validate(updated)
 
 
@@ -87,6 +89,7 @@ async def change_password(
     payload: PasswordChange, user: CurrentUser, session: SessionDep
 ) -> Message:
     await AuthService(session).change_password(user, payload.old_password, payload.new_password)
+    await session.commit()
     return Message(detail="密码已更新，请重新登录")
 
 
@@ -108,6 +111,7 @@ async def list_users(_: AdminUser, session: SessionDep) -> list[UserRead]:
 async def create_user(payload: UserCreate, _: AdminUser, session: SessionDep) -> UserRead:
     """站点不开放自助注册——个人博客的账号应当由站长分配。"""
     created = await AuthService(session).create_user(payload)
+    await session.commit()
     return UserRead.model_validate(created)
 
 
@@ -116,6 +120,7 @@ async def update_user(
     user_id: int, payload: UserUpdate, _: AdminUser, session: SessionDep
 ) -> UserRead:
     updated = await AuthService(session).update_user(user_id, payload)
+    await session.commit()
     return UserRead.model_validate(updated)
 
 
@@ -124,3 +129,4 @@ async def update_user(
 )
 async def delete_user(user_id: int, operator: AdminUser, session: SessionDep) -> None:
     await AuthService(session).delete_user(user_id, operator=operator)
+    await session.commit()

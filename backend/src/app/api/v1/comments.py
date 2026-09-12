@@ -42,7 +42,7 @@ async def create_comment(
     是否免审核由站点配置决定；无论是否需要审核，接口都会返回创建结果，
     前端据此提示「已提交，等待审核」或「发布成功」。
     """
-    return await CommentService(session).create(
+    created = await CommentService(session).create(
         article_id,
         payload,
         viewer=viewer,
@@ -51,6 +51,9 @@ async def create_comment(
         ip_address=client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
+    # 写路由显式提交（原因见 db/session.py get_session 说明）
+    await session.commit()
+    return created
 
 
 # ------------------------------------------------------------------ 后台管理
@@ -78,11 +81,14 @@ async def moderate_comment(
 ) -> CommentRead:
     """通过 / 撤回评论。``is_approved=True`` 即放行。"""
     approved = True if payload.is_approved is None else payload.is_approved
-    return await CommentService(session).set_approved(comment_id, approved)
+    comment = await CommentService(session).set_approved(comment_id, approved)
+    await session.commit()
+    return comment
 
 
 @router.delete("/{comment_id}", response_model=Message, summary="删除评论（作者）")
 async def delete_comment(comment_id: int, user: AuthorUser, session: SessionDep) -> Message:
     """删除顶级评论会连带删除其下所有回复。"""
     await CommentService(session).delete(comment_id, operator=user)
+    await session.commit()
     return Message(detail="评论已删除")

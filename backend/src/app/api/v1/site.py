@@ -23,6 +23,8 @@ async def update_profile(
     payload: SiteProfileUpdate, _: AdminUser, session: SessionDep
 ) -> SiteProfileRead:
     profile = await SiteService(session).update_profile(payload)
+    # 写路由显式提交（原因见 db/session.py get_session 说明）
+    await session.commit()
     return SiteService.to_read(profile)
 
 

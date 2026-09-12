@@ -278,10 +278,10 @@ personal-blog/
 | 评论 | `GET /api/v1/comments/article/{id}` | 两级评论树 |
 | | `POST /api/v1/comments/article/{id}` | 发表评论（支持匿名，限流 5/分） |
 | | `PATCH/DELETE /api/v1/comments/{id}` | 审核与删除（作者以上） |
-| 媒体 | `POST /api/v1/attachments` | 上传（真实解码判型 + 流式限流读） |
-| | `GET/PATCH/DELETE /api/v1/attachments` | 媒体库管理 |
+| 媒体 | `POST /api/v1/attachments/upload` | 上传（真实解码判型 + 流式限流读） |
+| | `GET /api/v1/attachments`、`DELETE /api/v1/attachments/{id}` | 媒体库管理 |
 | 站点 | `GET /api/v1/site/profile`、`/stats` | 站点档案与统计 |
-| | `PUT /api/v1/site/profile` | 更新站点设置（站长） |
+| | `PATCH /api/v1/site/profile` | 更新站点设置（站长） |
 | 订阅 | `GET /feed.xml`、`/sitemap.xml` | RSS 2.0 与站点地图（后端直出） |
 | 运维 | `GET /health`、`/ready` | 存活 / 就绪探针 |
 

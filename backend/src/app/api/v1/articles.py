@@ -126,7 +126,11 @@ async def create_article(
     payload: ArticleCreate, user: AuthorUser, session: SessionDep
 ) -> ArticleDetail:
     """新建文章。``status`` 直接传 ``published`` 即为发布，传 ``draft`` 存草稿。"""
-    return await ArticleService(session).create(payload, user)
+    detail = await ArticleService(session).create(payload, user)
+    # 写路由显式提交：yield 依赖的收尾提交发生在响应发送之后，会把「提交落地」
+    # 暴露给连接池里的下一个请求，引入写后立读旧快照的竞态（见 db/session.py）
+    await session.commit()
+    return detail
 
 
 @router.get("/{slug_or_id}", response_model=ArticleDetail, summary="文章详情")
@@ -144,12 +148,15 @@ async def update_article(
     article_id: int, payload: ArticleUpdate, user: AuthorUser, session: SessionDep
 ) -> ArticleDetail:
     """部分更新：只提交需要改的字段，未出现的字段保持原值。"""
-    return await ArticleService(session).update(article_id, payload, user)
+    detail = await ArticleService(session).update(article_id, payload, user)
+    await session.commit()
+    return detail
 
 
 @router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除文章")
 async def delete_article(article_id: int, user: AuthorUser, session: SessionDep) -> None:
     await ArticleService(session).delete(article_id, user)
+    await session.commit()
 
 
 @router.post("/{article_id}/like", response_model=dict, summary="点赞")
@@ -161,6 +168,7 @@ async def like_article(
     因为无需登录，这个接口天然可被脚本刷——限流是它唯一的门槛。
     """
     count = await ArticleService(session).like(article_id)
+    await session.commit()
     return {"like_count": count}
 
 

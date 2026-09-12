@@ -58,10 +58,18 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """请求级会话：异常回滚、正常提交、无论如何关闭。
+    """请求级会话：异常回滚、安全网提交、无论如何关闭。
 
-    事务边界就落在这里——服务层只 ``flush`` 不 ``commit``，一个 HTTP 请求
-    对应一个事务，避免出现「文章存了但标签没存」这类半成品数据。
+    事务的**正式提交**由写路由处理函数末尾显式执行（``await session.commit()``），
+    一个 HTTP 请求仍对应一个事务，避免出现「文章存了但标签没存」这类半成品数据。
+
+    为什么不能把唯一提交放在这里（依赖 teardown）：FastAPI 对 yield 依赖的收尾
+    代码在**响应发送之后**才运行，浏览器连接池的下一个请求会在提交落地前开启
+    读事务，偶发读到旧快照（read-your-writes 被破坏，双连接实测约 6% 复现率：
+    create 后读不到 3/50、delete 后仍可读 2/50）。
+
+    这里的 commit 保留为安全网：正常路径下写路由已提交，此处是空操作；
+    未来若新增写路径漏了显式提交，数据仍不丢（代价仅是该路径偶发旧读）。
     """
     async with async_session_factory() as session:
         try:

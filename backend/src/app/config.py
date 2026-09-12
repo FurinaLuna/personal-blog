@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # backend/ 目录（config.py -> app/ -> src/ -> backend/）
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -51,7 +52,10 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # ---------- CORS ----------
-    cors_origins: list[str] = [
+    # NoDecode：关闭 pydantic-settings 对 list 字段的自动 JSON 解析。
+    # 否则 CSV 写法（A,B,C）会在进入 _split_csv 验证器之前直接抛 SettingsError，
+    # 按旧版 .env.example 配置的项目根本起不来。
+    cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:4173",
@@ -84,7 +88,7 @@ class Settings(BaseSettings):
     max_upload_size: int = 10 * 1024 * 1024  # 10 MB
     thumbnail_max_width: int = 480
     thumbnail_max_height: int = 480
-    allowed_image_types: list[str] = [
+    allowed_image_types: Annotated[list[str], NoDecode] = [
         "image/jpeg",
         "image/png",
         "image/gif",
@@ -94,7 +98,7 @@ class Settings(BaseSettings):
     # 说明：SVG 刻意不在默认白名单里。SVG 是 XML，可以内嵌 <script>，
     # 若从本站同源直出，攻击者上传一个 SVG 就等于拿到了存储型 XSS，
     # 可以盗取所有访客的登录态。真要用 SVG，请单独放到独立域名下托管。
-    allowed_file_types: list[str] = [
+    allowed_file_types: Annotated[list[str], NoDecode] = [
         "application/pdf",
         "application/zip",
         "text/plain",
@@ -111,9 +115,16 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", "allowed_image_types", "allowed_file_types", mode="before")
     @classmethod
     def _split_csv(cls, value: Any) -> Any:
-        """允许 ``A,B,C`` 形式的逗号分隔环境变量。"""
-        if isinstance(value, str) and not value.strip().startswith("["):
-            return [item.strip() for item in value.split(",") if item.strip()]
+        """把字符串形式的列表环境变量统一解析成列表。
+
+        同时接受两种写法：``A,B,C``（逗号分隔）与 ``["A","B"]``（JSON 数组）。
+        JSON 分支在这里显式解析，而不是依赖 pydantic-settings 的自动解析。
+        """
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
     @property

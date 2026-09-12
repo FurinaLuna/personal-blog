@@ -34,7 +34,10 @@ async def upload(
     校验要点：真实类型靠 Pillow 解码判定而非客户端声明的 Content-Type；
     超限在读取过程中就中断；文件名由服务端生成。
     """
-    return await AttachmentService(session).upload(upload=file, uploader=user)
+    result = await AttachmentService(session).upload(upload=file, uploader=user)
+    # 写路由显式提交（原因见 db/session.py get_session 说明）
+    await session.commit()
+    return result
 
 
 @router.get("", response_model=Page[UploadResult], summary="媒体库列表（作者）")
@@ -54,4 +57,5 @@ async def list_attachments(
 async def delete_attachment(attachment_id: int, user: AuthorUser, session: SessionDep) -> Message:
     """删除附件会同时删除磁盘文件与缩略图。"""
     await AttachmentService(session).delete(attachment_id, operator=user)
+    await session.commit()
     return Message(detail="附件已删除")

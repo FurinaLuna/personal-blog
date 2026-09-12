@@ -51,6 +51,8 @@ async def create_category(
     payload: CategoryCreate, _: AuthorUser, session: SessionDep
 ) -> CategoryRead:
     category = await TaxonomyService(session).create_category(payload)
+    # 写路由显式提交（原因见 db/session.py get_session 说明）
+    await session.commit()
     return CategoryRead.model_validate(category)
 
 
@@ -59,6 +61,7 @@ async def update_category(
     category_id: int, payload: CategoryUpdate, _: AuthorUser, session: SessionDep
 ) -> CategoryRead:
     category = await TaxonomyService(session).update_category(category_id, payload)
+    await session.commit()
     return CategoryRead.model_validate(category)
 
 
@@ -66,6 +69,7 @@ async def update_category(
 async def delete_category(category_id: int, _: AdminUser, session: SessionDep) -> Message:
     """删除分类不会删除文章，只会让它们变成「未分类」。"""
     await TaxonomyService(session).delete_category(category_id)
+    await session.commit()
     return Message(detail="分类已删除，其下文章已变为「未分类」")
 
 
@@ -89,6 +93,7 @@ async def list_tags(
 )
 async def create_tag(payload: TagCreate, _: AuthorUser, session: SessionDep) -> TagRead:
     tag = await TaxonomyService(session).create_tag(payload)
+    await session.commit()
     return TagRead.model_validate(tag)
 
 
@@ -97,12 +102,14 @@ async def update_tag(
     tag_id: int, payload: TagUpdate, _: AuthorUser, session: SessionDep
 ) -> TagRead:
     tag = await TaxonomyService(session).update_tag(tag_id, payload)
+    await session.commit()
     return TagRead.model_validate(tag)
 
 
 @tag_router.delete("/{tag_id}", response_model=Message, summary="删除标签（作者）")
 async def delete_tag(tag_id: int, _: AuthorUser, session: SessionDep) -> Message:
     await TaxonomyService(session).delete_tag(tag_id)
+    await session.commit()
     return Message(detail="标签已删除")
 
 
@@ -110,4 +117,5 @@ async def delete_tag(tag_id: int, _: AuthorUser, session: SessionDep) -> Message
 async def cleanup_tags(_: AdminUser, session: SessionDep) -> Message:
     """把没有任何文章引用的标签清掉，让标签云保持干净。"""
     removed = await TaxonomyService(session).cleanup_orphan_tags()
+    await session.commit()
     return Message(detail=f"已清理 {removed} 个空标签")
