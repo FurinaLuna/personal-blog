@@ -210,6 +210,7 @@ personal-blog/
 ├── deploy/                         # Dockerfile × 2 + nginx.conf
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
+│   ├── ASSESSMENT.md               # 全面评估（风险 / 升级 / 功能 / 性能）
 │   ├── ROADMAP.md                  # 迭代路线图与进度
 │   ├── devlog/                     # 逐日开发日志（决策 / 验证 / 踩坑）
 │   └── screenshots/                # 界面截图
