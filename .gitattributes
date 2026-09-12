@@ -22,6 +22,11 @@
 *.svg       text eol=lf
 Makefile    text eol=lf
 .gitignore  text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf
+LICENSE     text eol=lf
+Dockerfile* text eol=lf
+.dockerignore text eol=lf
 
 # Windows 专属脚本保持 CRLF
 *.bat       text eol=crlf

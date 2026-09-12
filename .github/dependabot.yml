@@ -1,0 +1,43 @@
+name: Dependabot
+
+# 供应链安全：依赖漏洞不会自己变好，靠人工定期检查一定会漏。
+# 这里只开安全更新与版本更新的 PR，自动合并仍然交给人判断。
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      # 小版本合并成一个 PR，避免一周开十个互相冲突的 PR
+      python-minor:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      npm-minor:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: 'chore(ci)'
+
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: 'chore(docker)'

@@ -39,6 +39,8 @@ dist-ssr/
 .vite/
 .npm-cache/
 *.local
+*.tsbuildinfo
+coverage/
 
 # ---------------- 编辑器与系统 ----------------
 .vscode/*
@@ -54,5 +56,9 @@ npm-debug.log*
 yarn-error.log*
 alembic_boot.db
 
-# ---------------- 冒烟验证产物 ----------------
+# ---------------- 端到端验证产物 ----------------
+# 冒烟与交互验证的截图目录，每次运行都会重写，不入库
 smoke-shots/
+interaction-shots/
+playwright-report/
+test-results/

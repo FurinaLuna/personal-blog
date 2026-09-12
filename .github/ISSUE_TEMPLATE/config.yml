@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题
+    url: https://github.com/FurinaLuna/personal-blog/security/advisories/new
+    about: 请勿公开提交安全漏洞，走私密渠道报告（详见 SECURITY.md）
+  - name: 使用与部署问题
+    url: https://github.com/FurinaLuna/personal-blog/blob/main/docs/DESIGN.md
+    about: 部署步骤、环境变量、上线检查清单见设计文档第 5 章
