@@ -304,6 +304,9 @@ async function main() {
       `document.querySelector('article h2 a')?.getAttribute('href') ?? ''`,
     )
     await navigate(cdp, `${BASE_URL}${slug}`)
+    // 注：这里原本还有一个 likes 字段，值也指向 #comments（复制粘贴遗留），
+    // 且从未被任何断言消费，已删除。点赞交互有副作用（自增且无 unlike 接口），
+    // 改由 tools/full-check.mjs 的 D1 用例在临时文章上真实点击并回收。
     const detail = await evaluate(
       cdp,
       `(() => ({
@@ -314,7 +317,6 @@ async function main() {
         // 目录项已从 button 改为锚点链接（章节可深链），选择器跟随着组件实现
         tocItems: document.querySelectorAll('nav[aria-label="文章目录"] a[href^="#"]').length,
         commentSection: !!document.querySelector('#comments'),
-        likes: !!document.querySelector('#comments'),
       }))()`,
     )
     record('详情页正文渲染', detail.hasProse, `标题「${detail.heading}」`)

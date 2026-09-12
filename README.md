@@ -11,7 +11,7 @@
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
 **写出来能跑、改起来可验证** —— 183 个后端测试、48 个前端单测，
-外加两个真实浏览器端到端脚本（冒烟 34 项 / 交互 16 项）。
+外加两个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项）。
 
 ---
 
@@ -112,7 +112,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 171 例、前端 40 例 |
+| 测试 | pytest / Vitest | 后端 183 例、前端 48 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -168,7 +168,8 @@ make check         # 提交前跑这个：ruff + 格式 + 后端测试 + 前端�
 make test-all      # 前后端测试
 make build         # 前端类型检查 + 生产构建
 make smoke         # 真实浏览器冒烟（34 项，需先 make dev）
-make interaction   # 真实点击的交互验证（16 项，需先 make dev）
+make interaction   # 真实点击的交互验证（22 项，需先 make dev）
+make full-check    # 全功能回归 + 数据基线核对（41 项，自清理，需先 make dev）
 make migrate       # 应用数据库迁移
 make migration m="add xxx field"   # 生成迁移
 make docker-up     # 容器化启动
@@ -216,6 +217,7 @@ personal-blog/
 │   ├── STYLEGUIDE.md               # ★ 样式规范（文件组织 / BEM 命名 / 验证方法）
 │   ├── ROADMAP.md                  # 迭代路线图与进度
 │   ├── devlog/                     # 逐日开发日志（决策 / 验证 / 踩坑）
+│   ├── test-reports/               # full-check 各环境的运行报告（JSON）
 │   └── screenshots/                # 界面截图
 ├── tools/
 │   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互
@@ -293,6 +295,7 @@ make check          # 后端 lint + 格式 + 测试 + 前端单测
 make build          # 前端类型检查 + 生产构建
 make smoke          # 真实浏览器冒烟（需先 make dev）
 make interaction    # 真实点击的交互与失败路径验证（需先 make dev）
+make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 ```
 
 当前基线：
@@ -307,6 +310,7 @@ make interaction    # 真实点击的交互与失败路径验证（需先 make d
 | `alembic upgrade head` / `downgrade base` | 8 张表，干净回滚 |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
+| `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
 
 **为什么要两个浏览器脚本**：单测与类型检查都是绿的情况下，
 项目里仍然出现过「登录后被弹回登录页」和「后台侧边栏渲染两遍、子页面完全不显示」
@@ -334,7 +338,7 @@ docker compose exec backend alembic upgrade head
 
 1. 从 `main` 切分支：`git checkout -b feat/your-feature`
 2. 提交前确保 `make check`、`make build` 全绿；动到路由 / 布局 / 样式层 / 上传链路时
-   还要跑 `make smoke` 与 `make interaction`
+   还要跑 `make smoke`、`make interaction` 与 `make full-check`
 3. 提交信息说明**改了什么 + 怎么验证的**
 4. 开 PR 并填写模板中的检查清单
 

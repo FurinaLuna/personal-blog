@@ -49,15 +49,16 @@ make smoke          # 真实浏览器冒烟（需先 make dev 起好前后端）
 | 检查 | 命令 | 当前基线 |
 |---|---|---|
 | 后端 lint / 格式 | `ruff check .` / `ruff format --check .` | 全通过 |
-| 后端测试 | `pytest` | 171 passed |
+| 后端测试 | `pytest` | 183 passed |
 | 前端类型 | `npm run type-check` | 0 报错 |
-| 前端单测 | `npm run test` | 40 passed |
+| 前端单测 | `npm run test` | 48 passed |
 | 前端构建 | `npm run build` | 成功 |
 | 端到端冒烟 | `node tools/smoke-check.mjs` | 34/34 |
-| 交互验证 | `node tools/interaction-check.mjs` | 16/16 |
+| 交互验证 | `node tools/interaction-check.mjs` | 22/22 |
+| 全功能回归 | `make full-check` | 41/41（含数据基线核对） |
 
-> **动到路由、布局、样式层或上传链路时，`make smoke` 与
-> `node tools/interaction-check.mjs` 是必跑的** —— 这两个脚本抓出过单元测试
+> **动到路由、布局、样式层或上传链路时，`make smoke`、
+> `node tools/interaction-check.mjs` 与 `make full-check` 是必跑的** —— 这几个脚本抓出过单元测试
 > 和类型检查都发现不了的问题（后台布局嵌套导致子页面不渲染、登录后被弹回登录页）。
 
 ## 代码约定

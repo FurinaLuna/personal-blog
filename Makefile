@@ -16,7 +16,7 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help install install-backend install-frontend dev dev-backend dev-frontend \
-        test test-frontend test-all test-cov lint fmt fmt-check check smoke interaction \
+        test test-frontend test-all test-cov lint fmt fmt-check check smoke interaction full-check \
         migrate migration seed build build-preview \
         docker-up docker-down docker-logs docker-migrate clean
 
@@ -86,6 +86,11 @@ smoke: ## 端到端冒烟验证（真实浏览器；需先 make dev 起好前后
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
 	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
 	node tools/smoke-check.mjs http://127.0.0.1:5173 ./smoke-shots
+
+full-check: ## 全功能回归 + 数据基线核对（会写数据但自清理；需先 make dev 起好前后端）
+	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
+	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
+	node tools/full-check.mjs http://127.0.0.1:5173 ./full-shots
 
 # ---------------------------------------------------------------- 数据库
 

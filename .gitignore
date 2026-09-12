@@ -60,6 +60,12 @@ alembic_boot.db
 # 冒烟与交互验证的截图目录，每次运行都会重写，不入库
 smoke-shots/
 interaction-shots/
+full-shots/
+full-shots-*/
+smoke-shots-*/
+# 数据库一致性备份（VACUUM INTO 产物，本地用）
+blog.db.bak-*
+backend/blog.db.bak-*
 playwright-report/
 test-results/
 # 样式基线的采集体（本地比对用，比对完即弃）

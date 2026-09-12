@@ -1,0 +1,67 @@
+{
+ "baseUrl": "http://127.0.0.1:4173",
+ "mode": "preview",
+ "run": "E2E-mty5djos",
+ "startedAt": "2026-09-12T08:52:57.990Z",
+ "durationMs": 119390,
+ "node": "v22.22.2",
+ "chrome": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+ "cases": {
+  "total": 41,
+  "passed": 41,
+  "failed": 0
+ },
+ "failures": [],
+ "baseline": {
+  "before": {
+   "publishedTotal": 4,
+   "managedTotal": 4,
+   "categories": 3,
+   "tags": 7,
+   "users": 1,
+   "attachments": 0,
+   "comments": 0,
+   "residual": {
+    "articles": 0,
+    "categories": 0,
+    "tags": 0
+   }
+  },
+  "after": {
+   "publishedTotal": 4,
+   "managedTotal": 4,
+   "categories": 3,
+   "tags": 7,
+   "users": 1,
+   "attachments": 0,
+   "comments": 0,
+   "residual": {
+    "articles": 0,
+    "categories": 0,
+    "tags": 0
+   }
+  },
+  "diff": []
+ },
+ "cleanup": [
+  "comment#2:200",
+  "comment#1:200",
+  "article#14:204",
+  "article#13:204",
+  "article#12:204",
+  "article#11:204",
+  "article#10:204",
+  "article#9:204",
+  "article#8:204",
+  "article#7:204",
+  "article#6:204",
+  "article#5:204",
+  "tag#8:200",
+  "category#4:200",
+  "user#2:204",
+  "orphan-attachment#2:200",
+  "orphan-attachment#1:200"
+ ],
+ "consoleErrors": [],
+ "uncovered": []
+}

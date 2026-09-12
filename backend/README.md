@@ -44,7 +44,7 @@ utils/        安全 / 存储 / 文本 / 日志 / 限流 / 领域异常
 ## 测试与检查
 
 ```bash
-pytest                            # 171 个用例
+pytest                            # 183 个用例
 pytest --cov=app --cov-report=term-missing
 ruff check . && ruff format --check .
 ```
