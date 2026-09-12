@@ -11,7 +11,7 @@ from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Article, ArticleStatus, Tag, User, UserRole
+from app.models import Article, ArticleSort, ArticleStatus, Tag, User, UserRole
 from app.repositories import (
     ArticleFilter,
     ArticleRepository,
@@ -26,8 +26,8 @@ from app.schemas.article import (
     ArticleSummary,
     ArticleUpdate,
 )
-from app.schemas.common import Page
-from app.schemas.site import ArchiveItem
+from app.schemas.common import Page, PageParams
+from app.schemas.site import ArchiveGroup, ArchiveItem
 from app.services.taxonomy_service import TaxonomyService
 from app.utils.exceptions import (
     BadRequestError,
@@ -65,6 +65,38 @@ MAX_TAGS_PER_ARTICLE = 10
 NULLABLE_FIELDS = {"summary", "cover_image", "category"}
 
 
+def build_article_filter(
+    *,
+    keyword: str | None = None,
+    category: str | None = None,
+    tag: str | None = None,
+    author_id: int | None = None,
+    article_status: ArticleStatus | None = None,
+) -> ArticleFilter:
+    """把查询参数拼成仓储的筛选对象。
+
+    ``category`` 同时接受 slug 和数字 id，前端就不用关心自己手上拿到的是哪种，
+    少一次「到底该传什么」的沟通成本。
+
+    定义在服务层而不是路由层：「分类能用 slug 或 id 查询」是**领域查询语义**，
+    路由层不该知道仓储筛选对象长什么样（也据此不 import repositories）。
+    """
+    category_id: int | None = None
+    category_slug: str | None = None
+    if category:
+        category_slug = category if not category.isdigit() else None
+        category_id = int(category) if category.isdigit() else None
+    statuses: tuple[ArticleStatus, ...] = (article_status,) if article_status else ()
+    return ArticleFilter(
+        keyword=keyword,
+        statuses=statuses,
+        category_id=category_id,
+        category_slug=category_slug,
+        tag_slug=tag,
+        author_id=author_id,
+    )
+
+
 class ArticleService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -99,12 +131,15 @@ class ArticleService:
     async def list_public(
         self,
         *,
-        flt: ArticleFilter,
-        sorting: ArticleSorting,
-        page: int,
-        page_size: int,
+        page_params: PageParams,
+        keyword: str | None = None,
+        category: str | None = None,
+        tag: str | None = None,
+        author_id: int | None = None,
+        sort: ArticleSort = ArticleSort.LATEST,
     ) -> Page[ArticleSummary]:
         """前台列表：只返回已发布文章。"""
+        flt = build_article_filter(keyword=keyword, category=category, tag=tag, author_id=author_id)
         scoped = ArticleFilter(
             keyword=flt.keyword,
             statuses=LIST_STATUSES,
@@ -113,16 +148,19 @@ class ArticleService:
             tag_slug=flt.tag_slug,
             author_id=flt.author_id,
         )
-        return await self._paginate(scoped, sorting, page, page_size)
+        return await self._paginate(scoped, ArticleSorting(sort=sort), page_params)
 
     async def list_managed(
         self,
         *,
-        flt: ArticleFilter,
-        sorting: ArticleSorting,
-        page: int,
-        page_size: int,
+        page_params: PageParams,
         viewer: User,
+        keyword: str | None = None,
+        category: str | None = None,
+        tag: str | None = None,
+        author_id: int | None = None,
+        article_status: ArticleStatus | None = None,
+        sort: ArticleSort = ArticleSort.UPDATED,
     ) -> Page[ArticleSummary]:
         """后台列表：可以是任意状态。
 
@@ -130,6 +168,13 @@ class ArticleService:
         - 作者：默认只看自己的（``scope=mine``），要看全站必须由站长配权限，
           这里采取更保守的策略——作者永远只能看自己的。
         """
+        flt = build_article_filter(
+            keyword=keyword,
+            category=category,
+            tag=tag,
+            author_id=author_id,
+            article_status=article_status,
+        )
         statuses = flt.statuses or ALL_STATUSES
         if viewer.role is UserRole.ADMIN:
             scoped = ArticleFilter(
@@ -147,14 +192,13 @@ class ArticleService:
                 tag_slug=flt.tag_slug,
                 author_id=viewer.id,
             )
-        return await self._paginate(scoped, sorting, page, page_size, top_first=False)
+        return await self._paginate(scoped, ArticleSorting(sort=sort), page_params, top_first=False)
 
     async def _paginate(
         self,
         flt: ArticleFilter,
         sorting: ArticleSorting,
-        page: int,
-        page_size: int,
+        page_params: PageParams,
         *,
         top_first: bool = True,
     ) -> Page[ArticleSummary]:
@@ -166,13 +210,13 @@ class ArticleService:
         sorting.top_first = top_first
         total = await self.articles.count(flt)
         if total == 0:
-            return Page.build([], 0, page, page_size)
+            return Page.build([], 0, page_params.page, page_params.page_size)
 
         rows = await self.articles.list_paged(
             flt=flt,
             sorting=sorting,
-            offset=(page - 1) * page_size,
-            limit=page_size,
+            offset=page_params.offset,
+            limit=page_params.limit,
         )
         items = [
             ArticleSummary.model_validate(row.article).model_copy(
@@ -180,7 +224,7 @@ class ArticleService:
             )
             for row in rows
         ]
-        return Page.build(items, total, page, page_size)
+        return Page.build(items, total, page_params.page, page_params.page_size)
 
     async def get_detail(
         self, slug_or_id: str, viewer: User | None, *, count_view: bool = True
@@ -319,6 +363,23 @@ class ArticleService:
 
     async def archive(self) -> list[tuple[str, int]]:
         return await self.articles.list_archive(statuses=LIST_STATUSES)
+
+    async def archive_groups(self, *, limit_per_month: int) -> list[ArchiveGroup]:
+        """按月归档的完整编排：月份列表 → 逐月取条目 → 截断拼装。
+
+        「逐月再查一次列表」是 N+1 的**有意选择**：月份总数通常个位数到十几，
+        每月条目有 ``list_by_month`` 自己的 limit 保护，一次 JOIN 聚合反而会把
+        SQL 写复杂。编排逻辑放服务层，路由只负责 HTTP 参数（limit 校验）。
+        """
+        groups: list[ArchiveGroup] = []
+        for year_month, count in await self.archive():
+            # 注意括号：await 的优先级低于下标，写成 await f()[..] 会对协程取下标而报
+            # TypeError: 'coroutine' object is not subscriptable
+            items = await self.list_by_month(year_month)
+            groups.append(
+                ArchiveGroup(year_month=year_month, count=count, items=items[:limit_per_month])
+            )
+        return groups
 
     async def related(self, article_id: int, *, limit: int = 5) -> list[ArticleSummary]:
         """相关文章：同分类或共享标签，按发布时间倒序。

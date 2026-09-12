@@ -12,18 +12,13 @@ class CategoryRepository(BaseRepository[Category]):
     model = Category
 
     async def get_by_slug(self, slug: str) -> Category | None:
-        result = await self.session.execute(select(Category).where(Category.slug == slug))
-        return result.scalars().first()
+        return await self.get_by("slug", slug)
 
     async def get_by_name(self, name: str) -> Category | None:
-        result = await self.session.execute(select(Category).where(Category.name == name))
-        return result.scalars().first()
+        return await self.get_by("name", name)
 
     async def slug_exists(self, slug: str, *, exclude_id: int | None = None) -> bool:
-        stmt = select(func.count()).select_from(Category).where(Category.slug == slug)
-        if exclude_id is not None:
-            stmt = stmt.where(Category.id != exclude_id)
-        return int((await self.session.execute(stmt)).scalar_one()) > 0
+        return await self.exists_by("slug", slug, exclude_id=exclude_id)
 
     async def list_all(self) -> list[Category]:
         result = await self.session.execute(
@@ -56,12 +51,10 @@ class TagRepository(BaseRepository[Tag]):
     model = Tag
 
     async def get_by_slug(self, slug: str) -> Tag | None:
-        result = await self.session.execute(select(Tag).where(Tag.slug == slug))
-        return result.scalars().first()
+        return await self.get_by("slug", slug)
 
     async def get_by_name(self, name: str) -> Tag | None:
-        result = await self.session.execute(select(Tag).where(Tag.name == name))
-        return result.scalars().first()
+        return await self.get_by("name", name)
 
     async def get_by_names(self, names: list[str]) -> list[Tag]:
         if not names:
@@ -70,10 +63,7 @@ class TagRepository(BaseRepository[Tag]):
         return list(result.scalars().all())
 
     async def slug_exists(self, slug: str, *, exclude_id: int | None = None) -> bool:
-        stmt = select(func.count()).select_from(Tag).where(Tag.slug == slug)
-        if exclude_id is not None:
-            stmt = stmt.where(Tag.id != exclude_id)
-        return int((await self.session.execute(stmt)).scalar_one()) > 0
+        return await self.exists_by("slug", slug, exclude_id=exclude_id)
 
     async def list_all(self) -> list[Tag]:
         result = await self.session.execute(select(Tag).order_by(Tag.name))

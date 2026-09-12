@@ -1,34 +1,19 @@
-"""分页参数依赖。
+"""分页参数依赖（HTTP 装配层）。
 
-单独成文件是因为它既被路由用，又被服务层当值对象接收；
-这里做成一个有 ``offset``/``limit`` 的不可变对象，避免各路由各算一遍 offset 算错。
+``PageParams`` 值对象定义在 ``schemas/common.py``（与 ``Page`` 响应信封成对），
+服务层从那里 import；本文件只负责把 HTTP 查询串装配成 ``PageParams``，
+并 re-export 常量，方便既有代码迁移引用。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, Query
 
-MAX_PAGE_SIZE = 50
-DEFAULT_PAGE_SIZE = 10
+from app.schemas.common import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PageParams
 
-
-@dataclass(frozen=True, slots=True)
-class PageParams:
-    """分页参数值对象。"""
-
-    page: int = 1
-    page_size: int = DEFAULT_PAGE_SIZE
-
-    @property
-    def offset(self) -> int:
-        return (self.page - 1) * self.page_size
-
-    @property
-    def limit(self) -> int:
-        return self.page_size
+__all__ = ["DEFAULT_PAGE_SIZE", "MAX_PAGE_SIZE", "PageParams", "PageParamsDep"]
 
 
 async def get_page_params(
@@ -37,7 +22,7 @@ async def get_page_params(
         int, Query(ge=1, le=MAX_PAGE_SIZE, description=f"每页条数，最大 {MAX_PAGE_SIZE}")
     ] = DEFAULT_PAGE_SIZE,
 ) -> PageParams:
-    """把查询串转成分页值对象。上限硬约束在服务端，防止 ?page_size=100000 打爆内存。"""
+    """把查询串转成分页值对象。"""
     return PageParams(page=page, page_size=page_size)
 
 

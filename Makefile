@@ -10,8 +10,10 @@ FRONTEND := frontend
 # Windows 用 Scripts/python.exe，类 Unix 用 bin/python
 ifeq ($(OS),Windows_NT)
   VENV_PY := $(BACKEND)/.venv/Scripts/python.exe
+  LINT_IMPORTS := $(BACKEND)/.venv/Scripts/lint-imports.exe
 else
   VENV_PY := $(BACKEND)/.venv/bin/python
+  LINT_IMPORTS := $(BACKEND)/.venv/bin/lint-imports
 endif
 
 .DEFAULT_GOAL := help
@@ -61,8 +63,9 @@ test-all: test test-frontend ## 前后端测试一起跑
 test-cov: ## 运行测试并输出覆盖率报告
 	cd $(BACKEND) && $(abspath $(VENV_PY)) -m pytest --cov=app --cov-report=term-missing
 
-lint: ## 后端静态检查（ruff check）
+lint: ## 后端静态检查（ruff check + 分层契约 import-linter）
 	cd $(BACKEND) && $(abspath $(VENV_PY)) -m ruff check .
+	cd $(BACKEND) && $(LINT_IMPORTS)
 
 fmt: ## 后端格式化（ruff format + 自动修复）
 	cd $(BACKEND) && $(abspath $(VENV_PY)) -m ruff format .

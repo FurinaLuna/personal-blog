@@ -214,8 +214,26 @@ export async function request<T>(config: AxiosRequestConfig): Promise<T> {
   return data
 }
 
+/**
+ * 查询参数清洗：去掉值为 `undefined` / `null` / 空串的键。
+ *
+ * 统一在 `api.get` 里做，业务模块直接传对象即可，不用各自维护一份
+ * `clean()`（此前 articles/taxonomy/comments 三个模块三种写法）。
+ * 注意 `0` / `false` 是合法值，不清洗。
+ */
+function cleanParams(params?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!params) return undefined
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    result[key] = value
+  }
+  return result
+}
+
 export const api = {
-  get: <T>(url: string, params?: Record<string, unknown>) => request<T>({ method: 'GET', url, params }),
+  get: <T>(url: string, params?: Record<string, unknown>) =>
+    request<T>({ method: 'GET', url, params: cleanParams(params) }),
   post: <T>(url: string, data?: unknown) => request<T>({ method: 'POST', url, data }),
   patch: <T>(url: string, data?: unknown) => request<T>({ method: 'PATCH', url, data }),
   put: <T>(url: string, data?: unknown) => request<T>({ method: 'PUT', url, data }),

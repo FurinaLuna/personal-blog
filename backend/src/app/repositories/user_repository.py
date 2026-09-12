@@ -12,12 +12,10 @@ class UserRepository(BaseRepository[User]):
     model = User
 
     async def get_by_username(self, username: str) -> User | None:
-        result = await self.session.execute(select(User).where(User.username == username))
-        return result.scalar_one_or_none()
+        return await self.get_by("username", username)
 
     async def get_by_email(self, email: str) -> User | None:
-        result = await self.session.execute(select(User).where(User.email == email))
-        return result.scalar_one_or_none()
+        return await self.get_by("email", email)
 
     async def get_by_login(self, login: str) -> User | None:
         """登录入口：用户名或邮箱都能登。"""
@@ -27,16 +25,10 @@ class UserRepository(BaseRepository[User]):
         return result.scalars().first()
 
     async def username_taken(self, username: str, *, exclude_id: int | None = None) -> bool:
-        stmt = select(func.count()).select_from(User).where(User.username == username)
-        if exclude_id is not None:
-            stmt = stmt.where(User.id != exclude_id)
-        return int((await self.session.execute(stmt)).scalar_one()) > 0
+        return await self.exists_by("username", username, exclude_id=exclude_id)
 
     async def email_taken(self, email: str, *, exclude_id: int | None = None) -> bool:
-        stmt = select(func.count()).select_from(User).where(User.email == email)
-        if exclude_id is not None:
-            stmt = stmt.where(User.id != exclude_id)
-        return int((await self.session.execute(stmt)).scalar_one()) > 0
+        return await self.exists_by("email", email, exclude_id=exclude_id)
 
     async def list_all(self) -> list[User]:
         result = await self.session.execute(select(User).order_by(User.id))

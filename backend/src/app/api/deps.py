@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.session import get_session
 from app.models import User, UserRole
+from app.repositories import UserRepository
 from app.utils.exceptions import PermissionDeniedError, RateLimitedError, UnauthorizedError
 from app.utils.ratelimit import limiter
 from app.utils.security import decode_token
@@ -51,7 +52,8 @@ async def get_current_user(session: SessionDep, token: OptionalToken) -> User:
     except jwt.InvalidTokenError as exc:
         raise UnauthorizedError("无效的访问凭证") from exc
 
-    user = await session.get(User, payload.sub)
+    # 用户加载走仓储：本层不该手写 ORM 查询（和路由不手写 SQL 同一个道理）
+    user = await UserRepository(session).get(payload.sub)
     if user is None:
         raise UnauthorizedError("用户不存在")
     if not user.is_active:
@@ -72,7 +74,7 @@ async def get_optional_user(session: SessionDep, token: OptionalToken) -> User |
         payload = decode_token(token, expected_type="access")
     except jwt.InvalidTokenError:
         return None
-    user = await session.get(User, payload.sub)
+    user = await UserRepository(session).get(payload.sub)
     return user if user and user.is_active else None
 
 

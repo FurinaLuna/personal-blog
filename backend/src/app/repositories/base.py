@@ -29,8 +29,34 @@ class BaseRepository(Generic[ModelT]):
         """按主键取单个对象。"""
         return await self.session.get(self.model, obj_id)
 
+    async def get_by(self, field: str, value: Any) -> ModelT | None:
+        """按任一列取单个对象。
+
+        ``field`` 是模型属性名（如 ``"slug"`` / ``"username"``）。
+        假定该列有唯一性（业务约束或数据库索引）；即便偶发多行也取第一行，
+        不在这里抛错——「重复了」应该由业务层的冲突检查暴露，而不是查询炸掉。
+        """
+        result = await self.session.execute(
+            select(self.model).where(getattr(self.model, field) == value)
+        )
+        return result.scalars().first()
+
     async def exists(self, obj_id: int) -> bool:
         return await self.session.get(self.model, obj_id) is not None
+
+    async def exists_by(self, field: str, value: Any, *, exclude_id: int | None = None) -> bool:
+        """某列的值是否已被占用。
+
+        ``exclude_id`` 用于「更新时排除自己」：改 slug / 用户名前检查冲突，
+        自己当前的值不该算撞车。这个「count + where + 排除自己」的模式
+        在各仓储里曾逐字重复了 5 份，收敛到这里。
+        """
+        stmt = (
+            select(func.count()).select_from(self.model).where(getattr(self.model, field) == value)
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(self.model.id != exclude_id)
+        return int((await self.session.execute(stmt)).scalar_one()) > 0
 
     async def create(self, **values: Any) -> ModelT:
         """插入并 flush，拿到自增主键。"""

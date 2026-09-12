@@ -1,0 +1,38 @@
+# import-linter 分层契约：模块依赖方向的机器可验证声明。
+#
+# 运行：`lint-imports`（在 backend/ 目录下）。CI 与 make check 均会执行。
+# 任何对分层规则的破坏（如仓储反向 import 服务）都会在这里被拦下，
+# 而不是等到 code review 时靠肉眼发现。
+#
+# 契约语义（layers 类型）：上面的层可以 import 下面的层，反之禁止。
+# app.main（组合根）与 app.api.feed 不在链条内——前者负责装配一切，
+# 后者是根路径直出的 RSS/sitemap，两者天然允许依赖所有层。
+
+[importlinter]
+root_package = app
+
+[importlinter:contract:backend-layers]
+name = 后端分层：api → services → repositories → schemas → models → db → utils → config
+type = layers
+layers =
+    app.api
+    app.services
+    app.repositories
+    app.schemas
+    app.models
+    app.db
+    app.utils
+    app.config
+
+[importlinter:contract:utils-is-leaf]
+name = 工具层必须保持叶子：不得反向依赖任何业务层
+type = forbidden
+source_modules =
+    app.utils
+forbidden_modules =
+    app.api
+    app.services
+    app.repositories
+    app.schemas
+    app.models
+    app.db

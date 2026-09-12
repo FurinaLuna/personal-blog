@@ -6,6 +6,7 @@ import { ApiError, categoryApi, tagApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useAction } from '@/composables/useAction'
 import { useAsyncData } from '@/composables/useAsyncData'
+import { useConfirmDelete } from '@/composables/useConfirmDelete'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import type { Category, Tag } from '@/types'
@@ -22,7 +23,14 @@ const tags = useAsyncData<Tag[]>(() => tagApi.list(), [])
 const newCategory = ref({ name: '', description: '', sort_order: 0 })
 const editingCategoryId = ref<number | null>(null)
 const categoryDraft = ref({ name: '', description: '' })
-const pendingCategoryDelete = ref<Category | null>(null)
+const pendingCategoryDelete = useConfirmDelete<Category>({
+  remove: (item) => categoryApi.remove(item.id),
+  success: '分类已删除，其下文章变为未分类',
+  // 非站长会拿到 403，给出明确解释而不是一句「操作失败」
+  mapError: (error) =>
+    error instanceof ApiError && error.isForbidden ? '只有站长可以删除分类' : undefined,
+  onDeleted: () => void Promise.all([categories.run(), tags.run()]),
+})
 
 async function createCategory(): Promise<void> {
   const name = newCategory.value.name.trim()
@@ -65,25 +73,14 @@ async function saveCategory(): Promise<void> {
   await categories.run()
 }
 
-async function deleteCategory(): Promise<void> {
-  const target = pendingCategoryDelete.value
-  if (!target) return
-  const done = await action.run(() => categoryApi.remove(target.id), {
-    success: '分类已删除，其下文章变为未分类',
-    errorMessage: '删除失败',
-    // 非站长会拿到 403，给出明确解释而不是一句「操作失败」
-    mapError: (error) =>
-      error instanceof ApiError && error.isForbidden ? '只有站长可以删除分类' : undefined,
-  })
-  if (done === undefined) return
-  pendingCategoryDelete.value = null
-  await Promise.all([categories.run(), tags.run()])
-}
-
 /* -------------------------------------------------- 标签 */
 
 const newTagName = ref('')
-const pendingTagDelete = ref<Tag | null>(null)
+const pendingTagDelete = useConfirmDelete<Tag>({
+  remove: (item) => tagApi.remove(item.id),
+  success: '标签已删除',
+  onDeleted: () => void tags.run(),
+})
 
 async function createTag(): Promise<void> {
   const name = newTagName.value.trim()
@@ -94,18 +91,6 @@ async function createTag(): Promise<void> {
   })
   if (created === undefined) return
   newTagName.value = ''
-  await tags.run()
-}
-
-async function deleteTag(): Promise<void> {
-  const target = pendingTagDelete.value
-  if (!target) return
-  const done = await action.run(() => tagApi.remove(target.id), {
-    success: '标签已删除',
-    errorMessage: '删除失败',
-  })
-  if (done === undefined) return
-  pendingTagDelete.value = null
   await tags.run()
 }
 
@@ -183,7 +168,7 @@ onMounted(() => {
                   v-if="auth.isAdmin"
                   type="button"
                   class="text-red-500 hover:text-red-600"
-                  @click="pendingCategoryDelete = item"
+                  @click="pendingCategoryDelete.request(item)"
                 >
                   删除
                 </button>
@@ -243,7 +228,7 @@ onMounted(() => {
             <button
               type="button"
               class="shrink-0 text-xs text-red-500 hover:text-red-600"
-              @click="pendingTagDelete = item"
+              @click="pendingTagDelete.request(item)"
             >
               删除
             </button>
@@ -253,23 +238,25 @@ onMounted(() => {
     </section>
 
     <ConfirmDialog
-      :open="pendingCategoryDelete !== null"
+      :open="pendingCategoryDelete.pending.value !== null"
       danger
+      :loading="pendingCategoryDelete.running.value"
       title="删除分类"
-      :message="`删除「${pendingCategoryDelete?.name ?? ''}」后，其下的 ${pendingCategoryDelete?.article_count ?? 0} 篇文章会变成「未分类」，文章本身不会被删除。`"
+      :message="`删除「${pendingCategoryDelete.pending.value?.name ?? ''}」后，其下的 ${pendingCategoryDelete.pending.value?.article_count ?? 0} 篇文章会变成「未分类」，文章本身不会被删除。`"
       confirm-label="删除分类"
-      @cancel="pendingCategoryDelete = null"
-      @confirm="deleteCategory"
+      @cancel="pendingCategoryDelete.cancel"
+      @confirm="pendingCategoryDelete.confirm"
     />
 
     <ConfirmDialog
-      :open="pendingTagDelete !== null"
+      :open="pendingTagDelete.pending.value !== null"
       danger
+      :loading="pendingTagDelete.running.value"
       title="删除标签"
-      :message="`删除标签「${pendingTagDelete?.name ?? ''}」只会解除它与文章的关联，文章内容不受影响。`"
+      :message="`删除标签「${pendingTagDelete.pending.value?.name ?? ''}」只会解除它与文章的关联，文章内容不受影响。`"
       confirm-label="删除标签"
-      @cancel="pendingTagDelete = null"
-      @confirm="deleteTag"
+      @cancel="pendingTagDelete.cancel"
+      @confirm="pendingTagDelete.confirm"
     />
   </div>
 </template>

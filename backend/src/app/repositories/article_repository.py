@@ -205,10 +205,7 @@ class ArticleRepository(BaseRepository[Article]):
         return int((await self.session.execute(stmt)).scalar_one())
 
     async def slug_exists(self, slug: str, *, exclude_id: int | None = None) -> bool:
-        stmt = select(func.count()).select_from(Article).where(Article.slug == slug)
-        if exclude_id is not None:
-            stmt = stmt.where(Article.id != exclude_id)
-        return int((await self.session.execute(stmt)).scalar_one()) > 0
+        return await self.exists_by("slug", slug, exclude_id=exclude_id)
 
     async def get_neighbors(self, article: Article) -> tuple[Article | None, Article | None]:
         """取相邻文章。

@@ -1,5 +1,5 @@
 /** 文章接口。 */
-import { api, request } from './http'
+import { api } from './http'
 
 import type {
   ArticleDetail,
@@ -9,29 +9,19 @@ import type {
   ArticleUpdatePayload,
   ArchiveGroup,
   ManagedArticleQuery,
-  Message,
   Page,
 } from '@/types'
-
-/** 去掉值为 undefined / 空串的参数，避免发出 `?keyword=` 这种空筛选。 */
-function clean(params: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === '') continue
-    result[key] = value
-  }
-  return result
-}
 
 export const articleApi = {
   /** 前台列表：只返回已发布文章 */
   list(query: ArticleListQuery = {}) {
-    return api.get<Page<ArticleSummary>>('/articles', clean({ ...query }))
+    // 空参数的清洗统一由 api.get 的 cleanParams 处理
+    return api.get<Page<ArticleSummary>>('/articles', { ...query })
   },
 
   /** 后台列表：作者看自己的（含草稿），站长看全站 */
   listManaged(query: ManagedArticleQuery = {}) {
-    return api.get<Page<ArticleSummary>>('/articles/manage/list', clean({ ...query }))
+    return api.get<Page<ArticleSummary>>('/articles/manage/list', { ...query })
   },
 
   detail(slugOrId: string | number) {
@@ -39,7 +29,9 @@ export const articleApi = {
   },
 
   related(id: number, limit = 5) {
-    return api.get<ArticleSummary[]>(`/articles/${id}/related`, { params: { limit } })
+    // 第二参是扁平的查询参数对象（旧实现误写成 { params: { limit } }，
+    // axios 会序列化成 params[limit]=5，后端从未收到过这个 limit）
+    return api.get<ArticleSummary[]>(`/articles/${id}/related`, { limit })
   },
 
   create(payload: ArticlePayload) {
@@ -61,22 +53,4 @@ export const articleApi = {
   archive() {
     return api.get<ArchiveGroup[]>('/articles/archive')
   },
-
-  /** 上传封面图等场景：直接把文件当 multipart 发出去，并汇报进度 */
-  uploadWithProgress<T>(url: string, file: File, onProgress?: (percent: number) => void) {
-    const form = new FormData()
-    form.append('file', file)
-    return request<T>({
-      method: 'POST',
-      url,
-      data: form,
-      headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: (event) => {
-        if (!onProgress || !event.total) return
-        onProgress(Math.round((event.loaded / event.total) * 100))
-      },
-    })
-  },
 }
-
-export type { ArticleDetail, ArticleSummary, Message, Page }

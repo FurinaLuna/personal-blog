@@ -6,22 +6,20 @@ import { attachmentApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
-import { useAction } from '@/composables/useAction'
-import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useAsyncData, toErrorMessage } from '@/composables/useAsyncData'
+import { useConfirmDelete } from '@/composables/useConfirmDelete'
 import { useToast } from '@/composables/useToast'
+import { useUpload } from '@/composables/useUpload'
 import type { Attachment, Page } from '@/types'
 import { formatBytes, formatDateTime } from '@/utils/format'
 import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const toast = useToast()
-const action = useAction()
 
 const PAGE_SIZE = 24
 const page = ref(1)
 const kind = ref<'all' | 'image' | 'file'>('all')
-const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
-const pendingDelete = ref<Attachment | null>(null)
 
 const emptyPage = emptyPageOf<Attachment>(PAGE_SIZE)
 const attachments = useAsyncData<Page<Attachment>>(
@@ -29,27 +27,25 @@ const attachments = useAsyncData<Page<Attachment>>(
   emptyPage,
 )
 
-async function upload(files: FileList | null): Promise<void> {
+const pendingDelete = useConfirmDelete<Attachment>({
+  remove: (item) => attachmentApi.remove(item.id),
+  success: '已删除',
+  onDeleted: () => void attachments.run(),
+})
+
+/** 批量上传走逐个 upload：批量里「部分失败」是常态，要逐文件汇报而不是一句笼统提示 */
+const upload = useUpload()
+
+async function onUploadChange(event: Event): Promise<void> {
+  const files = (event.target as HTMLInputElement).files
   if (!files?.length) return
-  uploading.value = true
   let succeeded = 0
-  const failures: string[] = []
-
-  // 逐个上传并汇报每个文件的结果：批量上传里"部分失败"是常态，
-  // 一句笼统的"上传失败"会让用户完全不知道是哪个文件出了问题。
   for (const file of Array.from(files)) {
-    try {
-      await attachmentApi.upload(file)
-      succeeded += 1
-    } catch (error) {
-      failures.push(`${file.name}：${toErrorMessage(error, '上传失败')}`)
-    }
+    const result = await upload.upload(file, { successMessage: false })
+    if (result) succeeded += 1
   }
-
-  uploading.value = false
   if (fileInput.value) fileInput.value.value = ''
   if (succeeded) toast.success(`成功上传 ${succeeded} 个文件`)
-  for (const message of failures) toast.error(message)
   if (succeeded) void attachments.run()
 }
 
@@ -61,18 +57,6 @@ async function copyMarkdown(item: Attachment): Promise<void> {
     // 非 HTTPS 环境下 clipboard API 不可用，降级提示用户手动复制
     toast.error('浏览器不允许自动复制，请手动复制链接')
   }
-}
-
-async function confirmDelete(): Promise<void> {
-  const target = pendingDelete.value
-  if (!target) return
-  const done = await action.run(() => attachmentApi.remove(target.id), {
-    success: '已删除',
-    errorMessage: '删除失败',
-  })
-  if (done === undefined) return
-  pendingDelete.value = null
-  void attachments.run()
 }
 
 onMounted(() => {
@@ -101,10 +85,10 @@ onMounted(() => {
       <button
         type="button"
         class="btn--primary ml-auto"
-        :disabled="uploading"
+        :disabled="upload.uploading.value"
         @click="fileInput?.click()"
       >
-        {{ uploading ? '上传中…' : '上传文件' }}
+        {{ upload.uploading.value ? '上传中…' : '上传文件' }}
       </button>
       <input
         ref="fileInput"
@@ -112,7 +96,7 @@ onMounted(() => {
         multiple
         accept="image/*,.pdf,.zip,.txt,.md,.csv,.json,.docx,.xlsx,.pptx,.epub"
         class="hidden"
-        @change="upload(($event.target as HTMLInputElement).files)"
+        @change="onUploadChange"
       />
     </div>
 
@@ -177,7 +161,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="ml-auto text-red-500 hover:text-red-600"
-                @click="pendingDelete = item"
+                @click="pendingDelete.request(item)"
               >
                 删除
               </button>
@@ -195,14 +179,14 @@ onMounted(() => {
     </template>
 
     <ConfirmDialog
-      :open="pendingDelete !== null"
+      :open="pendingDelete.pending.value !== null"
       danger
-      :loading="action.running.value"
+      :loading="pendingDelete.running.value"
       title="删除文件"
       message="删除后会同时移除磁盘上的文件。如果它正被文章引用，文章里的图片会变成裂图。"
       confirm-label="删除"
-      @cancel="pendingDelete = null"
-      @confirm="confirmDelete"
+      @cancel="pendingDelete.cancel"
+      @confirm="pendingDelete.confirm"
     />
   </div>
 </template>

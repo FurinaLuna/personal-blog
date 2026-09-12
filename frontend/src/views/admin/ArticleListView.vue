@@ -9,6 +9,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
 import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useConfirmDelete } from '@/composables/useConfirmDelete'
 import { useAuthStore } from '@/stores/auth'
 import type { ArticleStatus, ArticleSummary, Page } from '@/types'
 import { formatDateTime } from '@/utils/format'
@@ -46,23 +47,15 @@ const articles = useAsyncData<Page<ArticleSummary>>(
   emptyPage,
 )
 
-const pendingDelete = ref<ArticleSummary | null>(null)
+const pendingDelete = useConfirmDelete<ArticleSummary>({
+  remove: (item) => articleApi.remove(item.id),
+  success: (item) => `《${item.title}》已删除`,
+  onDeleted: () => reload(),
+})
 
 function reload(resetPage = true): void {
   if (resetPage) page.value = 1
   void articles.run()
-}
-
-async function confirmDelete(): Promise<void> {
-  const target = pendingDelete.value
-  if (!target) return
-  const done = await action.run(() => articleApi.remove(target.id), {
-    success: `《${target.title}》已删除`,
-    errorMessage: '删除失败',
-  })
-  if (done === undefined) return
-  pendingDelete.value = null
-  reload()
 }
 
 async function togglePublish(item: ArticleSummary): Promise<void> {
@@ -180,7 +173,7 @@ onMounted(() => {
                     <button
                       type="button"
                       class="text-red-500 hover:text-red-600"
-                      @click="pendingDelete = item"
+                      @click="pendingDelete.request(item)"
                     >
                       删除
                     </button>
@@ -232,7 +225,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="ml-auto text-red-500 hover:text-red-600"
-                @click="pendingDelete = item"
+                @click="pendingDelete.request(item)"
               >
                 删除
               </button>
@@ -250,14 +243,14 @@ onMounted(() => {
     </template>
 
     <ConfirmDialog
-      :open="pendingDelete !== null"
+      :open="pendingDelete.pending.value !== null"
       danger
-      :loading="action.running.value"
+      :loading="pendingDelete.running.value"
       title="删除文章"
-      :message="`确定要删除《${pendingDelete?.title ?? ''}》吗？该操作不可撤销。`"
+      :message="`确定要删除《${pendingDelete.pending.value?.title ?? ''}》吗？该操作不可撤销。`"
       confirm-label="删除"
-      @cancel="pendingDelete = null"
-      @confirm="confirmDelete"
+      @cancel="pendingDelete.cancel"
+      @confirm="pendingDelete.confirm"
     />
   </div>
 </template>

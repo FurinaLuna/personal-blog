@@ -24,9 +24,9 @@ from app.api.middleware import RequestContextMiddleware
 from app.api.v1 import api_router
 from app.config import settings
 from app.db.base import Base
-from app.db.seed import ensure_seed
 from app.db.session import async_session_factory, engine
 from app.models import User  # noqa: F401 - 触发所有模型注册到 Base.metadata
+from app.services.seed import ensure_seed
 from app.utils.exceptions import DomainError, UnauthorizedError
 from app.utils.logging import get_request_id, setup_logging
 from app.utils.storage import storage

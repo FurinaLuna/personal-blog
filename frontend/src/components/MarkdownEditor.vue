@@ -8,9 +8,7 @@
  */
 import { computed, ref } from 'vue'
 
-import { attachmentApi } from '@/api'
-import { toErrorMessage } from '@/composables/useAsyncData'
-import { useToast } from '@/composables/useToast'
+import { useUpload } from '@/composables/useUpload'
 import { renderMarkdown } from '@/utils/markdown'
 
 const props = withDefaults(
@@ -24,11 +22,11 @@ const props = withDefaults(
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
-const toast = useToast()
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const mode = ref<'edit' | 'preview' | 'split'>('edit')
-const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+/** 上传交互（校验/提示/计数）交给 useUpload；这里只负责把结果插入光标处 */
+const upload = useUpload()
 
 const html = computed(() => renderMarkdown(props.modelValue).html)
 const charCount = computed(() => props.modelValue.length)
@@ -68,19 +66,18 @@ function insertLine(prefix: string): void {
 }
 
 async function uploadImage(file: File): Promise<void> {
-  uploading.value = true
+  const result = await upload.upload(file, {
+    successMessage: '图片已插入',
+    errorMessage: '图片上传失败',
+  })
   try {
-    const result = await attachmentApi.upload(file)
+    if (!result) return
     // 上传完直接把 Markdown 片段插到光标处，「上传即插入」
     const element = textarea.value
     const at = element ? element.selectionStart : props.modelValue.length
     const snippet = `\n${result.markdown}\n`
     emit('update:modelValue', props.modelValue.slice(0, at) + snippet + props.modelValue.slice(at))
-    toast.success('图片已插入')
-  } catch (error) {
-    toast.error(toErrorMessage(error, '图片上传失败'))
   } finally {
-    uploading.value = false
     if (fileInput.value) fileInput.value.value = ''
   }
 }
@@ -136,11 +133,11 @@ function onPaste(event: ClipboardEvent): void {
       <button
         type="button"
         class="btn--ghost px-2 py-1 text-xs"
-        :disabled="uploading"
+        :disabled="upload.uploading.value"
         title="上传图片并插入"
         @click="fileInput?.click()"
       >
-        {{ uploading ? '上传中…' : '图片' }}
+        {{ upload.uploading.value ? '上传中…' : '图片' }}
       </button>
       <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onFileChange" />
 

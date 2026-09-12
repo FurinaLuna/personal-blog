@@ -49,7 +49,7 @@ async def list_attachments(
 ) -> Page[UploadResult]:
     """作者只看自己的上传，站长看全站。"""
     return await AttachmentService(session).list_paged(
-        page=page_params.page, page_size=page_params.page_size, kind=kind, viewer=user
+        page_params=page_params, kind=kind, viewer=user
     )
 
 

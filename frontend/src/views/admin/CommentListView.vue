@@ -9,6 +9,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
 import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useConfirmDelete } from '@/composables/useConfirmDelete'
 import type { Comment, Page } from '@/types'
 import { formatDateTime, formatRelative } from '@/utils/format'
 import { emptyPage as emptyPageOf } from '@/utils/pagination'
@@ -41,7 +42,11 @@ const comments = useAsyncData<Page<Comment>>(
   emptyPage,
 )
 
-const pendingDelete = ref<Comment | null>(null)
+const pendingDelete = useConfirmDelete<Comment>({
+  remove: (item) => commentApi.remove(item.id),
+  success: '评论已删除',
+  onDeleted: () => void comments.run(),
+})
 /** 行级忙碌标记：审核是按行进行的，需要知道「哪一行」在转，这个不属于通用 action 语义 */
 const busyId = ref<number | null>(null)
 
@@ -53,18 +58,6 @@ async function moderate(comment: Comment, approved: boolean): Promise<void> {
   })
   busyId.value = null
   if (done !== undefined) void comments.run()
-}
-
-async function confirmDelete(): Promise<void> {
-  const target = pendingDelete.value
-  if (!target) return
-  const done = await action.run(() => commentApi.remove(target.id), {
-    success: '评论已删除',
-    errorMessage: '删除失败',
-  })
-  if (done === undefined) return
-  pendingDelete.value = null
-  void comments.run()
 }
 
 onMounted(() => {
@@ -166,7 +159,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="text-red-500 hover:text-red-600"
-                @click="pendingDelete = item"
+                @click="pendingDelete.request(item)"
               >
                 删除
               </button>
@@ -184,14 +177,14 @@ onMounted(() => {
     </template>
 
     <ConfirmDialog
-      :open="pendingDelete !== null"
+      :open="pendingDelete.pending.value !== null"
       danger
-      :loading="action.running.value"
+      :loading="pendingDelete.running.value"
       title="删除评论"
       message="删除后无法恢复。如果这条评论有回复，回复也会一起被删除。"
       confirm-label="删除"
-      @cancel="pendingDelete = null"
-      @confirm="confirmDelete"
+      @cancel="pendingDelete.cancel"
+      @confirm="pendingDelete.confirm"
     />
   </div>
 </template>

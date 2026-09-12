@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useAction } from '@/composables/useAction'
+import { useConfirmDelete } from '@/composables/useConfirmDelete'
 import { useAuthStore } from '@/stores/auth'
 import type { UserRole } from '@/types'
 import { formatDateTime } from '@/utils/format'
@@ -20,7 +21,10 @@ const newUser = ref({
 })
 const fieldErrors = ref<Record<string, string>>({})
 
-const pendingDelete = ref<number | null>(null)
+const pendingDelete = useConfirmDelete<number>({
+  remove: (id) => auth.removeUser(id),
+  success: '用户已删除',
+})
 
 async function create(): Promise<void> {
   fieldErrors.value = {}
@@ -58,16 +62,6 @@ async function toggleActive(id: number, isActive: boolean): Promise<void> {
     success: isActive ? '已停用' : '已启用',
     errorMessage: '更新失败',
   })
-}
-
-async function confirmDelete(): Promise<void> {
-  const id = pendingDelete.value
-  if (id === null) return
-  const removed = await action.run(() => auth.removeUser(id), {
-    success: '用户已删除',
-    errorMessage: '删除失败',
-  })
-  if (removed !== undefined) pendingDelete.value = null
 }
 
 onMounted(() => {
@@ -202,7 +196,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="text-red-500 hover:text-red-600"
-                    @click="pendingDelete = item.id"
+                    @click="pendingDelete.request(item.id)"
                   >
                     删除
                   </button>
@@ -259,7 +253,7 @@ onMounted(() => {
             <button
               type="button"
               class="ml-auto text-red-500"
-              @click="pendingDelete = item.id"
+              @click="pendingDelete.request(item.id)"
             >
               删除
             </button>
@@ -269,14 +263,14 @@ onMounted(() => {
     </div>
 
     <ConfirmDialog
-      :open="pendingDelete !== null"
+      :open="pendingDelete.pending.value !== null"
       danger
-      :loading="action.running.value"
+      :loading="pendingDelete.running.value"
       title="删除用户"
       message="该用户名下的所有文章与附件都会被一并删除，且不可恢复。"
       confirm-label="删除用户"
-      @cancel="pendingDelete = null"
-      @confirm="confirmDelete"
+      @cancel="pendingDelete.cancel"
+      @confirm="pendingDelete.confirm"
     />
   </div>
 </template>

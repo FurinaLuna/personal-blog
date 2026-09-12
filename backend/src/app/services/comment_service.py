@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ArticleStatus, Comment, User, UserRole
 from app.repositories import ArticleRepository, CommentRepository, SiteRepository
 from app.schemas.comment import CommentCreate, CommentRead
-from app.schemas.common import Page
+from app.schemas.common import Page, PageParams
 from app.utils.exceptions import BadRequestError, NotFoundError, PermissionDeniedError
 
 
@@ -50,8 +50,7 @@ class CommentService:
     async def list_moderation(
         self,
         *,
-        page: int,
-        page_size: int,
+        page_params: PageParams,
         approved: bool | None = None,
         article_id: int | None = None,
     ) -> Page[CommentRead]:
@@ -62,12 +61,17 @@ class CommentService:
         """
         total = await self.comments.count(approved=approved, article_id=article_id)
         rows = await self.comments.list_paged(
-            offset=(page - 1) * page_size,
-            limit=page_size,
+            offset=page_params.offset,
+            limit=page_params.limit,
             approved=approved,
             article_id=article_id,
         )
-        return Page.build([self._to_read(row) for row in rows], total, page, page_size)
+        return Page.build(
+            [self._to_read(row) for row in rows],
+            total,
+            page_params.page,
+            page_params.page_size,
+        )
 
     @staticmethod
     def _to_read(comment: Comment, *, include_pending: bool = False) -> CommentRead:

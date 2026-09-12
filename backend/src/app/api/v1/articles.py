@@ -2,6 +2,10 @@
 
 路由声明顺序很重要：``/archive``、``/manage`` 这类静态路径必须写在
 ``/{slug_or_id}`` 之前，否则 FastAPI 会把 "archive" 当成一个 slug 去查文章。
+
+本层职责边界：只做 HTTP 参数声明（Query 校验、别名）与响应模型标注，
+**不 import 仓储层**——查询语义（如「分类可用 slug 或 id」）归服务层，
+这里传下去的都是普通数据。
 """
 
 from __future__ import annotations
@@ -13,42 +17,12 @@ from fastapi import APIRouter, Query, status
 from app.api.deps import LIKE_RATE_LIMIT, AuthorUser, OptionalUser, SessionDep
 from app.api.pagination import PageParamsDep
 from app.models import ArticleSort, ArticleStatus
-from app.repositories import ArticleFilter, ArticleSorting
 from app.schemas.article import ArticleCreate, ArticleDetail, ArticleSummary, ArticleUpdate
 from app.schemas.common import Page
 from app.schemas.site import ArchiveGroup
 from app.services import ArticleService
 
 router = APIRouter(prefix="/articles", tags=["文章"])
-
-
-def _build_filter(
-    *,
-    keyword: str | None,
-    category: str | None,
-    tag: str | None,
-    author_id: int | None,
-    article_status: ArticleStatus | None = None,
-) -> ArticleFilter:
-    """把查询串拼成仓储的筛选对象。
-
-    ``category`` 同时接受 slug 和数字 id，前端就不用关心自己手上拿到的是哪种，
-    少一次「到底该传什么」的沟通成本。
-    """
-    category_id: int | None = None
-    category_slug: str | None = None
-    if category:
-        category_slug = category if not category.isdigit() else None
-        category_id = int(category) if category.isdigit() else None
-    statuses: tuple[ArticleStatus, ...] = (article_status,) if article_status else ()
-    return ArticleFilter(
-        keyword=keyword,
-        statuses=statuses,
-        category_id=category_id,
-        category_slug=category_slug,
-        tag_slug=tag,
-        author_id=author_id,
-    )
 
 
 @router.get("", response_model=Page[ArticleSummary], summary="文章列表（前台）")
@@ -64,13 +38,13 @@ async def list_articles(
     sort: Annotated[ArticleSort, Query(description="排序方式")] = ArticleSort.LATEST,
 ) -> Page[ArticleSummary]:
     """前台列表：只返回已发布文章，支持分页 + 关键词/分类/标签筛选 + 多种排序。"""
-    service = ArticleService(session)
-    flt = _build_filter(keyword=keyword, category=category, tag=tag, author_id=author_id)
-    return await service.list_public(
-        flt=flt,
-        sorting=ArticleSorting(sort=sort),
-        page=page_params.page,
-        page_size=page_params.page_size,
+    return await ArticleService(session).list_public(
+        page_params=page_params,
+        keyword=keyword,
+        category=category,
+        tag=tag,
+        author_id=author_id,
+        sort=sort,
     )
 
 
@@ -79,14 +53,7 @@ async def list_archive(
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=100, description="每个月份最多返回多少篇")] = 50,
 ) -> list[ArchiveGroup]:
-    service = ArticleService(session)
-    groups: list[ArchiveGroup] = []
-    for year_month, count in await service.archive():
-        # 注意括号：await 的优先级低于下标，写成 await f()[..] 会对协程取下标而报
-        # TypeError: 'coroutine' object is not subscriptable
-        items = await service.list_by_month(year_month)
-        groups.append(ArchiveGroup(year_month=year_month, count=count, items=items[:limit]))
-    return groups
+    return await ArticleService(session).archive_groups(limit_per_month=limit)
 
 
 @router.get("/manage/list", response_model=Page[ArticleSummary], summary="文章列表（后台）")
@@ -102,20 +69,15 @@ async def list_managed_articles(
     sort: Annotated[ArticleSort, Query()] = ArticleSort.UPDATED,
 ) -> Page[ArticleSummary]:
     """后台列表：作者只看自己的（含草稿），站长可看全站并可按作者过滤。"""
-    service = ArticleService(session)
-    flt = _build_filter(
+    return await ArticleService(session).list_managed(
+        page_params=page_params,
+        viewer=user,
         keyword=keyword,
         category=category,
         tag=tag,
         author_id=author_id,
         article_status=article_status,
-    )
-    return await service.list_managed(
-        flt=flt,
-        sorting=ArticleSorting(sort=sort),
-        page=page_params.page,
-        page_size=page_params.page_size,
-        viewer=user,
+        sort=sort,
     )
 
 

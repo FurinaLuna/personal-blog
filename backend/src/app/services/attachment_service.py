@@ -26,7 +26,7 @@ from app.config import settings
 from app.models import Attachment, User, UserRole
 from app.repositories import AttachmentRepository
 from app.schemas.attachment import UploadResult
-from app.schemas.common import Page
+from app.schemas.common import Page, PageParams
 from app.utils.exceptions import (
     NotFoundError,
     PayloadTooLargeError,
@@ -209,16 +209,16 @@ class AttachmentService:
     # ---------------------------------------------------------------- 查询 / 删除
 
     async def list_paged(
-        self, *, page: int, page_size: int, kind: str | None = None, viewer: User
+        self, *, page_params: PageParams, kind: str | None = None, viewer: User
     ) -> Page[UploadResult]:
         """媒体库列表。作者只看自己的，站长看全站。"""
         uploader_id = None if viewer.role is UserRole.ADMIN else viewer.id
         total = await self.attachments.count(kind=kind, uploader_id=uploader_id)
         rows = await self.attachments.list_paged(
-            offset=(page - 1) * page_size, limit=page_size, kind=kind, uploader_id=uploader_id
+            offset=page_params.offset, limit=page_params.limit, kind=kind, uploader_id=uploader_id
         )
         items = [self._to_result(row, kind=row.kind) for row in rows]
-        return Page.build(items, total, page, page_size)
+        return Page.build(items, total, page_params.page, page_params.page_size)
 
     async def delete(self, attachment_id: int, *, operator: User) -> None:
         """删除附件：先删磁盘再删记录。

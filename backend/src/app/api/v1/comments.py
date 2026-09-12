@@ -68,8 +68,7 @@ async def list_comments(
     article_id: Annotated[int | None, Query()] = None,
 ) -> Page[CommentRead]:
     return await CommentService(session).list_moderation(
-        page=page_params.page,
-        page_size=page_params.page_size,
+        page_params=page_params,
         approved=approved,
         article_id=article_id,
     )

@@ -3,14 +3,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { ApiError, articleApi, attachmentApi, categoryApi, tagApi } from '@/api'
+import { ApiError, articleApi, categoryApi, tagApi } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useDraftAutosave } from '@/composables/useDraftAutosave'
+import { useTagInput } from '@/composables/useTagInput'
 import { useToast } from '@/composables/useToast'
+import { useUpload } from '@/composables/useUpload'
 import type { ArticleDetail, ArticleStatus, Category, Tag } from '@/types'
-import { formatBytes, formatRelative } from '@/utils/format'
+import { formatRelative } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,10 +36,20 @@ const form = ref({
   category_id: null as number | null,
   tags: [] as string[],
 })
-const tagInput = ref('')
+// 标签输入交互（键盘语义/去重/上限）交给 useTagInput；
+// 通过桥接 computed 让标签仍属于 form，草稿快照与提交 payload 结构不变
+const { input: newTagName, add: addTag, remove: removeTag, onKeydown: onTagKeydown } = useTagInput(
+  computed({
+    get: () => form.value.tags,
+    set: (next: string[]) => {
+      form.value.tags = next
+    },
+  }),
+  { max: 10 },
+)
 // 保存与封面上传是两个独立动作：用两个实例，避免「上传封面时保存按钮也被禁用」
 const action = useAction()
-const coverAction = useAction()
+const coverUpload = useUpload({ maxSizeMB: 5 })
 const coverInput = ref<HTMLInputElement | null>(null)
 /** 字段级错误，key 与后端返回的 field 对齐（如 "title" / "content_md"） */
 const fieldErrors = ref<Record<string, string>>({})
@@ -122,56 +134,20 @@ async function loadArticle(): Promise<void> {
 
 /* -------------------------------------------------- 标签输入 */
 
-function addTag(name: string): void {
-  const value = name.trim()
-  if (!value) return
-  if (form.value.tags.includes(value)) {
-    tagInput.value = ''
-    return
-  }
-  if (form.value.tags.length >= 10) {
-    toast.error('一篇文章最多 10 个标签')
-    return
-  }
-  form.value.tags = [...form.value.tags, value]
-  tagInput.value = ''
-}
-
-function removeTag(name: string): void {
-  form.value.tags = form.value.tags.filter((item) => item !== name)
-}
-
-/** 键盘操作：Enter / 逗号 添加，Backspace 在输入框为空时删掉最后一个 */
-function onTagKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' || event.key === ',') {
-    event.preventDefault()
-    addTag(tagInput.value)
-  } else if (event.key === 'Backspace' && !tagInput.value && form.value.tags.length) {
-    form.value.tags = form.value.tags.slice(0, -1)
-  }
-}
+// addTag / removeTag / onTagKeydown 由 useTagInput 提供（见上方解构）
 
 /* -------------------------------------------------- 封面上传 */
 
-async function uploadCover(file: File): Promise<void> {
-  const result = await coverAction.run(() => attachmentApi.upload(file), {
-    success: '封面已上传',
+async function onCoverChange(event: Event): Promise<void> {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  // 大小预检（5MB）+ 上传 + 提示由 useUpload 统一处理
+  const result = await coverUpload.upload(file, {
+    successMessage: '封面已上传',
     errorMessage: '封面上传失败',
   })
-  if (result !== undefined) form.value.cover_image = result.url
+  if (result) form.value.cover_image = result.url
   if (coverInput.value) coverInput.value.value = ''
-}
-
-function onCoverChange(event: Event): void {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (file) {
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error(`图片过大（${formatBytes(file.size)}），请压缩到 5MB 以内`)
-      if (coverInput.value) coverInput.value.value = ''
-      return
-    }
-    void uploadCover(file)
-  }
 }
 
 /* -------------------------------------------------- 保存 */
@@ -377,12 +353,12 @@ onMounted(async () => {
           </div>
 
           <input
-            v-model="tagInput"
+            v-model="newTagName"
             class="input"
             placeholder="输入后回车添加"
             :list="'tag-suggestions'"
             @keydown="onTagKeydown"
-            @blur="addTag(tagInput)"
+            @blur="addTag(newTagName)"
           />
           <datalist id="tag-suggestions">
             <option v-for="tag in allTags" :key="tag.id" :value="tag.name" />
@@ -412,10 +388,10 @@ onMounted(async () => {
             <button
               type="button"
               class="btn--ghost flex-1 text-xs"
-              :disabled="coverAction.running.value"
+              :disabled="coverUpload.uploading.value"
               @click="coverInput?.click()"
             >
-              {{ coverAction.running.value ? '上传中…' : form.cover_image ? '更换封面' : '上传封面' }}
+              {{ coverUpload.uploading.value ? '上传中…' : form.cover_image ? '更换封面' : '上传封面' }}
             </button>
             <button
               v-if="form.cover_image"
