@@ -76,10 +76,20 @@ export const useAuthStore = defineStore('auth', () => {
     })
   }
 
-  async function login(username: string, password: string): Promise<void> {
+  /**
+   * 登录。
+   *
+   * 成功时**返回 user 对象**（而不是 void）：LoginView 用
+   * ``action.run`` 的返回值区分成败（``undefined`` 视为失败），
+   * 若这里不返回有意义的值，登录成功也会被当成失败而跳过跳转。
+   * 这是实测踩过的坑：POST /auth/login 与 /auth/me 均 200、toast 已弹，
+   * 但用户卡在登录页 —— 因为返回值被 ``ok === undefined`` 拦截了。
+   */
+  async function login(username: string, password: string): Promise<User | null> {
     await authApi.login({ username, password })
     user.value = await authApi.me()
     restored.value = true
+    return user.value
   }
 
   async function logout(): Promise<void> {
