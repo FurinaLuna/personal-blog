@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, status
 
-from app.api.deps import AuthorUser, OptionalUser, SessionDep
+from app.api.deps import COMMENT_RATE_LIMIT, AuthorUser, OptionalUser, SessionDep, client_ip
 from app.api.pagination import PageParamsDep
 from app.schemas.comment import CommentCreate, CommentModerate, CommentRead
 from app.schemas.common import Message, Page
@@ -35,24 +35,20 @@ async def create_comment(
     request: Request,
     session: SessionDep,
     viewer: OptionalUser,
+    _: None = COMMENT_RATE_LIMIT,
 ) -> CommentRead:
     """发表评论或回复。
 
     是否免审核由站点配置决定；无论是否需要审核，接口都会返回创建结果，
     前端据此提示「已提交，等待审核」或「发布成功」。
     """
-    # X-Forwarded-For 取第一段：反向代理后面拿到的 client.host 是代理地址
-    forwarded = request.headers.get("x-forwarded-for", "")
-    client_ip = (
-        forwarded.split(",")[0].strip()
-        if forwarded
-        else (request.client.host if request.client else None)
-    )
     return await CommentService(session).create(
         article_id,
         payload,
         viewer=viewer,
-        ip_address=client_ip,
+        # 走统一的 client_ip：是否信任 X-Forwarded-For 由 TRUST_PROXY_HEADERS 决定，
+        # 避免这里另写一套解析（旧实现是盲信 XFF，等于把伪造的 IP 存进库）
+        ip_address=client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
 

@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Form, status
 
-from app.api.deps import AdminUser, CurrentUser, SessionDep
+from app.api.deps import LOGIN_RATE_LIMIT, AdminUser, CurrentUser, SessionDep
 from app.schemas.common import Message
 from app.schemas.user import (
     LoginRequest,
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 
 
 @router.post("/login", response_model=Token, summary="登录（JSON）")
-async def login(payload: LoginRequest, session: SessionDep) -> Token:
+async def login(payload: LoginRequest, session: SessionDep, _: None = LOGIN_RATE_LIMIT) -> Token:
     """用用户名或邮箱 + 密码换取双 token。"""
     service = AuthService(session)
     user = await service.authenticate(payload.username, payload.password)
@@ -40,6 +40,7 @@ async def login_form(
     session: SessionDep,
     username: Annotated[str, Form(description="用户名或邮箱")],
     password: Annotated[str, Form()],
+    _: None = LOGIN_RATE_LIMIT,
 ) -> Token:
     """OAuth2 password flow 的兼容入口。
 

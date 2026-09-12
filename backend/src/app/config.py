@@ -62,6 +62,17 @@ class Settings(BaseSettings):
     # 开发默认指向 Vite 端口；生产改成正式域名（含协议、不带尾斜杠）。
     site_base_url: str = "http://localhost:5173"
 
+    # ---------- 可观测性与限流 ----------
+    # 访问日志用 JSON 输出（日志收集器可直接按字段过滤）。
+    # 本地想看人读格式时设 LOG_JSON=false。
+    log_json: bool = True
+    log_level: str = "INFO"
+    # 是否信任 X-Forwarded-For。只有确实部署在可信反代（nginx）之后才打开：
+    # 该头可被客户端伪造，盲信会导致限流可绕过、甚至能借伪造 IP 封掉别人。
+    trust_proxy_headers: bool = False
+    # 限流开关。压测 / 本地联调时可临时关闭（生产不建议）。
+    rate_limit_enabled: bool = True
+
     # ---------- 文件上传 ----------
     storage_dir: Path = BASE_DIR / "storage"
     media_url_prefix: str = "/media"

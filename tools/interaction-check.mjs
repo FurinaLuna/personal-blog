@@ -195,6 +195,77 @@ try {
   )
   await shot('06-admin-users-mobile')
 
+  // ---------- 6) 草稿自动保存与恢复 ----------
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false,
+  })
+  await send('Page.navigate', { url: `${BASE}/admin/articles/new` })
+  await sleep(3000)
+
+  // 清掉可能残留的草稿，保证从干净状态开始
+  await evalJs(`localStorage.removeItem('article:new')`)
+
+  const typed = await evalJs(`(() => {
+    const title = document.querySelector('input[placeholder="文章标题"]')
+    const body = document.querySelector('textarea')
+    if (!title || !body) return false
+    const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
+    set(title, '草稿自动保存验证标题')
+    set(body, '这段内容是自动保存验证用的，刷新后应该能被恢复。')
+    return true
+  })()`)
+  record('编辑器可输入', typed)
+
+  // 防抖是 3 秒，多等一点
+  await sleep(4200)
+  const drafted = await evalJs(`(() => {
+    const raw = localStorage.getItem('article:new')
+    if (!raw) return { stored: false }
+    const parsed = JSON.parse(raw)
+    return { stored: true, title: parsed.payload?.title ?? '', hasTime: typeof parsed.savedAt === 'number' }
+  })()`)
+  record('本地草稿已落盘', drafted.stored && drafted.title.includes('草稿自动保存验证'), drafted.title)
+  record('草稿带保存时间', Boolean(drafted.hasTime))
+
+  // 刷新（模拟误关标签页后重新打开）
+  await send('Page.reload')
+  await sleep(3200)
+  const banner = await evalJs(`(() => ({
+    text: document.body.innerText,
+    hasRestore: !![...document.querySelectorAll('button')].find(b => b.textContent.trim() === '恢复草稿'),
+    hasDiscard: !![...document.querySelectorAll('button')].find(b => b.textContent.trim() === '放弃'),
+    currentTitle: document.querySelector('input[placeholder="文章标题"]')?.value ?? '',
+  }))()`)
+  record('刷新后提示恢复草稿', banner.hasRestore && /本地未保存的草稿/.test(banner.text))
+  record('未自动覆盖编辑器（等用户确认）', banner.currentTitle === '', `当前标题「${banner.currentTitle}」`)
+  await shot('07-draft-banner')
+
+  const restored = await evalJs(`(async () => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '恢复草稿')
+    btn?.click()
+    await new Promise(r => setTimeout(r, 700))
+    return {
+      title: document.querySelector('input[placeholder="文章标题"]')?.value ?? '',
+      bannerGone: ![...document.querySelectorAll('button')].some(b => b.textContent.trim() === '恢复草稿'),
+    }
+  })()`, true)
+  record('点击恢复后内容回填', restored.title.includes('草稿自动保存验证'), restored.title)
+  record('恢复后横幅消失', restored.bannerGone)
+
+  // 放弃路径：再写一次草稿，刷新后点放弃，应清空本地存储
+  await send('Page.reload')
+  await sleep(3000)
+  const discarded = await evalJs(`(async () => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '放弃')
+    if (!btn) return { skipped: true }
+    btn.click()
+    await new Promise(r => setTimeout(r, 600))
+    return { stillThere: localStorage.getItem('article:new') !== null }
+  })()`, true)
+  if (discarded.skipped) record('放弃草稿', false, '未找到放弃按钮')
+  else record('放弃后清除本地草稿', !discarded.stillThere)
+  await shot('08-draft-discarded')
+
   ws.close()
 } finally {
   chrome.kill()

@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import AuthorUser, OptionalUser, SessionDep
+from app.api.deps import LIKE_RATE_LIMIT, AuthorUser, OptionalUser, SessionDep
 from app.api.pagination import PageParamsDep
 from app.models import ArticleSort, ArticleStatus
 from app.repositories import ArticleFilter, ArticleSorting
@@ -153,8 +153,13 @@ async def delete_article(article_id: int, user: AuthorUser, session: SessionDep)
 
 
 @router.post("/{article_id}/like", response_model=dict, summary="点赞")
-async def like_article(article_id: int, session: SessionDep) -> dict[str, int]:
-    """无需登录的点赞，返回最新点赞数。"""
+async def like_article(
+    article_id: int, session: SessionDep, _: None = LIKE_RATE_LIMIT
+) -> dict[str, int]:
+    """无需登录的点赞，返回最新点赞数。
+
+    因为无需登录，这个接口天然可被脚本刷——限流是它唯一的门槛。
+    """
     count = await ArticleService(session).like(article_id)
     return {"like_count": count}
 

@@ -7,9 +7,10 @@ import { ApiError, articleApi, attachmentApi, categoryApi, tagApi } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
+import { useDraftAutosave } from '@/composables/useDraftAutosave'
 import { useToast } from '@/composables/useToast'
 import type { ArticleDetail, ArticleStatus, Category, Tag } from '@/types'
-import { formatBytes } from '@/utils/format'
+import { formatBytes, formatRelative } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -47,10 +48,49 @@ const allTags = ref<Tag[]>([])
 
 const isDraft = computed(() => form.value.status === 'draft')
 
+/* -------------------------------------------------- 本地草稿保护 */
+
+/** 表单是否已就绪：加载完成前不允许写快照，否则空表单会覆盖掉已有草稿。 */
+const formReady = ref(false)
+
+const draft = useDraftAutosave({
+  // 新建与编辑分开存：从「写新文章」切到编辑某篇时不会串
+  key: () => (articleId.value === null ? 'article:new' : `article:${articleId.value}`),
+  snapshot: () => form.value,
+  enabled: () => formReady.value,
+})
+
+/** 待用户决定是否恢复的本地草稿。 */
+const pendingDraft = ref<{ payload: typeof form.value; savedAt: number } | null>(null)
+
+/** 草稿保存时间的人话描述，用于横幅提示。 */
+const draftSavedLabel = computed(() => {
+  if (!pendingDraft.value) return ''
+  return formatRelative(new Date(pendingDraft.value.savedAt).toISOString())
+})
+
+function applyDraft(): void {
+  if (!pendingDraft.value) return
+  form.value = pendingDraft.value.payload
+  pendingDraft.value = null
+  toast.success('已恢复本地草稿')
+}
+
+function discardDraft(): void {
+  pendingDraft.value = null
+  draft.clear()
+  toast.info('已放弃本地草稿')
+}
+
 /* -------------------------------------------------- 载入 */
 
 async function loadArticle(): Promise<void> {
-  if (articleId.value === null) return
+  if (articleId.value === null) {
+    // 新建页：没有服务端内容可比对，直接看本地有没有草稿
+    pendingDraft.value = draft.checkExisting()
+    formReady.value = true
+    return
+  }
   try {
     const detail: ArticleDetail = await articleApi.detail(articleId.value)
     form.value = {
@@ -65,8 +105,18 @@ async function loadArticle(): Promise<void> {
       category_id: detail.category?.id ?? null,
       tags: detail.tags.map((tag) => tag.name),
     }
+    // 本地草稿比服务端更新时才提示：否则用户刚保存完又开一次，会被无意义地打扰
+    const found = draft.checkExisting()
+    const serverUpdatedAt = Date.parse(detail.updated_at)
+    if (found && found.savedAt > serverUpdatedAt) {
+      pendingDraft.value = found
+    } else if (found) {
+      draft.clear()
+    }
   } catch (error) {
     formError.value = toErrorMessage(error, '文章加载失败')
+  } finally {
+    formReady.value = true
   }
 }
 
@@ -171,6 +221,9 @@ async function save(status: ArticleStatus): Promise<void> {
   )
   if (saved === undefined) return
 
+  // 服务端已落库，本地快照完成使命：留着只会在下次打开时误报「有未保存内容」
+  draft.clear()
+
   // 新建时把 URL 换成编辑态，避免用户继续点"保存"又创建一篇重复文章
   if (!isEdit.value) {
     await router.replace(`/admin/articles/${saved.id}/edit`)
@@ -216,6 +269,34 @@ onMounted(async () => {
       class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
     >
       {{ formError }}
+    </p>
+
+    <!-- 本地草稿恢复提示：只在「本地比服务端新」时出现，不主动覆盖用户输入 -->
+    <div
+      v-if="pendingDraft"
+      class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-800 dark:bg-amber-950/40"
+    >
+      <span class="text-amber-800 dark:text-amber-200">
+        发现本地未保存的草稿（{{ draftSavedLabel }}），可能是上次意外关闭留下的。
+      </span>
+      <div class="ml-auto flex items-center gap-3">
+        <button type="button" class="btn-primary" @click="applyDraft">恢复草稿</button>
+        <button
+          type="button"
+          class="text-amber-800 underline hover:no-underline dark:text-amber-200"
+          @click="discardDraft"
+        >
+          放弃
+        </button>
+      </div>
+    </div>
+
+    <!-- 自动保存状态：让用户知道「写了但没点保存」时内容有没有被兜住 -->
+    <p v-if="formReady && draft.available.value && draft.savedAt.value" class="text-xs text-ink-faint">
+      本地草稿已于 {{ formatRelative(new Date(draft.savedAt.value).toISOString()) }} 自动保存（仅存于本机）
+    </p>
+    <p v-else-if="formReady && !draft.available.value" class="text-xs text-ink-faint">
+      当前浏览器不支持本地草稿（隐私模式或存储已满），请及时手动保存。
     </p>
 
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">

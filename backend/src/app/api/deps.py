@@ -1,24 +1,28 @@
-"""FastAPI 依赖注入：数据库会话、当前用户、角色门禁。
+"""FastAPI 依赖注入：数据库会话、当前用户、角色门禁、限流。
 
 设计要点：
 - ``get_current_user`` 负责认证（你是谁）；
 - ``require_admin`` / ``require_author`` 负责授权（你能干什么），
-  两者分开，路由上按需组合，避免在每个 handler 里手写 if 判断角色。
+  两者分开，路由上按需组合，避免在每个 handler 里手写 if 判断角色；
+- ``rate_limit`` 只针对「可被脚本滥用」的写入口（登录、评论、点赞），
+  不铺到全部接口——限流本身也是成本。
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated
 
 import jwt
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import get_session
 from app.models import User, UserRole
-from app.utils.exceptions import PermissionDeniedError, UnauthorizedError
+from app.utils.exceptions import PermissionDeniedError, RateLimitedError, UnauthorizedError
+from app.utils.ratelimit import limiter
 from app.utils.security import decode_token
 
 # auto_error=False：自己抛 UnauthorizedError，保证 401 响应体格式与全站一致
@@ -96,3 +100,63 @@ async def require_author(user: CurrentUser) -> User:
 
 AdminUser = Annotated[User, Depends(require_admin)]
 AuthorUser = Annotated[User, Depends(require_author)]
+
+
+def client_ip(request: Request) -> str | None:
+    """取客户端 IP。
+
+    ``X-Forwarded-For`` **默认不信任**：这个头是客户端可以随意伪造的，
+    盲信它等于把限流变成「改个头就能绕过」，更糟的是能借伪造 IP 把别人封掉，
+    或者把伪造 IP 当成评论者地址存进数据库。
+    只有当部署确实在可信反代（nginx）之后时，才通过 ``TRUST_PROXY_HEADERS=true`` 打开。
+    """
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            # 只取第一跳：右侧的若干跳是代理自己追加的，语义上是「更近的代理」
+            return forwarded.split(",")[0].strip()[:64] or None
+    return request.client.host if request.client else None
+
+
+def client_key(request: Request) -> str:
+    """限流用的客户端标识。"""
+    return client_ip(request) or "unknown"
+
+
+def rate_limit(name: str, *, limit: int, window_seconds: int) -> Callable[[Request], None]:
+    """生成一个限流依赖。
+
+    Args:
+        name: 规则名，参与 key 构造，避免不同接口的计数互相影响。
+        limit: 窗口内允许次数。
+        window_seconds: 窗口长度（秒）。
+
+    Returns:
+        可直接放进 ``Depends(...)`` 的依赖函数。
+
+    Raises:
+        RateLimitedError: 超出配额时（带 Retry-After）。
+    """
+
+    def dependency(request: Request) -> None:
+        if not settings.rate_limit_enabled:
+            return
+        allowed, retry_after = limiter.hit(
+            f"{name}:{client_key(request)}",
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        if not allowed:
+            raise RateLimitedError(
+                detail="操作过于频繁，请稍后再试",
+                retry_after=retry_after,
+            )
+
+    return dependency
+
+
+# 各入口的配额。数值按「正常用户不可能触发的频率」定，而不是按「够用就行」：
+# 登录 5 次/分 覆盖手工输错密码，脚本撞库则会被立刻挡住。
+LOGIN_RATE_LIMIT = Depends(rate_limit("login", limit=5, window_seconds=60))
+COMMENT_RATE_LIMIT = Depends(rate_limit("comment", limit=5, window_seconds=60))
+LIKE_RATE_LIMIT = Depends(rate_limit("like", limit=20, window_seconds=60))

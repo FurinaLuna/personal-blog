@@ -33,6 +33,7 @@ from app.db.base import Base  # noqa: E402
 from app.db.seed import ensure_seed  # noqa: E402
 from app.db.session import async_session_factory, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.utils.ratelimit import limiter  # noqa: E402
 from tests.factories import ADMIN_PASSWORD, AUTHOR_PASSWORD  # noqa: E402
 
 
@@ -40,6 +41,16 @@ from tests.factories import ADMIN_PASSWORD, AUTHOR_PASSWORD  # noqa: E402
 def _clean_database_file() -> None:
     """整个测试会话开始前删掉上一次残留的库文件。"""
     TEST_DB.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> None:
+    """每个用例前清空限流计数。
+
+    必须存在：测试里用同一个 ASGI client 反复登录，配额（5 次/分）会被跨用例耗尽，
+    表现是一批完全无关的用例接连失败——看起来像业务被改坏了，实际只是计数器没重置。
+    """
+    limiter.reset()
 
 
 @pytest.fixture

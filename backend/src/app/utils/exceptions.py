@@ -13,9 +13,12 @@ class DomainError(Exception):
     status_code: int = 400
     code: str = "domain_error"
 
-    def __init__(self, detail: str) -> None:
+    def __init__(self, detail: str, headers: dict[str, str] | None = None) -> None:
         super().__init__(detail)
         self.detail = detail
+        # 少数异常需要附带响应头（例如 401 的 WWW-Authenticate、429 的 Retry-After），
+        # 统一由 handler 透传，避免每个 handler 各写一套
+        self.headers = headers or {}
 
 
 class NotFoundError(DomainError):
@@ -53,3 +56,18 @@ class PayloadTooLargeError(DomainError):
 class UnsupportedMediaTypeError(DomainError):
     status_code = 415
     code = "unsupported_media_type"
+
+
+class RateLimitedError(DomainError):
+    """触发限流。
+
+    带 ``Retry-After``：客户端据此退避而不是立刻重试——
+    没有这个头时，客户端往往会原地重试，把限流变成放大攻击。
+    """
+
+    status_code = 429
+    code = "rate_limited"
+
+    def __init__(self, detail: str = "操作过于频繁，请稍后再试", retry_after: int = 60) -> None:
+        super().__init__(detail, headers={"Retry-After": str(max(1, retry_after))})
+        self.retry_after = max(1, retry_after)

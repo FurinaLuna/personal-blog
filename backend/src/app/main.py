@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from app import __version__
 from app.api.feed import router as feed_router
+from app.api.middleware import RequestContextMiddleware
 from app.api.v1 import api_router
 from app.config import settings
 from app.db.base import Base
@@ -27,6 +28,7 @@ from app.db.seed import ensure_seed
 from app.db.session import async_session_factory, engine
 from app.models import User  # noqa: F401 - 触发所有模型注册到 Base.metadata
 from app.utils.exceptions import DomainError, UnauthorizedError
+from app.utils.logging import get_request_id, setup_logging
 from app.utils.storage import storage
 
 logger = logging.getLogger("blog")
@@ -64,11 +66,17 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, exc: DomainError) -> JSONResponse:
-        headers = {"WWW-Authenticate": "Bearer"} if isinstance(exc, UnauthorizedError) else None
+        headers = {"WWW-Authenticate": "Bearer"} if isinstance(exc, UnauthorizedError) else {}
+        # 异常自带的响应头优先（例如 429 的 Retry-After），其余用默认的
+        headers.update(exc.headers)
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": exc.detail, "code": exc.code},
-            headers=headers,
+            content={
+                "detail": exc.detail,
+                "code": exc.code,
+                "request_id": get_request_id(),
+            },
+            headers=headers or None,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -90,12 +98,21 @@ def _register_exception_handlers(app: FastAPI) -> None:
         ]
         return JSONResponse(
             status_code=422,
-            content={"detail": errors, "code": "validation_error"},
+            content={
+                "detail": errors,
+                "code": "validation_error",
+                "request_id": get_request_id(),
+            },
         )
 
 
 def create_app() -> FastAPI:
     """应用工厂。测试里也用它，保证测试环境的 app 与生产同构。"""
+    setup_logging(
+        json_output=settings.log_json,
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    )
+
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
@@ -109,12 +126,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # 请求 ID 与访问日志。放在 CORS 之前注册：中间件是「后注册先执行」，
+    # 这样即使请求被 CORS 拒绝，也能在日志里留下带 request_id 的记录。
+    app.add_middleware(RequestContextMiddleware)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept"],
+        # X-Request-ID 要放开，否则浏览器读不到响应头，前端无法把它显示在错误提示里
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
         max_age=600,
     )
 
