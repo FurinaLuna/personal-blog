@@ -18,27 +18,34 @@ export default {
         ink: 'rgb(var(--c-ink) / <alpha-value>)',
         'ink-soft': 'rgb(var(--c-ink-soft) / <alpha-value>)',
         'ink-faint': 'rgb(var(--c-ink-faint) / <alpha-value>)',
+        // 色值定义在 tokens.css（单一来源），这里只做引用
         brand: {
-          50: '#eef4ff',
-          100: '#d9e6ff',
-          200: '#bcd3ff',
-          300: '#8eb6ff',
-          400: '#598eff',
-          500: '#3366f0',
-          600: '#2449d8',
-          700: '#1d3aae',
-          800: '#1c338a',
-          900: '#1c2f6e',
+          50: 'rgb(var(--c-brand-50) / <alpha-value>)',
+          100: 'rgb(var(--c-brand-100) / <alpha-value>)',
+          200: 'rgb(var(--c-brand-200) / <alpha-value>)',
+          300: 'rgb(var(--c-brand-300) / <alpha-value>)',
+          400: 'rgb(var(--c-brand-400) / <alpha-value>)',
+          500: 'rgb(var(--c-brand-500) / <alpha-value>)',
+          600: 'rgb(var(--c-brand-600) / <alpha-value>)',
+          700: 'rgb(var(--c-brand-700) / <alpha-value>)',
+          800: 'rgb(var(--c-brand-800) / <alpha-value>)',
+          900: 'rgb(var(--c-brand-900) / <alpha-value>)',
+        },
+        accent: {
+          DEFAULT: 'rgb(var(--c-accent) / <alpha-value>)',
+          soft: 'rgb(var(--c-accent-soft) / <alpha-value>)',
         },
       },
       // 字体栈在 src/styles/tokens.css 里定义（单一来源），这里只做引用，
       // 避免「同一个字体栈写在两个文件里」——那种重复迟早只改一处
       fontFamily: {
         sans: ['var(--font-sans)'],
+        display: ['var(--font-display)'],
         mono: ['var(--font-mono)'],
       },
       maxWidth: {
-        content: '760px',
+        // 中文正文每行 38~42 字是舒适区，760px 偏宽
+        content: '700px',
         shell: '1120px',
       },
       typography: (theme) => ({
@@ -55,6 +62,9 @@ export default {
               '&:hover': { color: theme('colors.brand.700') },
             },
             'h2, h3, h4': { color: 'rgb(var(--c-ink))', fontWeight: '600' },
+            // 正文里的 h1/h2 跟随页头标题用衬线，h3 以下保持无衬线——
+            // 衬线大标题 + 无衬线小标题是常见的编辑排版层次
+            'h1, h2': { fontFamily: 'var(--font-display)' },
             code: {
               color: theme('colors.brand.700'),
               backgroundColor: theme('colors.brand.50'),

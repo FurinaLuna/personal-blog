@@ -15,18 +15,40 @@
      不声明的话暗色模式下这些原生 UI 会保持白色，非常割裂 */
   color-scheme: light;
 
-  /* ---------- 表面与文字 ---------- */
-  --c-bg: 248 250 252;
+  /* ---------- 表面与文字 ----------
+     中性色走暖调（stone 系）而不是冷灰（slate 系）：博客是阅读场景，
+     微暖的「纸白」底比纯白/冷灰更耐看，也能和冷色品牌蓝形成冷暖对比。 */
+  --c-bg: 250 249 246;
   --c-surface: 255 255 255;
-  --c-surface-muted: 241 245 249;
-  --c-border: 226 232 240;
-  --c-ink: 15 23 42;
-  --c-ink-soft: 71 85 105;
-  --c-ink-faint: 148 163 184;
+  --c-surface-muted: 245 243 238;
+  --c-border: 230 226 219;
+  --c-ink: 28 25 23;
+  --c-ink-soft: 87 83 78;
+  --c-ink-faint: 168 162 158;
+
+  /* ---------- 品牌色 ----------
+     从 tailwind.config.js 迁入（色值不变，零视觉变化），恢复
+     「换肤只动这一个文件」的承诺。色阶与品牌蓝保持一致。 */
+  --c-brand-50: 238 244 255;
+  --c-brand-100: 217 230 255;
+  --c-brand-200: 188 211 255;
+  --c-brand-300: 142 182 255;
+  --c-brand-400: 89 142 255;
+  --c-brand-500: 51 102 240;
+  --c-brand-600: 36 73 216;
+  --c-brand-700: 29 58 174;
+  --c-brand-800: 28 51 138;
+  --c-brand-900: 28 47 110;
+
+  /* ---------- 点缀色 ----------
+     与品牌蓝互补的琥珀色，用于选区等高亮时刻。--c-accent 是实色，
+     --c-accent-soft 是同色相的浅底（搭配 ink 文字使用）。 */
+  --c-accent: 180 83 9;
+  --c-accent-soft: 254 243 199;
 
   /* ---------- 代码块 ---------- */
-  --c-code-bg: 246 248 252;
-  --c-code-ink: 30 41 59;
+  --c-code-bg: 247 245 241;
+  --c-code-ink: 41 37 36;
 
   /* ---------- 语义状态 ----------
      复制成功态原先写死 #3b6d11 / #97c459，导致暗色下对比度不足且无法换肤。
@@ -36,10 +58,10 @@
 
   /* ---------- 效果 ---------- */
   /* 卡片浮起阴影的基色；暗色下置为纯黑，避免在深色背景上出现灰雾 */
-  --c-shadow: 15 23 42;
+  --c-shadow: 28 25 23;
 
   /* ---------- 字体 ----------
-     字体栈的唯一来源。tailwind.config.js 的 fontFamily 直接引用这两个变量
+     字体栈的唯一来源。tailwind.config.js 的 fontFamily 直接引用这些变量
      （`sans: ['var(--font-sans)']`），所以换字体只需要改这里一处。
 
      之所以必须显式声明 `--font-mono`：Tailwind 的 fontFamily 配置会生成
@@ -49,13 +71,21 @@
   --font-sans:
     'Inter var', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', sans-serif;
+  /* 标题字体：衬线栈全部走系统/本机已装字体（思源宋体 → 宋体），不引外链字体，
+     保持站点零字体加载开销；装了思源宋体的环境会得到完整的杂志感 */
+  --font-display:
+    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
   --font-mono:
     'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New',
     monospace;
 
-  /* ---------- 动效 ---------- */
+  /* ---------- 动效 ----------
+     时长三档 + 统一缓动曲线。组件一律引用这里的变量，
+     不在模板里写 duration-300 之类的散值 */
   --duration-fast: 0.15s;
   --duration-base: 0.18s;
+  --duration-slow: 0.3s;
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* ---------- 代码块角标参数 ----------
      集中在此，避免「改个字号要翻三处」 */
@@ -65,19 +95,25 @@
 }
 
 .dark {
-  /* 配套暗色：原生滚动条 / 输入框 / 自动填充背景都会跟着变暗 */
+  /* 配套暗色：原生滚动条 / 输入框 / 自动填充背景都会跟着变暗。
+     中性色同样走暖调墨黑，与亮色的纸白对应，不做蓝黑 */
   color-scheme: dark;
 
-  --c-bg: 15 19 28;
-  --c-surface: 22 27 38;
-  --c-surface-muted: 30 37 51;
-  --c-border: 44 53 71;
-  --c-ink: 232 237 246;
-  --c-ink-soft: 168 180 199;
-  --c-ink-faint: 120 133 153;
+  --c-bg: 20 19 17;
+  --c-surface: 28 27 24;
+  --c-surface-muted: 38 36 32;
+  --c-border: 55 52 46;
+  --c-ink: 236 233 228;
+  --c-ink-soft: 178 172 163;
+  --c-ink-faint: 138 132 123;
 
-  --c-code-bg: 17 22 32;
-  --c-code-ink: 219 228 240;
+  /* 品牌色阶亮暗共用一套色值——组件里需要区分的地方（如 dark:bg-brand-900/40）
+     本来就用 dark: 变体显式标注，不依赖变量换值 */
+  --c-accent: 251 191 36;
+  --c-accent-soft: 66 50 22;
+
+  --c-code-bg: 16 15 13;
+  --c-code-ink: 220 216 209;
 
   /* 暗色下提亮成功态，保证深色底上有足够对比度 */
   --c-success: 151 196 89;

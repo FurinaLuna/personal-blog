@@ -37,6 +37,12 @@
       dark:border-red-900/50 dark:hover:bg-red-950/40;
   }
 
+  /* 尺寸修饰符：与变体叠加使用（class="btn--ghost btn--sm"）。
+     只携带尺寸，不重复 btn 基座——写在变体之后，等特异性下靠声明顺序覆盖内边距 */
+  .btn--sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
   /* 图标按钮：视觉保持 36px，但把可点击区域扩到 44px。
      做法是用伪元素向外撑 4px，而不是直接把按钮做成 44px——后者在密集的
      头部里会显得笨重。WCAG 2.5.5 要求的是「命中区域」，不是「视觉尺寸」。 */
@@ -55,10 +61,16 @@
   /* ================================================================ 卡片 */
 
   .card {
-    @apply rounded-xl border border-border bg-surface transition-shadow;
+    /* 过渡属性显式列出（不用 transition-all）：浮起只动 transform 与阴影 */
+    @apply rounded-xl border border-border bg-surface;
+    transition:
+      box-shadow var(--duration-base) var(--ease-out-expo),
+      transform var(--duration-base) var(--ease-out-expo);
   }
 
   .card--hover:hover {
+    /* 浮起 = 上移 2px + 阴影加深，比单纯加阴影更有「被拿起」的物理感 */
+    transform: translateY(-2px);
     box-shadow: 0 8px 24px -12px rgb(var(--c-shadow) / 0.25);
   }
 
@@ -80,6 +92,36 @@
 
   .skeleton {
     @apply animate-pulse rounded bg-surface-muted;
+  }
+
+  /* ================================================================ 导航链接
+     顶栏导航 / 移动端抽屉 / 侧边栏链接共用同一套激活态，
+     收敛前「bg-surface-muted + text-brand-600」这串组合在三处各写一遍 */
+  .nav-link {
+    @apply rounded-lg px-3 py-2 text-sm text-ink-soft transition-colors
+      hover:bg-surface-muted hover:text-ink;
+  }
+
+  .nav-link--active {
+    @apply bg-surface-muted font-medium text-brand-600;
+  }
+
+  /* 列表入场动画：配合模板里的 animation-delay 做 stagger 渐入。
+     只动 transform/opacity（合成层友好），prefers-reduced-motion 由
+     base.css 的全局规则统一关闭 */
+  @keyframes card-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .card-enter {
+    animation: card-enter var(--duration-slow) var(--ease-out-expo) both;
   }
 }
 
@@ -154,11 +196,18 @@
 
 /* ================================================================ 路由过渡 */
 
+/* 路由过渡：透明度 + 4px 纵向位移。离场只淡出（不加位移），
+   配合 mode="out-in" 避免旧页面滑走时的晃动感 */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity var(--duration-base) ease;
+  transition:
+    opacity var(--duration-base) ease,
+    transform var(--duration-base) ease;
 }
-.fade-enter-from,
+.fade-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
 .fade-leave-to {
   opacity: 0;
 }

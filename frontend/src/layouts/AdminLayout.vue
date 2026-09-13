@@ -94,7 +94,7 @@ onMounted(() => {
     <!-- 移动端遮罩 -->
     <div
       v-if="sidebarOpen"
-      class="fixed inset-0 z-30 bg-slate-900/40 lg:hidden"
+      class="fixed inset-0 z-30 bg-ink/40 lg:hidden"
       @click="sidebarOpen = false"
     />
 

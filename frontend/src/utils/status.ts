@@ -32,7 +32,8 @@ const META: Record<ArticleStatus, StatusMeta> = {
   archived: {
     label: '已归档',
     previewLabel: '已归档',
-    badgeClass: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    // 归档是「退出视野」的状态，用中性色而不是彩色；语义令牌自动适配亮暗
+    badgeClass: NEUTRAL_BADGE,
   },
 }
 

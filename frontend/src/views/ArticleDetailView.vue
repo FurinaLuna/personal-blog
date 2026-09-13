@@ -161,7 +161,8 @@ watch(
           </span>
         </div>
 
-        <h1 class="mt-3 text-2xl font-semibold leading-snug text-ink sm:text-[28px]">
+        <!-- text-balance 防止长标题换行后末行只剩一两个字（孤词） -->
+        <h1 class="mt-3 text-balance font-display text-2xl font-semibold leading-snug tracking-tight text-ink sm:text-[28px]">
           {{ article.data.value.title }}
         </h1>
 

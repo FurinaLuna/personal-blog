@@ -38,8 +38,9 @@ function warm(): void {
 </script>
 
 <template>
-  <article class="card card--hover group p-5 sm:p-6">
-    <div class="flex flex-col gap-4 sm:flex-row">
+  <article class="card card--hover group p-6">
+    <!-- 移动端封面在上（16:9 横幅），桌面端封面在右；flex-col-reverse 保持 DOM 顺序不变 -->
+    <div class="flex flex-col-reverse gap-4 sm:flex-row">
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
           <span
@@ -116,14 +117,15 @@ function warm(): void {
         @mouseenter="warm"
         @focusin="warm"
       >
-        <!-- aspect 占位：图片加载完成前容器就有正确高度，列表不会因图片到达而上下跳动 -->
+        <!-- aspect 占位：图片加载完成前容器就有正确高度，列表不会因图片到达而上下跳动。
+             移动端 16:9 横幅，桌面端 10:7 缩略图 -->
         <img
           :src="article.cover_image"
           :alt="article.title"
           :loading="priority ? 'eager' : 'lazy'"
           :fetchpriority="priority ? 'high' : 'auto'"
           decoding="async"
-          class="aspect-[4/3] w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] sm:aspect-[10/7] sm:w-40"
+          class="aspect-video w-full object-cover transition-transform duration-[var(--duration-slow)] group-hover:scale-[1.03] sm:aspect-[10/7] sm:w-40"
         />
       </RouterLink>
     </div>

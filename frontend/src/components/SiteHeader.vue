@@ -67,7 +67,7 @@ const brandName = computed(() => site.title)
         >
           {{ brandName.slice(0, 1) }}
         </span>
-        <span class="hidden sm:inline">{{ brandName }}</span>
+        <span class="hidden font-display sm:inline">{{ brandName }}</span>
       </RouterLink>
 
       <nav class="hidden flex-1 items-center gap-1 md:flex" aria-label="主导航">
@@ -75,12 +75,8 @@ const brandName = computed(() => site.title)
           v-for="item in NAV"
           :key="item.name"
           :to="item.to"
-          class="rounded-lg px-3 py-2 text-sm transition-colors"
-          :class="
-            isActive(item.name)
-              ? 'bg-surface-muted font-medium text-brand-600'
-              : 'text-ink-soft hover:bg-surface-muted hover:text-ink'
-          "
+          class="nav-link"
+          :class="isActive(item.name) ? 'nav-link--active' : ''"
         >
           {{ item.label }}
         </RouterLink>
@@ -141,14 +137,14 @@ const brandName = computed(() => site.title)
           v-for="item in NAV"
           :key="item.name"
           :to="item.to"
-          class="block rounded-lg px-3 py-2.5 text-sm"
-          :class="isActive(item.name) ? 'bg-surface-muted font-medium text-brand-600' : 'text-ink-soft'"
+          class="nav-link block py-2.5"
+          :class="isActive(item.name) ? 'nav-link--active' : ''"
         >
           {{ item.label }}
         </RouterLink>
         <RouterLink
           :to="auth.isAuthenticated ? '/admin' : '/login'"
-          class="block rounded-lg px-3 py-2.5 text-sm text-ink-soft"
+          class="nav-link block py-2.5"
         >
           {{ auth.isAuthenticated ? '进入后台' : '登录' }}
         </RouterLink>

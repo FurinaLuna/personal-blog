@@ -19,11 +19,13 @@ import Pagination from '@/components/Pagination.vue'
 import SortSelector from '@/components/SortSelector.vue'
 import { useAsyncData, toErrorMessage } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
+import { useSiteStore } from '@/stores/site'
 import type { ArticleSort, ArticleSummary, Category, Page, Tag } from '@/types'
 import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const route = useRoute()
 const router = useRouter()
+const site = useSiteStore()
 
 const PAGE_SIZE = 8
 
@@ -103,6 +105,14 @@ useHead(computed(() => ({ title: activeFilterLabel.value || undefined })))
 
 const hasFilter = computed(() => Boolean(activeTag.value || activeCategory.value || keyword.value))
 
+/** hero 只在「无筛选的第一页」出现：筛选/翻页后用户关注的是结果，不是站点介绍 */
+const showHero = computed(() => !hasFilter.value && page.value === 1)
+
+/** 首屏卡片 stagger 渐入的延迟。封顶 8 条，避免长列表尾部等太久 */
+function cardDelay(index: number): string {
+  return `${Math.min(index, 8) * 40}ms`
+}
+
 function clearFilters(): void {
   keyword.value = ''
   updateQuery({ tag: undefined, category: undefined, keyword: undefined, page: undefined })
@@ -135,13 +145,24 @@ onMounted(() => {
 
 <template>
   <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_260px]">
-    <!-- 主内容 -->
-    <section>
+    <!-- 主内容：lg 以下侧边栏隐藏，主列收窄居中，避免平板宽度「贴左空旷」 -->
+    <section class="mx-auto w-full max-w-content lg:mx-0 lg:max-w-none">
+      <!-- 站点 hero：只在无筛选的第一页出现 -->
+      <header v-if="showHero" class="mb-8 border-b border-border pb-8">
+        <h1 class="font-display text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+          {{ site.title }}
+        </h1>
+        <p v-if="site.headline" class="mt-3 text-base leading-relaxed text-ink-soft">
+          {{ site.headline }}
+        </p>
+      </header>
+
       <div class="mb-5 flex flex-wrap items-center gap-3">
         <div>
-          <h1 class="text-xl font-semibold text-ink">
+          <!-- hero 占页时它是唯一的 h1，这里降级为 h2，保持标题层级不重复 -->
+          <component :is="showHero ? 'h2' : 'h1'" class="text-xl font-semibold text-ink">
             {{ activeFilterLabel || '最新文章' }}
-          </h1>
+          </component>
           <p v-if="!hasFilter && !articles.loading.value" class="mt-1 text-sm text-ink-faint">
             共 {{ articles.data.value.total }} 篇
           </p>
@@ -151,7 +172,7 @@ onMounted(() => {
           <button
             v-if="hasFilter"
             type="button"
-            class="btn--ghost px-2.5 py-1.5 text-xs"
+            class="btn--ghost btn--sm"
             @click="clearFilters"
           >
             清除筛选
@@ -194,10 +215,12 @@ onMounted(() => {
       />
 
       <template v-else>
-        <div class="space-y-4">
+        <div class="space-y-6">
           <ArticleCard
             v-for="(item, index) in articles.data.value.items"
             :key="item.id"
+            class="card-enter"
+            :style="{ animationDelay: cardDelay(index) }"
             :article="item"
             :priority="index === 0"
           />
@@ -222,12 +245,8 @@ onMounted(() => {
           <li v-for="item in categories" :key="item.id">
             <RouterLink
               :to="{ path: '/', query: { category: item.slug } }"
-              class="flex items-center justify-between rounded-lg px-2 py-1.5 text-sm transition-colors"
-              :class="
-                activeCategory === item.slug
-                  ? 'bg-surface-muted font-medium text-brand-600'
-                  : 'text-ink-soft hover:bg-surface-muted hover:text-ink'
-              "
+              class="nav-link flex items-center justify-between px-2 py-1.5"
+              :class="activeCategory === item.slug ? 'nav-link--active' : ''"
             >
               <span>{{ item.name }}</span>
               <span class="text-xs text-ink-faint">{{ item.article_count }}</span>
@@ -257,13 +276,13 @@ onMounted(() => {
       <div class="card p-4">
         <h2 class="mb-3 text-sm font-medium text-ink">快捷入口</h2>
         <div class="space-y-1 text-sm">
-          <RouterLink to="/archive" class="block rounded-lg px-2 py-1.5 text-ink-soft hover:bg-surface-muted hover:text-ink">
+          <RouterLink to="/archive" class="nav-link block px-2 py-1.5">
             按月归档
           </RouterLink>
-          <RouterLink to="/about" class="block rounded-lg px-2 py-1.5 text-ink-soft hover:bg-surface-muted hover:text-ink">
+          <RouterLink to="/about" class="nav-link block px-2 py-1.5">
             关于本站
           </RouterLink>
-          <RouterLink to="/guestbook" class="block rounded-lg px-2 py-1.5 text-ink-soft hover:bg-surface-muted hover:text-ink">
+          <RouterLink to="/guestbook" class="nav-link block px-2 py-1.5">
             留言板
           </RouterLink>
         </div>

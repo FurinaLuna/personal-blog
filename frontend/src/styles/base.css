@@ -22,7 +22,9 @@
   }
 
   ::selection {
-    @apply bg-brand-200 text-brand-900;
+    /* 选区用点缀色的浅底而不是品牌蓝：与正文里的品牌蓝链接区分开，
+       「被选中」和「可点击」是两种语义 */
+    @apply bg-accent-soft text-ink;
   }
 
   /* 滚动条（仅 WebKit）：默认样式在暗色模式下非常刺眼 */
