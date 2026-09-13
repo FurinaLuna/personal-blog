@@ -14,6 +14,7 @@ from app.models.series import Series
 from app.models.site import SiteProfile
 from app.models.taxonomy import Category, Tag
 from app.models.user import User
+from app.models.visit_log import VisitLog
 
 __all__ = [
     "Article",
@@ -28,5 +29,6 @@ __all__ = [
     "Tag",
     "User",
     "UserRole",
+    "VisitLog",
     "article_tags",
 ]

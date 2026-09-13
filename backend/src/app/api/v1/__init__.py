@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import articles, attachments, auth, comments, series, site, taxonomy
+from app.api.v1 import articles, attachments, auth, comments, series, site, stats, taxonomy
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -13,5 +13,6 @@ api_router.include_router(series.router)
 api_router.include_router(attachments.router)
 api_router.include_router(comments.router)
 api_router.include_router(site.router)
+api_router.include_router(stats.router)
 
 __all__ = ["api_router"]

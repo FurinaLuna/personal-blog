@@ -17,6 +17,7 @@ from app.repositories.series_repository import SeriesRepository
 from app.repositories.site_repository import SiteRepository
 from app.repositories.taxonomy_repository import CategoryRepository, TagRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.visit_log_repository import VisitLogRepository
 
 __all__ = [
     "ArticleFilter",
@@ -31,4 +32,5 @@ __all__ = [
     "SiteRepository",
     "TagRepository",
     "UserRepository",
+    "VisitLogRepository",
 ]

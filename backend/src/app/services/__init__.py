@@ -13,6 +13,7 @@ from app.services.feed_service import FeedService
 from app.services.series_service import SeriesService
 from app.services.site_service import SiteService
 from app.services.taxonomy_service import TaxonomyService
+from app.services.visit_stats_service import VisitStatsService
 
 __all__ = [
     "ArticleService",
@@ -23,4 +24,5 @@ __all__ = [
     "SeriesService",
     "SiteService",
     "TaxonomyService",
+    "VisitStatsService",
 ]

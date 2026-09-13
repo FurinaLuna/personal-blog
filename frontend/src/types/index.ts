@@ -36,3 +36,4 @@ export type {
   UserUpdatePayload,
 } from './user'
 export type { SiteProfile, SiteProfilePayload, SiteStats, SocialLink } from './site'
+export type { DailyViewStats } from './stats'

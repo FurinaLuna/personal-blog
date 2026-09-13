@@ -21,6 +21,7 @@ from app.schemas.site import (
     SiteStats,
     SocialLink,
 )
+from app.schemas.stats import DailyViewStats
 from app.schemas.taxonomy import (
     CategoryCreate,
     CategoryRead,
@@ -61,6 +62,7 @@ __all__ = [
     "CommentCreate",
     "CommentModerate",
     "CommentRead",
+    "DailyViewStats",
     "ErrorBody",
     "LoginRequest",
     "Message",

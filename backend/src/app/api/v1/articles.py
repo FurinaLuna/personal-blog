@@ -12,15 +12,15 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 
-from app.api.deps import LIKE_RATE_LIMIT, AuthorUser, OptionalUser, SessionDep
+from app.api.deps import LIKE_RATE_LIMIT, AuthorUser, OptionalUser, SessionDep, client_ip
 from app.api.pagination import PageParamsDep
 from app.models import ArticleSort, ArticleStatus
 from app.schemas.article import ArticleCreate, ArticleDetail, ArticleSummary, ArticleUpdate
 from app.schemas.common import Page
 from app.schemas.site import ArchiveGroup
-from app.services import ArticleService
+from app.services import ArticleService, VisitStatsService
 
 router = APIRouter(prefix="/articles", tags=["文章"])
 
@@ -96,15 +96,20 @@ async def create_article(
 
 
 @router.get("/{slug_or_id}", response_model=ArticleDetail, summary="文章详情")
-async def get_article(slug_or_id: str, session: SessionDep, viewer: OptionalUser) -> ArticleDetail:
+async def get_article(
+    slug_or_id: str, request: Request, session: SessionDep, viewer: OptionalUser
+) -> ArticleDetail:
     """按 slug 或 id 取详情。
 
     带登录态时可以预览自己的草稿；访客访问草稿会得到 404（而非 403），
     避免暴露「这里存在一篇未发布文章」。
     """
     detail = await ArticleService(session).get_detail(slug_or_id, viewer)
-    # 详情 GET 也会写库（已发布文章的浏览计数）。显式提交与其他写路由同口径，
-    # 不依赖 get_session 的收尾提交，规避写后读旧快照的竞态（见 db/session.py）
+    # 详情 GET 也会写库（已发布文章的浏览计数 + 访问日志）。显式提交与其他
+    # 写路由同口径，不依赖 get_session 的收尾提交，规避写后读旧快照的竞态
+    # （见 db/session.py）。访问记录与 view_count 同门槛：仅已发布文章
+    if detail.status is ArticleStatus.PUBLISHED:
+        await VisitStatsService(session).record(detail.id, ip=client_ip(request))
     await session.commit()
     return detail
 
