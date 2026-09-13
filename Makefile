@@ -83,17 +83,17 @@ check: lint fmt-check typecheck test-frontend test ## 一次跑完所有检查�
 interaction: ## 真实交互验证（点击驱动的失败路径；需先 make dev 起好前后端）
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
 	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
-	node tools/interaction-check.mjs ./interaction-shots
+	node tools/interaction-check.mjs ./shots/interaction
 
 smoke: ## 端到端冒烟验证（真实浏览器；需先 make dev 起好前后端）
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
 	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
-	node tools/smoke-check.mjs http://127.0.0.1:5173 ./smoke-shots
+	node tools/smoke-check.mjs http://127.0.0.1:5173 ./shots/smoke
 
 full-check: ## 全功能回归 + 数据基线核对（会写数据但自清理；需先 make dev 起好前后端）
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
 	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
-	node tools/full-check.mjs http://127.0.0.1:5173 ./full-shots
+	node tools/full-check.mjs http://127.0.0.1:5173 ./shots/full
 
 # ---------------------------------------------------------------- 数据库
 

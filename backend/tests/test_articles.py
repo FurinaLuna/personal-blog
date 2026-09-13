@@ -592,6 +592,23 @@ class TestLike:
         response = await client.post(f"/api/v1/articles/{draft['id']}/like")
         assert response.status_code == 404
 
+    async def test_cannot_like_an_archived_article(
+        self,
+        client: AsyncClient,
+        published_article: dict,
+        author_headers: dict[str, str],
+    ) -> None:
+        """归档文章详情仍可达，但不再接受点赞——与浏览计数「仅已发布累计」同口径。"""
+        archived = await client.patch(
+            f"/api/v1/articles/{published_article['id']}",
+            json={"status": "archived"},
+            headers=author_headers,
+        )
+        assert archived.status_code == 200
+        assert (
+            await client.post(f"/api/v1/articles/{published_article['id']}/like")
+        ).status_code == 400
+
 
 class TestArchive:
     async def test_archive_groups_by_month(

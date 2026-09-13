@@ -67,8 +67,10 @@ async def list_comments(
     approved: Annotated[bool | None, Query(description="按审核状态过滤，不传为全部")] = None,
     article_id: Annotated[int | None, Query()] = None,
 ) -> Page[CommentRead]:
+    """站长看全站；作者只看自己文章下的评论（归属口径在服务层收口）。"""
     return await CommentService(session).list_moderation(
         page_params=page_params,
+        viewer=user,
         approved=approved,
         article_id=article_id,
     )
@@ -76,11 +78,14 @@ async def list_comments(
 
 @router.patch("/{comment_id}", response_model=CommentRead, summary="审核评论（作者）")
 async def moderate_comment(
-    comment_id: int, payload: CommentModerate, _: AuthorUser, session: SessionDep
+    comment_id: int, payload: CommentModerate, user: AuthorUser, session: SessionDep
 ) -> CommentRead:
-    """通过 / 撤回评论。``is_approved=True`` 即放行。"""
+    """通过 / 撤回评论。``is_approved=True`` 即放行。
+
+    作者只能审核自己文章下的评论，站长不受限（归属校验在服务层）。
+    """
     approved = True if payload.is_approved is None else payload.is_approved
-    comment = await CommentService(session).set_approved(comment_id, approved)
+    comment = await CommentService(session).set_approved(comment_id, approved, operator=user)
     await session.commit()
     return comment
 

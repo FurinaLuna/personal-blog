@@ -14,6 +14,23 @@ from app.repositories import (
 )
 from app.schemas.site import SiteProfileRead, SiteProfileUpdate, SiteStats
 
+# 允许被显式清空为 NULL 的可空字段（文本 + JSON 结构化字段）。
+# owner_name 与两个布尔列都是非空列，不在此列——与 article_service 的
+# NULLABLE_FIELDS 约定同名同义，保持两处写法一致。
+NULLABLE_FIELDS = frozenset(
+    {
+        "headline",
+        "avatar_url",
+        "bio_md",
+        "about_md",
+        "email",
+        "location",
+        "icp",
+        "social_links",
+        "skills",
+    }
+)
+
 
 class SiteService:
     def __init__(self, session: AsyncSession) -> None:
@@ -31,10 +48,11 @@ class SiteService:
     async def update_profile(self, payload: SiteProfileUpdate) -> SiteProfile:
         profile = await self.site.get_or_create_profile()
         data = payload.model_dump(exclude_unset=True)
-        # JSON 字段允许显式清空；布尔开关必须允许传 False，所以不能按「非 None」过滤
-        always_apply = {"social_links", "skills", "comment_need_approval", "allow_guest_comment"}
         for key, value in data.items():
-            if value is not None or key in always_apply:
+            # 布尔开关传 False 天然通过（False is not None）；显式 null 只对
+            # NULLABLE_FIELDS 生效——布尔列是非空的，把 None 写进去只会换来
+            # 一条 500，所以布尔收到 null 一律视为「不修改」
+            if value is not None or key in NULLABLE_FIELDS:
                 setattr(profile, key, value)
         await self.session.flush()
         return profile

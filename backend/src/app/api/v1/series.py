@@ -44,9 +44,7 @@ async def get_series(
 @router.post(
     "", response_model=SeriesRead, status_code=status.HTTP_201_CREATED, summary="新建系列（作者）"
 )
-async def create_series(
-    payload: SeriesCreate, _: AuthorUser, session: SessionDep
-) -> SeriesRead:
+async def create_series(payload: SeriesCreate, _: AuthorUser, session: SessionDep) -> SeriesRead:
     series = await SeriesService(session).create_series(payload)
     await session.commit()
     return series

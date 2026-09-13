@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import selectinload
 
-from app.models import Comment
+from app.models import Article, Comment
 from app.repositories.base import BaseRepository
 
 
@@ -38,23 +38,54 @@ class CommentRepository(BaseRepository[Comment]):
         limit: int,
         approved: bool | None = None,
         article_id: int | None = None,
+        article_author_id: int | None = None,
     ) -> list[Comment]:
-        stmt = select(Comment)
-        if approved is not None:
-            stmt = stmt.where(Comment.is_approved.is_(approved))
-        if article_id is not None:
-            stmt = stmt.where(Comment.article_id == article_id)
+        stmt = self._scoped(
+            select(Comment),
+            approved=approved,
+            article_id=article_id,
+            article_author_id=article_author_id,
+        )
         stmt = stmt.order_by(Comment.id.desc()).offset(offset).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count(self, *, approved: bool | None = None, article_id: int | None = None) -> int:
-        stmt = select(func.count()).select_from(Comment)
+    async def count(
+        self,
+        *,
+        approved: bool | None = None,
+        article_id: int | None = None,
+        article_author_id: int | None = None,
+    ) -> int:
+        stmt = self._scoped(
+            select(func.count()).select_from(Comment),
+            approved=approved,
+            article_id=article_id,
+            article_author_id=article_author_id,
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    @staticmethod
+    def _scoped(
+        stmt: Select,
+        *,
+        approved: bool | None,
+        article_id: int | None,
+        article_author_id: int | None,
+    ) -> Select:
+        """count 与 list_paged 共用的过滤口径——两边必须一致，否则分页总数对不上。
+
+        ``article_author_id`` 用来把后台审核列表按作者收口：作者只能看到自己文章
+        下的评论。用子查询而不是 JOIN，避免改变返回行数。
+        """
         if approved is not None:
             stmt = stmt.where(Comment.is_approved.is_(approved))
         if article_id is not None:
             stmt = stmt.where(Comment.article_id == article_id)
-        return int((await self.session.execute(stmt)).scalar_one())
+        if article_author_id is not None:
+            own_article_ids = select(Article.id).where(Article.author_id == article_author_id)
+            stmt = stmt.where(Comment.article_id.in_(own_article_ids))
+        return stmt
 
     async def count_by_article(self, article_ids: list[int]) -> dict[int, int]:
         """批量统计多篇文章的已审核评论数（列表页用，避免 N+1）。"""

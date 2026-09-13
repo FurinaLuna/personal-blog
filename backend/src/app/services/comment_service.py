@@ -51,6 +51,7 @@ class CommentService:
         self,
         *,
         page_params: PageParams,
+        viewer: User,
         approved: bool | None = None,
         article_id: int | None = None,
     ) -> Page[CommentRead]:
@@ -58,13 +59,20 @@ class CommentService:
 
         刻意返回**扁平列表**（不带 replies）：审核场景下运营需要一眼看到所有待审
         评论，包括二级回复；把它们折叠进父评论反而会造成漏审。
+
+        站长看全站；作者只看自己文章下的评论——与 ``delete`` / ``set_approved``
+        的归属口径一致，不能越权翻到别人的待审队列。
         """
-        total = await self.comments.count(approved=approved, article_id=article_id)
+        article_author_id = None if viewer.role is UserRole.ADMIN else viewer.id
+        total = await self.comments.count(
+            approved=approved, article_id=article_id, article_author_id=article_author_id
+        )
         rows = await self.comments.list_paged(
             offset=page_params.offset,
             limit=page_params.limit,
             approved=approved,
             article_id=article_id,
+            article_author_id=article_author_id,
         )
         return Page.build(
             [self._to_read(row) for row in rows],
@@ -163,10 +171,17 @@ class CommentService:
         )
         return self._to_read(comment, include_pending=True)
 
-    async def set_approved(self, comment_id: int, approved: bool) -> CommentRead:
+    async def set_approved(self, comment_id: int, approved: bool, *, operator: User) -> CommentRead:
         comment = await self.comments.get(comment_id)
         if comment is None:
             raise NotFoundError("评论不存在")
+        # 与 delete 同一口径：作者只能审核自己文章下的评论，站长不受限。
+        # 此前缺这道校验，任何作者都能放行/撤下别人文章下的评论。
+        article = await self.articles.get(comment.article_id)
+        if operator.role is not UserRole.ADMIN and (
+            article is None or article.author_id != operator.id
+        ):
+            raise PermissionDeniedError("只能管理自己文章下的评论")
         comment.is_approved = approved
         await self.session.flush()
         return self._to_read(comment, include_pending=True)

@@ -250,8 +250,8 @@ watch(
       <MobileToc :items="rendered.toc" />
       <ReadingProgress />
 
-      <!-- 点赞 -->
-      <div class="mt-10 flex justify-center">
+      <!-- 点赞：仅已发布文章可点赞（草稿/归档后端都会拒绝，前端直接不渲染） -->
+      <div v-if="article.data.value.status === 'published'" class="mt-10 flex justify-center">
         <button
           type="button"
           class="inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm transition-colors"

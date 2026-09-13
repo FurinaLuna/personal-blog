@@ -49,6 +49,8 @@ coverage/
 .DS_Store
 Thumbs.db
 *.swp
+# WorkBuddy 会话记忆与运行产物（不入库）
+.workbuddy/
 
 # ---------------- 日志与临时文件 ----------------
 *.log
@@ -57,13 +59,9 @@ yarn-error.log*
 alembic_boot.db
 
 # ---------------- 端到端验证产物 ----------------
-# 冒烟与交互验证的截图目录，每次运行都会重写，不入库
-smoke-shots/
-interaction-shots/
-full-shots/
-full-shots-*/
-smoke-shots-*/
-showcase-shots/
+# CDP 脚本的截图/报告统一写入 shots/（make smoke 等目标会传 ./shots/<名称>），
+# 每次运行都会重写，不入库
+shots/
 # 数据库一致性备份（VACUUM INTO 产物，本地用）
 blog.db.bak-*
 backend/blog.db.bak-*

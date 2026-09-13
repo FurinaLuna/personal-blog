@@ -60,26 +60,34 @@ export function formatRelative(value: string | null | undefined): string {
 }
 
 /** 数字缩写：1234 -> 1.2k。列表页的阅读量用它，避免长数字挤占版面。 */
-export function formatCount(value: number): string {
-  if (value < 1000) return String(value)
-  if (value < 10000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
-  return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}w`
+export function formatCount(value: number | null | undefined): string {
+  // 计数字段可能缺失（旧缓存 / 部分接口不返回），null 一律按 0 展示，
+  // 否则界面上会出现刺眼的 "null" / "NaN"
+  const count = Number(value)
+  if (!Number.isFinite(count)) return '0'
+  if (count < 1000) return String(count)
+  if (count < 10000) return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return `${(count / 10000).toFixed(1).replace(/\.0$/, '')}w`
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+export function formatBytes(bytes: number | null | undefined): string {
+  const size = Number(bytes)
+  if (!Number.isFinite(size) || size < 0) return '0 B'
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(2)} MB`
 }
 
-export function formatReadingTime(minutes: number): string {
-  return minutes <= 1 ? '少于 1 分钟' : `约 ${minutes} 分钟`
+export function formatReadingTime(minutes: number | null | undefined): string {
+  const value = Number(minutes)
+  if (!Number.isFinite(value) || value <= 1) return '少于 1 分钟'
+  return `约 ${value} 分钟`
 }
 
 /** 把 `2026-09` 显示成 `2026 年 9 月`。 */
-export function formatYearMonth(value: string): string {
-  const [year, month] = value.split('-')
-  if (!year || !month) return value
+export function formatYearMonth(value: string | null | undefined): string {
+  const [year, month] = (value ?? '').split('-')
+  if (!year || !month) return value ?? ''
   return `${year} 年 ${Number(month)} 月`
 }
 

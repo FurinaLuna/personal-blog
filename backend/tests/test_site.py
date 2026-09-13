@@ -83,6 +83,37 @@ class TestProfile:
         assert updated["location"] == "深圳"
         assert updated["about_md"] == original["about_md"]
 
+    async def test_nullable_fields_can_be_cleared(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """可空文本/JSON 字段允许显式传 null 清空，而不是被当成「不修改」吃掉。"""
+        await client.patch(
+            "/api/v1/site/profile",
+            json={"headline": "一句话介绍", "email": "me@example.com", "icp": "京ICP备00000000号"},
+            headers=admin_headers,
+        )
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"headline": None, "email": None, "icp": None},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["headline"] is None
+        assert body["email"] is None
+        assert body["icp"] is None
+
+    async def test_boolean_null_is_treated_as_noop(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """布尔开关显式传 null 视为「不修改」——布尔列非空，写 None 只会换来 500。"""
+        before = (await client.get("/api/v1/site/profile")).json()["allow_guest_comment"]
+        response = await client.patch(
+            "/api/v1/site/profile", json={"allow_guest_comment": None}, headers=admin_headers
+        )
+        assert response.status_code == 200
+        assert response.json()["allow_guest_comment"] == before
+
     async def test_author_cannot_update_profile(
         self, client: AsyncClient, author_headers: dict[str, str]
     ) -> None:

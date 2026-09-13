@@ -189,6 +189,27 @@ class TestTags:
         tags = (await client.get("/api/v1/tags?min_count=2")).json()
         assert tags == []
 
+    async def test_min_count_applies_before_limit(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """min_count 与 limit 同用：返回「计数达标的前 N 个」，达标数不足 N 才会短。"""
+        hot = f"达标{unique_suffix()}"
+        for _ in range(2):
+            await client.post(
+                "/api/v1/articles", json=make_article_payload(tags=[hot]), headers=author_headers
+            )
+        await client.post(
+            "/api/v1/articles",
+            json=make_article_payload(tags=[f"空挂{unique_suffix()}"]),
+            headers=author_headers,
+        )
+
+        tags = (await client.get("/api/v1/tags?limit=2&min_count=2")).json()
+        # 截断发生在过滤之后：limit 的名额不该被空挂标签占掉
+        assert len(tags) == 1
+        assert tags[0]["name"] == hot
+        assert tags[0]["article_count"] == 2
+
     async def test_update_tag(self, client: AsyncClient, author_headers: dict[str, str]) -> None:
         tag = (
             await client.post(

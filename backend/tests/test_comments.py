@@ -353,6 +353,55 @@ class TestModeration:
         response = await client.delete(f"/api/v1/comments/{comment['id']}", headers=author_headers)
         assert response.status_code == 403
 
+    async def test_author_cannot_moderate_comment_on_others_article(
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        author_headers: dict[str, str],
+    ) -> None:
+        """审核（PATCH）与删除同口径：作者不能处理别人文章下的评论。"""
+        admin_article = (
+            await client.post(
+                "/api/v1/articles", json=make_article_payload(), headers=admin_headers
+            )
+        ).json()
+        comment = (
+            await client.post(f"/api/v1/comments/article/{admin_article['id']}", json=_comment())
+        ).json()
+        response = await client.patch(
+            f"/api/v1/comments/{comment['id']}", json={"is_approved": True}, headers=author_headers
+        )
+        assert response.status_code == 403
+
+    async def test_moderation_list_scopes_to_own_articles(
+        self,
+        client: AsyncClient,
+        published_article: dict,
+        admin_headers: dict[str, str],
+        author_headers: dict[str, str],
+    ) -> None:
+        """作者的审核列表只含自己文章下的评论；站长仍看全站。"""
+        await client.post(
+            f"/api/v1/comments/article/{published_article['id']}",
+            json=_comment(content="自己文章下的"),
+        )
+        admin_article = (
+            await client.post(
+                "/api/v1/articles", json=make_article_payload(), headers=admin_headers
+            )
+        ).json()
+        await client.post(
+            f"/api/v1/comments/article/{admin_article['id']}",
+            json=_comment(content="别人文章下的"),
+        )
+
+        mine = (await client.get("/api/v1/comments", headers=author_headers)).json()
+        assert mine["total"] == 1
+        assert mine["items"][0]["content"] == "自己文章下的"
+
+        everything = (await client.get("/api/v1/comments", headers=admin_headers)).json()
+        assert everything["total"] == 2
+
     async def test_comment_count_reflected_on_article(
         self,
         client: AsyncClient,

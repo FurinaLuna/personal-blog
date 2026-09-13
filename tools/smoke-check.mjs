@@ -15,7 +15,7 @@
  *
  * 用法：
  *   node tools/smoke-check.mjs [baseUrl] [outDir]
- *   node tools/smoke-check.mjs http://127.0.0.1:5173 ./smoke-shots
+ *   node tools/smoke-check.mjs http://127.0.0.1:5173 ./shots/smoke
  *
  * 退出码：全部通过为 0，有失败为 1（可直接用于 CI）。
  */

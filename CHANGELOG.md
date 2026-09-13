@@ -16,18 +16,36 @@
 - 前端新增 `useConfirmDelete` / `useUpload` / `useTagInput` 组合式函数，
   消除 5 处删除确认与 3 处上传的重复实现；types 按领域拆分
 - 新增 `tools/showcase-demo.mjs`：用户视角完整旅程回放（11 步截图断言）
-- 测试基线更新：后端 187 例、前端 73 例（Vitest）
+- 新增「文章系列 / 合集」：系列模型与 API、后台管理、详情页系列导航（上下篇）
+- 端到端脚本的截图与报告产物统一收敛到 `shots/`（gitignore），
+  Makefile 三个验证目标同步指向新目录，根目录不再散落多个 `*-shots/`
+- 测试基线更新：后端 205 例、前端 80 例（Vitest）
 
 ### 已修复
 
 - **登录成功后不跳转**：`auth` store 的 `login()` 成功时返回 `undefined`，
   被 `LoginView` 的 `ok === undefined` 误判为失败，用户卡在登录页；
   现改为成功返回 user 对象，并新增回归测试
+- **评论审核越权**：`PATCH /comments/{id}` 与后台审核列表缺文章归属校验，
+  任何作者都能放行/撤下并翻看别人文章下的评论；现与删除接口同口径
+  （作者只管自己文章，站长不受限），并补回归测试
+- **归档文章仍可点赞**：现仅已发布文章接受点赞（与浏览计数「仅已发布累计」
+  同口径），前端详情页对非已发布文章不再渲染点赞按钮
+- **站点设置无法清空可空字段**：headline / email / location / icp 等显式传
+  null 现在真正清空；同时修复反向问题——布尔开关显式传 null 会把 None 写进
+  非空约束列导致 500，现在布尔收到 null 一律视为「不修改」
+- **标签列表 min_count 与 limit 冲突**：min_count 过滤前移到 SQL HAVING，
+  截断发生在过滤之后，语义即「计数达标的前 N 个」，limit 名额不再被空标签占用
+- **文章详情 GET 缺显式提交**：浏览计数自增补上显式 commit，与其他写路由
+  同口径，规避依赖会话收尾提交的写后读竞态
+- **前端计数格式化无空值防护**：`formatCount` / `formatBytes` /
+  `formatReadingTime` / `formatYearMonth` 对 null / undefined / NaN 兜底，
+  界面不再渲染出 "null" / "NaN"，新增 `format.spec.ts`
+- 后端 3 个文件补齐 ruff format（series 提交时 CI 受账号账单锁影响而漏检）
 
 ### 计划中
 
 - 图片多尺寸与 AVIF 转换（上传时生成，老数据需回填脚本）
-- 文章「系列 / 合集」导航
 - 站点统计时间序列与后台趋势图
 - 评论邮件通知（含退订）
 - 服务层读写分离（`ArticleService` 进一步拆分）与全站 API 限流扩容方案

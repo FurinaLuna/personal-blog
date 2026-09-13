@@ -102,7 +102,11 @@ async def get_article(slug_or_id: str, session: SessionDep, viewer: OptionalUser
     带登录态时可以预览自己的草稿；访客访问草稿会得到 404（而非 403），
     避免暴露「这里存在一篇未发布文章」。
     """
-    return await ArticleService(session).get_detail(slug_or_id, viewer)
+    detail = await ArticleService(session).get_detail(slug_or_id, viewer)
+    # 详情 GET 也会写库（已发布文章的浏览计数）。显式提交与其他写路由同口径，
+    # 不依赖 get_session 的收尾提交，规避写后读旧快照的竞态（见 db/session.py）
+    await session.commit()
+    return detail
 
 
 @router.patch("/{article_id}", response_model=ArticleDetail, summary="修改文章")

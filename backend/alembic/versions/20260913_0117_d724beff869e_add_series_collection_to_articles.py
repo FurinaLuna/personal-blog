@@ -53,12 +53,9 @@ def upgrade() -> None:
     # 原生 SQL 加列：SQLite 允许带 REFERENCES 的 ADD COLUMN（默认值 NULL），
     # 不触发整表重建
     op.execute(
-        "ALTER TABLE articles ADD COLUMN series_id INTEGER "
-        "REFERENCES series(id) ON DELETE SET NULL"
+        "ALTER TABLE articles ADD COLUMN series_id INTEGER REFERENCES series(id) ON DELETE SET NULL"
     )
-    op.execute(
-        "ALTER TABLE articles ADD COLUMN series_order INTEGER NOT NULL DEFAULT 0"
-    )
+    op.execute("ALTER TABLE articles ADD COLUMN series_order INTEGER NOT NULL DEFAULT 0")
     op.create_index(op.f("ix_articles_series_id"), "articles", ["series_id"], unique=False)
 
 

@@ -61,9 +61,7 @@ class TestSeriesCrud:
         series = (
             await client.post("/api/v1/series", json=make_series_payload(), headers=author_headers)
         ).json()
-        denied = await client.delete(
-            f"/api/v1/series/{series['id']}", headers=author_headers
-        )
+        denied = await client.delete(f"/api/v1/series/{series['id']}", headers=author_headers)
         assert denied.status_code == 403
         ok = await client.delete(f"/api/v1/series/{series['id']}", headers=admin_headers)
         assert ok.status_code == 200

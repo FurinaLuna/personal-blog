@@ -90,11 +90,14 @@ class TagRepository(BaseRepository[Tag]):
             .group_by(Tag.id)
             .order_by(count_expr.desc(), Tag.id)
         )
+        if min_count > 0:
+            # 过滤前移到 SQL（HAVING 先于 LIMIT 生效）：语义即「计数达标的前 N 个」，
+            # 避免「先截断再在 Python 侧过滤」让返回数量少于调用方预期
+            stmt = stmt.having(count_expr >= min_count)
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
-        rows = [(row[0], int(row[1])) for row in result.all()]
-        return [row for row in rows if row[1] >= min_count]
+        return [(row[0], int(row[1])) for row in result.all()]
 
     async def count_usage(self, tag_id: int) -> int:
         stmt = select(func.count()).select_from(article_tags).where(article_tags.c.tag_id == tag_id)

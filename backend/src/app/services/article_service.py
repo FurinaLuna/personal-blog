@@ -366,10 +366,15 @@ class ArticleService:
 
         当前是「无身份计数」：不做去重，因为去重需要记录每个访客，代价远大于收益。
         如果将来要做防刷，应该引入 Redis + IP/Cookie 限频，而不是往数据库加表。
+
+        草稿不可见，照旧 404；归档文章详情页仍可达，但不再接受点赞——与
+        「浏览计数只累计已发布文章」的口径一致，避免归档页被刷出虚高热度。
         """
         article = await self.articles.get(article_id)
         if article is None or article.status is ArticleStatus.DRAFT:
             raise NotFoundError("文章不存在或尚未发布")
+        if article.status is not ArticleStatus.PUBLISHED:
+            raise BadRequestError("文章已归档，无法点赞")
         return await self.articles.increment_like(article)
 
     # ================================================================ 归档与统计
