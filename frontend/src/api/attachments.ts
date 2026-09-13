@@ -1,7 +1,7 @@
 /** 附件（媒体库）接口。 */
 import { api, http } from './http'
 
-import type { Attachment, Page } from '@/types'
+import type { Attachment, BackfillResult, Page } from '@/types'
 
 export const attachmentApi = {
   /**
@@ -32,5 +32,15 @@ export const attachmentApi = {
 
   remove(id: number) {
     return api.delete(`/attachments/${id}`)
+  },
+
+  /**
+   * 为存量图片补生成多尺寸变体（仅站长）。
+   *
+   * 幂等运维接口：只处理还没有变体的图片记录，可反复调用直到
+   * 返回的 processed 为 0。后端单轮默认处理 100 张。
+   */
+  backfillVariants() {
+    return api.post<BackfillResult>('/attachments/backfill-variants')
   },
 }

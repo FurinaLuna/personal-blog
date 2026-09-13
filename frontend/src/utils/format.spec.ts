@@ -6,7 +6,13 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { formatBytes, formatCount, formatReadingTime, formatYearMonth } from '@/utils/format'
+import {
+  buildSrcset,
+  formatBytes,
+  formatCount,
+  formatReadingTime,
+  formatYearMonth,
+} from '@/utils/format'
 
 describe('formatCount', () => {
   it('按量级缩写：千位 k、万位 w', () => {
@@ -53,5 +59,20 @@ describe('formatYearMonth', () => {
   it('空值不抛异常，回落为空串', () => {
     expect(formatYearMonth(null)).toBe('')
     expect(formatYearMonth(undefined)).toBe('')
+  })
+})
+
+describe('buildSrcset', () => {
+  it('变体列表拼成 srcset 属性值，宽度带 w 描述符', () => {
+    expect(
+      buildSrcset([
+        { width: 480, url: '/media/a-480.avif' },
+        { width: 800, url: '/media/a-800.avif' },
+      ]),
+    ).toBe('/media/a-480.avif 480w, /media/a-800.avif 800w')
+  })
+
+  it('空列表返回空串，调用方用 || undefined 让属性不渲染', () => {
+    expect(buildSrcset([])).toBe('')
   })
 })

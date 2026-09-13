@@ -36,3 +36,26 @@ class AttachmentRepository(BaseRepository[Attachment]):
             select(Attachment).where(Attachment.stored_name == stored_name)
         )
         return result.scalars().first()
+
+    async def get_by_urls(self, urls: list[str]) -> list[Attachment]:
+        """按 url 批量查（文章封面装配用）。
+
+        封面存在 Article.cover_image 里是 URL 字符串，变体挂在 Attachment 上，
+        靠这层映射把两者接起来。列表页一次 IN 查询，避免逐条回表。
+        """
+        if not urls:
+            return []
+        stmt = select(Attachment).where(Attachment.url.in_(urls))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_images_without_variants(self, *, limit: int) -> list[Attachment]:
+        """还没生成过多尺寸变体的图片（回填用）。"""
+        stmt = (
+            select(Attachment)
+            .where(Attachment.kind == "image", Attachment.variants.is_(None))
+            .order_by(Attachment.id)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

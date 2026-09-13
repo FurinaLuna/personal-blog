@@ -1,4 +1,4 @@
-"""附件服务：上传校验、缩略图、删除。
+"""附件服务：上传校验、缩略图、多尺寸变体、删除。
 
 安全设计（这是全站最容易出事的地方，逐条说清楚）：
 
@@ -14,18 +14,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError, features
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Attachment, User, UserRole
 from app.repositories import AttachmentRepository
-from app.schemas.attachment import UploadResult
+from app.schemas.attachment import BackfillResult, ImageVariant, UploadResult
 from app.schemas.common import Page, PageParams
 from app.utils.exceptions import (
     NotFoundError,
@@ -53,6 +54,12 @@ ALLOWED_FILE_EXTENSIONS: frozenset[str] = frozenset(
 MAX_IMAGE_PIXELS = 50_000_000
 READ_CHUNK = 512 * 1024
 _EXT_PATTERN = re.compile(r"^\.[a-z0-9]{1,8}$")
+# AVIF 的 quality=50 约相当于 JPEG 75 的体积，观感通常更好
+VARIANT_QUALITY = 50
+# 仅 AVIF 生效：编码速度档（1 最慢最狠压缩，10 最快），6 是体积/耗时的平衡点
+VARIANT_AVIF_SPEED = 6
+# 回填时单轮最多处理的图片数，防止一次请求跑太久
+BACKFILL_BATCH_LIMIT = 100
 
 
 class AttachmentService:
@@ -85,18 +92,27 @@ class AttachmentService:
             width = height = 0
             kind = "file"
 
-        subdir = f"uploads/{datetime.now(UTC).strftime('%Y%m')}"
+        # 目录与 created_at 必须同源：变体 URL 读时按 record.created_at 推导子目录，
+        # 若各自取当前时间，恰好跨过 UTC 月份边界（变体编码是秒级耗时）就会 404
+        now = datetime.now(UTC)
+        subdir = f"uploads/{now.strftime('%Y%m')}"
         stored_name = f"{_rand_token()}{extension}"
         await storage.save(subdir=subdir, stored_name=stored_name, data=data)
 
         thumbnail_name: str | None = None
         thumbnail_url: str | None = None
+        variants: dict[str, str] = {}
         if kind == "image":
             thumb = self._make_thumbnail(data)
             if thumb is not None:
                 thumbnail_name = f"thumb-{Path(stored_name).stem}.webp"
                 await storage.save(subdir=subdir, stored_name=thumbnail_name, data=thumb)
                 thumbnail_url = storage.url_for(subdir=subdir, stored_name=thumbnail_name)
+            # 多尺寸变体：AVIF 编码是秒级 CPU 活，必须丢线程池防阻塞事件循环
+            made = await asyncio.to_thread(self._make_variants, data)
+            for width_label, (variant_name, payload) in made.items():
+                await storage.save(subdir=subdir, stored_name=variant_name, data=payload)
+                variants[width_label] = variant_name
 
         url = storage.url_for(subdir=subdir, stored_name=stored_name)
         record = await self.attachments.create(
@@ -110,6 +126,8 @@ class AttachmentService:
             thumbnail_name=thumbnail_name,
             url=url,
             thumbnail_url=thumbnail_url,
+            variants=variants or None,
+            created_at=now,
             uploader_id=uploader.id,
         )
         return self._to_result(record, kind=kind)
@@ -186,6 +204,46 @@ class AttachmentService:
             return None
 
     @staticmethod
+    def _make_variants(data: bytes) -> dict[str, tuple[str, bytes]]:
+        """生成多尺寸变体，返回 ``{宽度档位: (文件名, 字节流)}``。
+
+        规则：
+        - GIF 跳过（变体会把动图压成静帧，语义就错了）；
+        - 原图宽度不足的档位跳过（**不放大**：放大只会得到更糊且更大的文件）；
+        - 编码优先 AVIF，运行环境没有 libavif 时降级 WEBP（两者压缩率都远好于原格式）；
+        - 任何失败都返回空 dict——变体是优化项，绝不阻断上传主流程。
+
+        纯 CPU 计算无 IO，调用方需经 ``asyncio.to_thread`` 包裹（AVIF 编码秒级）。
+        """
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                if (image.format or "").upper() == "GIF":
+                    return {}
+                if not features.check("avif"):
+                    extension, out_format = ".webp", "WEBP"
+                else:
+                    extension, out_format = ".avif", "AVIF"
+                stem = short_uuid()[:8]
+                out: dict[str, tuple[str, bytes]] = {}
+                for target in settings.image_variant_widths:
+                    if image.width <= target:
+                        continue
+                    height = round(image.height * target / image.width)
+                    resized = image.resize((target, height), Image.Resampling.LANCZOS)
+                    # 调色板 / CMYK 等模式无法直接存 AVIF/WEBP，统一转 RGB(A)
+                    if resized.mode not in ("RGB", "RGBA"):
+                        resized = resized.convert("RGBA" if "A" in resized.getbands() else "RGB")
+                    buffer = io.BytesIO()
+                    save_kwargs: dict[str, object] = {"quality": VARIANT_QUALITY}
+                    if out_format == "AVIF":
+                        save_kwargs["speed"] = VARIANT_AVIF_SPEED
+                    resized.save(buffer, format=out_format, **save_kwargs)  # type: ignore[arg-type]
+                    out[str(target)] = (f"{stem}-{target}{extension}", buffer.getvalue())
+                return out
+        except (UnidentifiedImageError, OSError, ValueError):
+            return {}
+
+    @staticmethod
     def _to_result(record: Attachment, *, kind: str) -> UploadResult:
         markdown = (
             f"![{Path(record.original_name).stem}]({record.url})"
@@ -202,9 +260,39 @@ class AttachmentService:
             height=record.height,
             url=record.url,
             thumbnail_url=record.thumbnail_url,
+            variants=AttachmentService._variant_list(record),
             created_at=record.created_at,
             markdown=markdown,
         )
+
+    @staticmethod
+    def _variant_list(record: Attachment) -> list[ImageVariant]:
+        """把 variants 列（宽度 -> stored_name）换算成带 URL 的升序列表。
+
+        URL 读时计算而不是落库：换存储后端（本地磁盘 -> OSS）时不用刷数据库。
+        """
+        variants = record.variants or {}
+        subdir = f"uploads/{record.created_at.strftime('%Y%m')}"
+        return [
+            ImageVariant(
+                width=int(label),
+                url=storage.url_for(subdir=subdir, stored_name=name),
+            )
+            for label, name in sorted(variants.items(), key=lambda item: int(item[0]))
+        ]
+
+    async def variant_map_by_urls(self, urls: list[str]) -> dict[str, list[ImageVariant]]:
+        """把图片 URL 批量映射成变体列表（文章封面装配用）。
+
+        封面以 URL 字符串存在 ``Article.cover_image`` 上，变体挂在 Attachment
+        记录上，靠这层映射把两者接起来——一次 IN 查询，列表页不会逐条回表。
+        映射不上（外链封面 / 上传早于该功能的图片）就不进 map，
+        调用方取不到时落回空列表即可。
+        """
+        if not urls:
+            return {}
+        records = await self.attachments.get_by_urls(urls)
+        return {record.url: self._variant_list(record) for record in records}
 
     # ---------------------------------------------------------------- 查询 / 删除
 
@@ -237,7 +325,40 @@ class AttachmentService:
         await storage.delete(subdir=subdir, stored_name=record.stored_name)
         if record.thumbnail_name:
             await storage.delete(subdir=subdir, stored_name=record.thumbnail_name)
+        for variant_name in (record.variants or {}).values():
+            await storage.delete(subdir=subdir, stored_name=variant_name)
         await self.attachments.delete(record)
+
+    async def backfill(self, *, limit: int = BACKFILL_BATCH_LIMIT) -> BackfillResult:
+        """为存量图片补生成多尺寸变体（幂等：只挑 ``variants`` 为空的记录）。
+
+        单条失败（原文件被手动清理 / 解不开）只跳过不中断——回填本来就是
+        「能补多少补多少」的运维动作，不值得为一张坏图整批报错。
+        权限（仅站长）由路由层的 ``AdminUser`` 依赖把关。
+        """
+        rows = await self.attachments.list_images_without_variants(limit=limit)
+        processed = updated = skipped = 0
+        for record in rows:
+            processed += 1
+            subdir = f"uploads/{record.created_at.strftime('%Y%m')}"
+            try:
+                data = await storage.read(subdir=subdir, stored_name=record.stored_name)
+            except FileNotFoundError:
+                skipped += 1
+                continue
+            made = await asyncio.to_thread(self._make_variants, data)
+            if not made:
+                skipped += 1
+                continue
+            for variant_name, payload in made.values():
+                await storage.save(subdir=subdir, stored_name=variant_name, data=payload)
+            # JSON 列必须整体赋值，原地改 dict 不会触发 UPDATE
+            record.variants = {
+                width_label: variant_name for width_label, (variant_name, _) in made.items()
+            }
+            updated += 1
+        await self.session.flush()
+        return BackfillResult(processed=processed, updated=updated, skipped=skipped)
 
 
 def _rand_token() -> str:

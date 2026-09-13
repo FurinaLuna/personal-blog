@@ -22,7 +22,7 @@ export type {
   ArchiveItem,
   ManagedArticleQuery,
 } from './article'
-export type { Attachment } from './attachment'
+export type { Attachment, BackfillResult, ImageVariant } from './attachment'
 export type { Comment, CommentPayload } from './comment'
 export type { Series, SeriesBrief, SeriesPayload, SeriesWithArticles } from './series'
 export type { Category, CategoryBrief, CategoryPayload, Tag, TagBrief, TagPayload } from './taxonomy'

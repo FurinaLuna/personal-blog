@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.factories import make_article_payload, unique_suffix
+from tests.factories import make_article_payload, make_png_bytes, unique_suffix
 
 
 class TestCreate:
@@ -641,3 +641,75 @@ class TestArchive:
         assert not _is_year_month("2026-9")
         assert not _is_year_month("202609")
         assert not _is_year_month("abcd-09")
+
+
+class TestCoverVariants:
+    """封面多尺寸变体装配：创建响应 / 列表 / 详情 / 相关文章口径一致。"""
+
+    async def test_create_list_detail_carry_cover_variants(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        upload = (
+            await client.post(
+                "/api/v1/attachments/upload",
+                files={"file": ("cover.png", make_png_bytes((1920, 1080)), "image/png")},
+                headers=author_headers,
+            )
+        ).json()
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(cover_image=upload["url"]),
+                headers=author_headers,
+            )
+        ).json()
+        assert [v["width"] for v in created["cover_variants"]] == [480, 800, 1600]
+
+        listing = (await client.get("/api/v1/articles")).json()
+        item = next(i for i in listing["items"] if i["id"] == created["id"])
+        assert [v["width"] for v in item["cover_variants"]] == [480, 800, 1600]
+
+        detail = (await client.get(f"/api/v1/articles/{created['slug']}")).json()
+        assert [v["width"] for v in detail["cover_variants"]] == [480, 800, 1600]
+
+    async def test_external_cover_falls_back_to_empty_variants(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """外链封面查不到附件记录，静默落空列表而不是报错。"""
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(cover_image="https://example.com/pic.jpg"),
+                headers=author_headers,
+            )
+        ).json()
+        assert created["cover_variants"] == []
+
+    async def test_related_articles_carry_cover_variants(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        upload = (
+            await client.post(
+                "/api/v1/attachments/upload",
+                files={"file": ("rel.png", make_png_bytes((1920, 1080)), "image/png")},
+                headers=author_headers,
+            )
+        ).json()
+        first = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(tags=["共享标签"]),
+                headers=author_headers,
+            )
+        ).json()
+        second = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(tags=["共享标签"], cover_image=upload["url"]),
+                headers=author_headers,
+            )
+        ).json()
+
+        related = (await client.get(f"/api/v1/articles/{first['id']}/related")).json()
+        entry = next(i for i in related if i["id"] == second["id"])
+        assert [v["width"] for v in entry["cover_variants"]] == [480, 800, 1600]

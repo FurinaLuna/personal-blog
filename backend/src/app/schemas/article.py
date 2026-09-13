@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import ArticleStatus
+from app.schemas.attachment import ImageVariant
 from app.schemas.common import Page
 from app.schemas.series import SeriesBrief, SeriesRead
 from app.schemas.taxonomy import TagBrief
@@ -43,6 +44,8 @@ class ArticleSummary(BaseModel):
     slug: str
     summary: str | None = None
     cover_image: str | None = None
+    # 封面多尺寸变体（按宽度升序），前端拼 srcset 用；外链封面或无变体时为空
+    cover_variants: list[ImageVariant] = Field(default_factory=list)
     status: ArticleStatus
     is_top: bool
     allow_comment: bool

@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     max_upload_size: int = 10 * 1024 * 1024  # 10 MB
     thumbnail_max_width: int = 480
     thumbnail_max_height: int = 480
+    # 上传图片时顺带生成的多尺寸变体宽度档位；宽度不足的档位自动跳过（不放大）。
+    # 编码格式优先 AVIF（Pillow 无编码器时运行时降级 WEBP）。
+    image_variant_widths: Annotated[list[int], NoDecode] = [480, 800, 1600]
     allowed_image_types: Annotated[list[str], NoDecode] = [
         "image/jpeg",
         "image/png",
@@ -112,7 +115,13 @@ class Settings(BaseSettings):
     admin_password: str = "admin123456"
     seed_demo_data: bool = True
 
-    @field_validator("cors_origins", "allowed_image_types", "allowed_file_types", mode="before")
+    @field_validator(
+        "cors_origins",
+        "allowed_image_types",
+        "allowed_file_types",
+        "image_variant_widths",
+        mode="before",
+    )
     @classmethod
     def _split_csv(cls, value: Any) -> Any:
         """把字符串形式的列表环境变量统一解析成列表。

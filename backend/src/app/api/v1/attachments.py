@@ -6,9 +6,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Query, UploadFile, status
 
-from app.api.deps import AuthorUser, SessionDep
+from app.api.deps import AdminUser, AuthorUser, SessionDep
 from app.api.pagination import PageParamsDep
-from app.schemas.attachment import UploadResult
+from app.schemas.attachment import BackfillResult, UploadResult
 from app.schemas.common import Message, Page
 from app.services import AttachmentService
 
@@ -55,7 +55,28 @@ async def list_attachments(
 
 @router.delete("/{attachment_id}", response_model=Message, summary="删除附件（作者）")
 async def delete_attachment(attachment_id: int, user: AuthorUser, session: SessionDep) -> Message:
-    """删除附件会同时删除磁盘文件与缩略图。"""
+    """删除附件会同时删除磁盘文件、缩略图与多尺寸变体。"""
     await AttachmentService(session).delete(attachment_id, operator=user)
     await session.commit()
     return Message(detail="附件已删除")
+
+
+@router.post(
+    "/backfill-variants",
+    response_model=BackfillResult,
+    summary="为存量图片补生成多尺寸变体（站长）",
+)
+async def backfill_variants(
+    user: AdminUser,
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=100, description="本轮最多处理的图片数")] = 100,
+) -> BackfillResult:
+    """幂等运维接口：只处理 ``variants`` 还为空的图片记录。
+
+    存量图片是功能上线前上传的，没有变体；调用本接口按批补生成。
+    可反复调用直到 ``processed`` 为 0。单条失败（原文件已被手动清理 /
+    图片损坏）只跳过不中断。
+    """
+    result = await AttachmentService(session).backfill(limit=limit)
+    await session.commit()
+    return result

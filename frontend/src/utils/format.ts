@@ -1,4 +1,6 @@
-/** 展示层格式化工具。全站日期/数字的展示口径都在这里，避免各页面写法不一致。 */
+/** 展示层格式化工具。全站日期/数字/图片属性的展示口径都在这里，避免各页面写法不一致。 */
+
+import type { ImageVariant } from '@/types'
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -108,4 +110,14 @@ export function slugifyHeading(text: string): string {
 export function truncate(text: string, limit: number): string {
   const value = (text ?? '').trim()
   return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
+}
+
+/**
+ * 把变体列表拼成 `<img srcset>` 属性值（`url 480w, url 800w, ...`）。
+ *
+ * 空列表返回空串：配合 `:srcset="buildSrcset(...) || undefined"`，
+ * 没有变体的图片（外链封面 / 存量图）会退回 `src` 单图，行为与升级前一致。
+ */
+export function buildSrcset(variants: ImageVariant[]): string {
+  return variants.map((variant) => `${variant.url} ${variant.width}w`).join(', ')
 }

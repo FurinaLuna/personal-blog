@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -34,6 +34,12 @@ class Attachment(Base, TimestampMixin):
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     thumbnail_name: Mapped[str | None] = mapped_column(String(255))
+    # 多尺寸变体：{"480": "a1b2c3d4-480.avif", "800": ...}。
+    # 值是 stored_name（URL 读时计算）——将来从本地磁盘换对象存储时不用刷这一列。
+    # 注意 1：JSON 列的原地修改不会触发 UPDATE，所有写路径必须整体赋值新 dict。
+    # 注意 2：none_as_null 必须开——SQLAlchemy 默认把 Python None 序列化成
+    # JSON 文本 'null' 而不是 SQL NULL，「没有变体」的筛选（IS NULL）会永远失配。
+    variants: Mapped[dict[str, str] | None] = mapped_column(JSON(none_as_null=True))
 
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     thumbnail_url: Mapped[str | None] = mapped_column(String(500))

@@ -24,6 +24,7 @@ const makeAttachment = (id: number): Attachment => ({
   width: 10,
   height: 10,
   thumbnail_url: null,
+  variants: [],
   created_at: '2026-01-01T00:00:00Z',
 })
 

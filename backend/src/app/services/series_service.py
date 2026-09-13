@@ -16,6 +16,7 @@ from app.repositories import ArticleRepository, SeriesRepository
 from app.schemas.article import ArticleSummary
 from app.schemas.common import Page, PageParams
 from app.schemas.series import SeriesCreate, SeriesRead, SeriesUpdate
+from app.services.attachment_service import AttachmentService
 from app.utils.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.utils.slug import unique_slug
 
@@ -28,6 +29,8 @@ class SeriesService:
         self.session = session
         self.series = SeriesRepository(session)
         self.articles = ArticleRepository(session)
+        # 「封面 URL -> 多尺寸变体」的映射是附件域知识，装配在这里组合使用
+        self.attachments = AttachmentService(session)
 
     # ---------------------------------------------------------------- 查询
 
@@ -61,6 +64,12 @@ class SeriesService:
         items = [
             ArticleSummary.model_validate(row) for row in rows[start : start + page_params.limit]
         ]
+        # 系列页的文章卡片与首页列表同一渲染组件，封面变体口径必须一致
+        covers = [item.cover_image for item in items if item.cover_image]
+        variant_map = await self.attachments.variant_map_by_urls(covers)
+        for item in items:
+            if item.cover_image:
+                item.cover_variants = variant_map.get(item.cover_image, [])
         return (
             self._out(series, len(rows)),
             Page.build(items, len(rows), page_params.page, page_params.page_size),

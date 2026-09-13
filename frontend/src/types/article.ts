@@ -1,5 +1,6 @@
 /** 文章领域（含按月归档）。 */
 
+import type { ImageVariant } from './attachment'
 import type { SeriesBrief } from './series'
 import type { CategoryBrief, TagBrief } from './taxonomy'
 import type { UserBrief } from './user'
@@ -21,6 +22,8 @@ export interface ArticleSummary {
   slug: string
   summary: string | null
   cover_image: string | null
+  /** 封面多尺寸变体（按宽度升序），拼 srcset 用；外链封面或无变体时为空 */
+  cover_variants: ImageVariant[]
   status: ArticleStatus
   is_top: boolean
   allow_comment: boolean

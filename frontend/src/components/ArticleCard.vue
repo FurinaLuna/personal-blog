@@ -4,7 +4,7 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import type { ArticleSummary } from '@/types'
-import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
+import { buildSrcset, formatCount, formatDate, formatReadingTime } from '@/utils/format'
 import { statusBadgeClass, statusLabel } from '@/utils/status'
 import { prefetchRoute } from '@/utils/prefetch'
 
@@ -118,9 +118,13 @@ function warm(): void {
         @focusin="warm"
       >
         <!-- aspect 占位：图片加载完成前容器就有正确高度，列表不会因图片到达而上下跳动。
-             移动端 16:9 横幅，桌面端 10:7 缩略图 -->
+             移动端 16:9 横幅，桌面端 10:7 缩略图。
+             srcset 有变体时浏览器按视口/密度自选档位（AVIF/WEBP 远小于原图），
+             没有变体时属性不渲染，退回 src 单图。 -->
         <img
           :src="article.cover_image"
+          :srcset="buildSrcset(article.cover_variants) || undefined"
+          sizes="(min-width: 640px) 160px, 100vw"
           :alt="article.title"
           :loading="priority ? 'eager' : 'lazy'"
           :fetchpriority="priority ? 'high' : 'auto'"

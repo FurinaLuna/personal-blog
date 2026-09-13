@@ -6,15 +6,18 @@ import { attachmentApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
+import { useAction } from '@/composables/useAction'
 import { useAsyncData, toErrorMessage } from '@/composables/useAsyncData'
 import { useConfirmDelete } from '@/composables/useConfirmDelete'
 import { useToast } from '@/composables/useToast'
 import { useUpload } from '@/composables/useUpload'
+import { useAuthStore } from '@/stores/auth'
 import type { Attachment, Page } from '@/types'
 import { formatBytes, formatDateTime } from '@/utils/format'
 import { emptyPage as emptyPageOf } from '@/utils/pagination'
 
 const toast = useToast()
+const auth = useAuthStore()
 
 const PAGE_SIZE = 24
 const page = ref(1)
@@ -59,6 +62,22 @@ async function copyMarkdown(item: Attachment): Promise<void> {
   }
 }
 
+/** 存量图片变体回填（仅站长）。success 文案带计数，比固定文案有用得多。 */
+const backfillAction = useAction()
+
+async function backfillVariants(): Promise<void> {
+  const result = await backfillAction.run(() => attachmentApi.backfillVariants(), {
+    errorMessage: '回填失败',
+  })
+  if (result === undefined) return
+  if (result.updated > 0) {
+    toast.success(`回填完成：生成 ${result.updated} 张，跳过 ${result.skipped} 张，还剩待处理可再次运行`)
+    void attachments.run()
+  } else {
+    toast.success('没有需要回填的图片')
+  }
+}
+
 onMounted(() => {
   void attachments.run()
 })
@@ -89,6 +108,16 @@ onMounted(() => {
         @click="fileInput?.click()"
       >
         {{ upload.uploading.value ? '上传中…' : '上传文件' }}
+      </button>
+      <button
+        v-if="auth.isAdmin"
+        type="button"
+        class="btn--ghost"
+        :disabled="backfillAction.running.value"
+        title="为功能上线前上传的存量图片批量生成多尺寸变体，可重复执行"
+        @click="backfillVariants"
+      >
+        {{ backfillAction.running.value ? '回填中…' : '回填变体' }}
       </button>
       <input
         ref="fileInput"
@@ -143,6 +172,12 @@ onMounted(() => {
               <template v-if="item.width && item.height">
                 · {{ item.width }}×{{ item.height }}
               </template>
+            </p>
+            <p v-if="item.kind === 'image'" class="mt-0.5 text-[11px]">
+              <span v-if="item.variants.length" class="text-ink-faint">
+                变体 {{ item.variants.map((v) => v.width).join('/') }}
+              </span>
+              <span v-else class="text-ink-faint/60">无变体</span>
             </p>
             <p class="mt-0.5 text-[11px] text-ink-faint">{{ formatDateTime(item.created_at) }}</p>
 

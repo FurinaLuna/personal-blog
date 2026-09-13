@@ -14,7 +14,7 @@ import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
 import { useAuthStore } from '@/stores/auth'
 import type { ArticleDetail, ArticleSummary } from '@/types'
-import { formatCount, formatDate, formatReadingTime } from '@/utils/format'
+import { buildSrcset, formatCount, formatDate, formatReadingTime } from '@/utils/format'
 import { statusBadgeClass, statusLabel } from '@/utils/status'
 import { renderMarkdown } from '@/utils/markdown'
 
@@ -311,7 +311,14 @@ watch(
                 v-if="item.cover_image"
                 class="h-14 w-20 shrink-0 overflow-hidden rounded-md bg-surface-muted"
               >
-                <img :src="item.cover_image" :alt="item.title" loading="lazy" class="h-full w-full object-cover" />
+                <img
+                  :src="item.cover_image"
+                  :srcset="buildSrcset(item.cover_variants) || undefined"
+                  sizes="80px"
+                  :alt="item.title"
+                  loading="lazy"
+                  class="h-full w-full object-cover"
+                />
               </div>
               <div class="min-w-0">
                 <p class="line-clamp-2 text-sm font-medium leading-snug text-ink">{{ item.title }}</p>

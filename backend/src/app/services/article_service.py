@@ -26,8 +26,10 @@ from app.schemas.article import (
     ArticleSummary,
     ArticleUpdate,
 )
+from app.schemas.attachment import ImageVariant
 from app.schemas.common import Page, PageParams
 from app.schemas.site import ArchiveGroup, ArchiveItem
+from app.services.attachment_service import AttachmentService
 from app.services.series_service import SeriesService
 from app.services.taxonomy_service import TaxonomyService
 from app.utils.exceptions import (
@@ -110,6 +112,8 @@ class ArticleService:
         self.taxonomy = TaxonomyService(session)
         # 系列的领域规则（唯一性 / slug）归 SeriesService，同上单向组合
         self.series = SeriesService(session)
+        # 「封面 URL -> 多尺寸变体」的映射是附件域知识，装配在这里组合使用
+        self.attachments = AttachmentService(session)
 
     # ================================================================ 查询
 
@@ -227,6 +231,7 @@ class ArticleService:
             )
             for row in rows
         ]
+        await self._fill_cover_variants(items)
         return Page.build(items, total, page_params.page, page_params.page_size)
 
     async def get_detail(
@@ -263,6 +268,7 @@ class ArticleService:
         series_prev, series_next = await self.articles.get_series_neighbors(article)
         data = ArticleSummary.model_validate(article).model_dump()
         data["comment_count"] = comment_count
+        data["cover_variants"] = await self._cover_variants(article.cover_image)
         return ArticleDetail(
             **data,
             content_md=article.content_md,
@@ -277,6 +283,22 @@ class ArticleService:
         if article is None:
             return None
         return ArticleNeighbor(id=article.id, title=article.title, slug=article.slug)
+
+    async def _fill_cover_variants(self, items: list[ArticleSummary]) -> None:
+        """原位补齐列表项的封面变体（srcset 数据源）。"""
+        covers = [item.cover_image for item in items if item.cover_image]
+        if not covers:
+            return
+        variant_map = await self.attachments.variant_map_by_urls(covers)
+        for item in items:
+            if item.cover_image:
+                item.cover_variants = variant_map.get(item.cover_image, [])
+
+    async def _cover_variants(self, cover_image: str | None) -> list[ImageVariant]:
+        if not cover_image:
+            return []
+        variant_map = await self.attachments.variant_map_by_urls([cover_image])
+        return variant_map.get(cover_image, [])
 
     # ================================================================ 写入
 
@@ -409,7 +431,9 @@ class ArticleService:
         if article is None or article.status is ArticleStatus.DRAFT:
             raise NotFoundError("文章不存在或尚未发布")
         rows = await self.articles.list_related(article, statuses=LIST_STATUSES, limit=limit)
-        return [ArticleSummary.model_validate(item) for item in rows]
+        items = [ArticleSummary.model_validate(item) for item in rows]
+        await self._fill_cover_variants(items)
+        return items
 
     async def list_by_month(self, year_month: str) -> list[ArchiveItem]:
         """取某个月份的文章条目。

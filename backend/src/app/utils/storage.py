@@ -25,6 +25,14 @@ class StorageBackend(Protocol):
         """写入文件，重名则覆盖。"""
         ...
 
+    async def read(self, *, subdir: str, stored_name: str) -> bytes:
+        """读出文件内容（回填/离线任务用）。
+
+        Raises:
+            FileNotFoundError: 文件不在磁盘上。
+        """
+        ...
+
     async def delete(self, *, subdir: str, stored_name: str) -> bool:
         """删除文件，返回是否真的删掉了。"""
         ...
@@ -57,6 +65,10 @@ class LocalStorage:
         path = self._path(subdir, stored_name)
         # 同步磁盘 IO 丢到线程池，避免阻塞事件循环
         await asyncio.to_thread(self._write, path, data)
+
+    async def read(self, *, subdir: str, stored_name: str) -> bytes:
+        path = self._path(subdir, stored_name)
+        return await asyncio.to_thread(path.read_bytes)
 
     @staticmethod
     def _write(path: Path, data: bytes) -> None:
