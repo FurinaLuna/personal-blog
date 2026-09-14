@@ -93,6 +93,15 @@ const routes: RouteRecordRaw[] = [
     props: { heading: '留言板', hint: '想说什么都可以，不限于文章内容。' },
   },
 
+  // 退订页：从邮件里的链接进入（/unsubscribe?token=xxx），导航里没有入口。
+  // 挂在公开区而不是后台：收件人多数不是本站用户，不该被登录守卫拦下。
+  {
+    path: '/unsubscribe',
+    name: 'unsubscribe',
+    component: () => import('@/views/UnsubscribeView.vue'),
+    meta: { title: '退订通知' },
+  },
+
   // ---------------------------------------------------------------- 认证
   {
     path: '/login',

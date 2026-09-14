@@ -44,3 +44,14 @@ class UserRepository(BaseRepository[User]):
         if exclude_id is not None:
             stmt = stmt.where(User.id != exclude_id)
         return int((await self.session.execute(stmt)).scalar_one())
+
+    async def first_admin_email(self) -> str | None:
+        """站长邮箱（新评论通知收件人）。多个站长时取 id 最小的那个。"""
+        result = await self.session.execute(
+            select(User.email)
+            .where(User.role == UserRole.ADMIN, User.is_active.is_(True))
+            .order_by(User.id)
+            .limit(1)
+        )
+        row = result.first()
+        return str(row[0]) if row else None

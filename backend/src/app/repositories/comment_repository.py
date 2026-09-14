@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Select, func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import Article, Comment
 from app.repositories.base import BaseRepository
@@ -11,6 +11,20 @@ from app.repositories.base import BaseRepository
 
 class CommentRepository(BaseRepository[Comment]):
     model = Comment
+
+    async def get_with_relations(self, comment_id: int) -> Comment | None:
+        """按主键取评论并预载 parent / article（通知任务用）。
+
+        通知跑在自己的后台任务里，绝不能触发惰性加载（异步下抛
+        ``MissingGreenlet``），查询时一次 join 清楚。
+        """
+        stmt = (
+            select(Comment)
+            .where(Comment.id == comment_id)
+            .options(joinedload(Comment.parent), joinedload(Comment.article))
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
 
     async def list_roots_for_article(
         self, article_id: int, *, approved_only: bool

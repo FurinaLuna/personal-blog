@@ -15,14 +15,16 @@ dependencies = [
     "alembic>=1.14",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "email-validator>=2.2",
     "python-multipart>=0.0.12",
     "pyjwt>=2.10",
     "bcrypt>=4.2",
-    "pillow>=11.0",
+    "pillow>=11.3",
+    "aiosmtplib>=3.0",
 ]
 
 [project.optional-dependencies]
-# 生产环境换 PostgreSQL 时安装： uv sync --extra postgres
+# 生产环境换 PostgreSQL 时安装： pip install -e ".[postgres]"
 postgres = ["asyncpg>=0.30"]
 dev = [
     "httpx>=0.27",

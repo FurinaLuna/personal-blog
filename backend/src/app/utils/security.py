@@ -130,3 +130,42 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> Token
 def access_token_ttl_seconds() -> int:
     """access token 有效期（秒），用于响应体里的 ``expires_in``。"""
     return settings.access_token_expire_minutes * 60
+
+
+# ---------------------------------------------------------------- 退订 token
+#
+# 独立于上面的登录 token 体系（TokenType / TokenPayload 的 ``sub`` 是 int 强转，
+# 塞 email 进去会在解析时炸）：退订凭证的 ``sub`` 是小写邮箱、type 固定
+# "unsubscribe"。有效期 10 年——退订链接出现在邮件里，跟着邮件活很久。
+
+UNSUBSCRIBE_TOKEN_TYPE = "unsubscribe"
+UNSUBSCRIBE_TOKEN_TTL = timedelta(days=3650)
+
+
+def create_unsubscribe_token(email: str) -> str:
+    """签发退订 token（``sub`` 为小写邮箱）。"""
+    now = datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "sub": email.lower(),
+        "type": UNSUBSCRIBE_TOKEN_TYPE,
+        "iat": now,
+        "exp": now + UNSUBSCRIBE_TOKEN_TTL,
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_unsubscribe_token(token: str) -> str:
+    """验签并返回 token 中的小写邮箱。
+
+    Raises:
+        jwt.InvalidTokenError: 签名不对、过期或类型不符。
+    """
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret_key,
+        algorithms=[settings.jwt_algorithm],
+        options={"require": ["exp", "sub", "type"]},
+    )
+    if payload.get("type") != UNSUBSCRIBE_TOKEN_TYPE:
+        raise jwt.InvalidTokenError(f"token 类型不符：期望 {UNSUBSCRIBE_TOKEN_TYPE}")
+    return str(payload["sub"]).lower()

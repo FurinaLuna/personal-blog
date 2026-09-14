@@ -11,6 +11,10 @@ from app.api.pagination import PageParamsDep
 from app.schemas.comment import CommentCreate, CommentModerate, CommentRead
 from app.schemas.common import Message, Page
 from app.services import CommentService
+from app.services.notification_service import (
+    notify_comment_approved,
+    notify_comment_created,
+)
 
 router = APIRouter(prefix="/comments", tags=["评论"])
 
@@ -53,6 +57,9 @@ async def create_comment(
     )
     # 写路由显式提交（原因见 db/session.py get_session 说明）
     await session.commit()
+    # 通知必须在 commit 之后触发：后台任务自建会话按 id 重查，
+    # 未提交就触发会查不到这行（fire-and-forget，不阻塞响应）
+    notify_comment_created(created.id)
     return created
 
 
@@ -87,6 +94,9 @@ async def moderate_comment(
     approved = True if payload.is_approved is None else payload.is_approved
     comment = await CommentService(session).set_approved(comment_id, approved, operator=user)
     await session.commit()
+    # 审核制下被回复者要等到过审这一刻才收到信；撤回（approved=False）不通知
+    if approved:
+        notify_comment_approved(comment.id)
     return comment
 
 

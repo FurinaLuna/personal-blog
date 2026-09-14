@@ -109,6 +109,20 @@ class Settings(BaseSettings):
         "application/octet-stream",
     ]
 
+    # ---------- 邮件通知（SMTP）----------
+    # 默认全关：不开 SMTP 时评论接口照常工作，通知只是不发（fire-and-forget）。
+    # 个人博客常用 QQ / 163 邮箱的 SMTP：开启 use_tls + 端口 465，
+    # 密码用「授权码」而不是登录密码。
+    smtp_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    # 发件人地址；留空时回落到 smtp_username
+    smtp_from: str = ""
+    # True = 隐式 TLS（465）；587 端口的 STARTTLS 场景暂未支持
+    smtp_use_tls: bool = True
+
     # ---------- 初始化管理员 / 演示数据 ----------
     admin_username: str = "admin"
     admin_email: str = "admin@example.com"
