@@ -10,7 +10,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 205 个后端测试、80 个前端单测，
+**写出来能跑、改起来可验证** —— 275 个后端测试、86 个前端单测，
 外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）。
 
 ---
@@ -56,6 +56,7 @@
 | 代码块 | 按需注册 17 种语言（比 `lib/common` 省 60% 体积）、右上复制按钮、右下语言标签 |
 | 阅读体验 | 自动目录（桌面侧栏 + 移动端浮动抽屉）、阅读进度条、相关文章推荐 |
 | 组织方式 | 分类（一对一）、标签（多对多）、按月归档、关键词搜索 |
+| 系列 / 合集 | 多篇文章编成一个系列；详情页显示系列导航（上下篇），前台有系列聚合页与系列详情页，后台可增删改；删除系列只解关联，文章保留 |
 | 互动 | 两级评论（先审后发）、点赞、阅读量统计 |
 | 列表页 | 服务端分页 + 五种排序 + 筛选，**全部状态存在 URL query**，刷新/分享/前进后退都能还原 |
 | 主题 | 亮 / 暗 / 跟随系统三态，首屏无闪烁 |
@@ -80,6 +81,10 @@
 - 上传安全：Pillow 真实解码判型（不信任客户端声明的 `Content-Type`）、流式限流读、
   扩展名白名单（默认禁 SVG / HTML）、服务端生成文件名
 - 请求 ID 透传 + 结构化 JSON 日志 + 限流（登录 5/分、评论 5/分、点赞 20/分）
+- 评论邮件通知：有人回复你的评论时给被回复者发信（附签名退订链接），
+  非站长发的新评论提醒站长（**待审也提醒**——那正是需要审核的时刻）；
+  SMTP 默认关闭（仅配 `SMTP_ENABLED=true` 才发信），发信是评论接口提交后触发的后台任务，
+  **失败只记日志，绝不影响评论接口返回**；退订幂等，重复点击与重复提交都返回成功
 - `/health` 存活探针与 `/ready` 就绪探针（真实查库，未就绪返回 503）
 - Alembic 迁移（升降级都验证过）；Docker + nginx + docker-compose
 
@@ -112,7 +117,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 205 例、前端 80 例 |
+| 测试 | pytest / Vitest | 后端 275 例、前端 86 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -187,13 +192,13 @@ personal-blog/
 │   │   ├── config.py               # 配置（全部来自环境变量）
 │   │   ├── api/                    # 路由、依赖注入、限流、请求上下文中间件
 │   │   │   └── v1/                 # 按资源分组的端点
-│   │   ├── models/                 # SQLAlchemy 模型（8 张表）
+│   │   ├── models/                 # SQLAlchemy 模型（10 张表）
 │   │   ├── schemas/                # Pydantic 请求/响应模型
 │   │   ├── services/               # 业务规则唯一所在地
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 205 个 pytest 用例
+│   ├── tests/                      # 275 个 pytest 用例
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -208,7 +213,7 @@ personal-blog/
 │   │   ├── styles/                 # ★ 样式：tokens / base / components / prose / vendor
 │   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 状态元数据
 │   │   └── views/                  # 前台 9 页 + 后台 8 页
-│   └── src/**/*.spec.ts            # 80 个 Vitest 用例
+│   └── src/**/*.spec.ts            # 86 个 Vitest 用例
 ├── deploy/                         # Dockerfile × 2 + nginx.conf
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
@@ -216,6 +221,9 @@ personal-blog/
 │   ├── CODE-REVIEW.md              # 代码评审（臃肿 / 冗余 / 重复 / 内聚耦合）
 │   ├── STYLEGUIDE.md               # ★ 样式规范（文件组织 / BEM 命名 / 验证方法）
 │   ├── ROADMAP.md                  # 迭代路线图与进度
+│   ├── MODULES.md                  # ★ 模块边界权威说明（职责 / 依赖方向 / 禁止事项 / 扩展点）
+│   ├── OPTIMIZE-QUICK-WINS.md      # 前端优化「1-2 天见效」清单（改哪个文件、改什么、为什么）
+│   ├── TEST-REPORT.md              # 2026-09-12 全功能回归报告（dev + 生产包两层环境 × E2E 脚本）
 │   ├── devlog/                     # 逐日开发日志（决策 / 验证 / 踩坑）
 │   ├── test-reports/               # full-check 各环境的运行报告（JSON）
 │   └── screenshots/                # 界面截图
@@ -254,10 +262,14 @@ personal-blog/
 | `SITE_BASE_URL` | `http://localhost:5173` | RSS / sitemap 里的绝对链接依赖它 |
 | `STORAGE_DIR` | `./storage` | 上传文件根目录 |
 | `MAX_UPLOAD_SIZE` | `10485760` | 10 MB，需与 nginx `client_max_body_size` 一致 |
+| `IMAGE_VARIANT_WIDTHS` | `480,800,1600` | 上传时生成的响应式图片档位（宽度不足的档位跳过） |
 | `LOG_JSON` | `true` | 访问日志以单行 JSON 输出，便于日志收集器按字段过滤 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `TRUST_PROXY_HEADERS` | `false` | ⚠️ 只有部署在可信反代之后才开。`X-Forwarded-For` 可被伪造 |
 | `RATE_LIMIT_ENABLED` | `true` | 登录 / 评论 / 点赞限流开关 |
+| `SMTP_ENABLED` | `false` | 评论邮件通知总开关。⚠️ 开启还需填 `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD`（授权码） |
+| `SMTP_PORT` / `SMTP_USE_TLS` | `465` / `true` | 隐式 TLS；587 STARTTLS 暂不支持 |
+| `SMTP_FROM` | 空 | 发件人地址，留空回落到 `SMTP_USERNAME` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123456` | ⚠️ 首次启动后立刻改密码 |
 | `SEED_DEMO_DATA` | `true` | ⚠️ 生产设 `false` |
 
@@ -278,11 +290,18 @@ personal-blog/
 | | `GET /api/v1/articles/{id}/related` | 相关文章 |
 | | `POST /api/v1/articles/{id}/like` | 点赞（限流 20/分） |
 | 分类标签 | `GET/POST/PATCH/DELETE /api/v1/categories`、`/api/v1/tags` | 分类与标签；删除只解关联不删文章 |
+| 系列 | `GET /api/v1/series` | 系列列表（前台，可选带各系列已发布文章数） |
+| | `GET /api/v1/series/{slug或id}` | 系列详情 + 系列内文章（按系列内顺序分页） |
+| | `POST /api/v1/series`、`PATCH /api/v1/series/{id}` | 新建 / 修改系列（作者以上） |
+| | `DELETE /api/v1/series/{id}` | 删除系列（站长）；其下文章降级为普通文章，内容不受影响 |
 | 评论 | `GET /api/v1/comments/article/{id}` | 两级评论树 |
 | | `POST /api/v1/comments/article/{id}` | 发表评论（支持匿名，限流 5/分） |
 | | `PATCH/DELETE /api/v1/comments/{id}` | 审核与删除（作者以上） |
-| 媒体 | `POST /api/v1/attachments/upload` | 上传（真实解码判型 + 流式限流读） |
+| 媒体 | `POST /api/v1/attachments/upload` | 上传（真实解码判型 + 流式限流读 + 生成多尺寸变体） |
 | | `GET /api/v1/attachments`、`DELETE /api/v1/attachments/{id}` | 媒体库管理 |
+| | `POST /api/v1/attachments/backfill-variants` | 给存量图片补生成变体（站长） |
+| 统计 | `GET /api/v1/stats/views/daily` | 近 N 天 PV/UV 趋势（站长，缺日补零） |
+| 通知 | `POST /api/v1/notifications/unsubscribe` | 凭邮件签名 token 退订评论回复通知（幂等） |
 | 站点 | `GET /api/v1/site/profile`、`/stats` | 站点档案与统计 |
 | | `PATCH /api/v1/site/profile` | 更新站点设置（站长） |
 | 订阅 | `GET /feed.xml`、`/sitemap.xml` | RSS 2.0 与站点地图（后端直出） |
@@ -306,11 +325,12 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 | 检查 | 结果 |
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
-| `pytest` | **205 passed** |
+| `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
+| `pytest` | **275 passed** |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **80 passed** |
+| `vitest run` | **86 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 8 张表，干净回滚 |
+| `alembic upgrade head` / `downgrade base` | 11 张表，干净回滚 |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 | `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |

@@ -6,9 +6,17 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
+# import-linter（Grimp）的缓存目录。它会在目录内自写一个含 `*` 的 .gitignore 自忽略，
+# 但这里显式兜一层：万一换了版本不再自忽略，也不会被误提交。
+# 不加 backend/ 前缀，根目录和 backend/ 下的实例都能覆盖。
+.import_linter_cache/
 .coverage
 htmlcov/
 .mypy_cache/
+# 本项目用 python -m venv + pip install -e ".[dev]"（见 Makefile / README 快速开始），
+# 不走 uv。这个 lock 是某次误跑 uv 留下的产物，与 pip 工作流不一致，提交反而误导。
+# 只在版本库里忽略，文件本身保留，将来真要迁 uv 还能接着用。
+backend/uv.lock
 
 # ---------------- 环境与密钥 ----------------
 # .env.example 要提交，.env 绝对不能提交（里面有 JWT 密钥和数据库密码）
@@ -46,6 +54,8 @@ coverage/
 .vscode/*
 !.vscode/extensions.json
 .idea/
+# Trae（另一款 AI IDE）的本地产物目录，属于用户 IDE 数据，不进版本库
+.trae/
 .DS_Store
 Thumbs.db
 *.swp

@@ -17,9 +17,20 @@
   消除 5 处删除确认与 3 处上传的重复实现；types 按领域拆分
 - 新增 `tools/showcase-demo.mjs`：用户视角完整旅程回放（11 步截图断言）
 - 新增「文章系列 / 合集」：系列模型与 API、后台管理、详情页系列导航（上下篇）
+- 新增图片多尺寸变体：上传时生成 480/800/1600 三档（优先 AVIF，无编码器降级 WEBP），
+  列表封面与详情页用 `srcset` 响应式选图；媒体库支持为存量图片补生成
+- 新增访问趋势统计：详情访问按天落 `visit_logs`（IP 只存 HMAC 摘要），
+  仪表盘出近 30 天 PV/UV 曲线
+- 新增评论邮件通知：有人回复你的评论时发信（含退订链接），新评论提醒站长；
+  SMTP 默认关闭，发信失败只记日志，绝不影响评论接口
 - 端到端脚本的截图与报告产物统一收敛到 `shots/`（gitignore），
   Makefile 三个验证目标同步指向新目录，根目录不再散落多个 `*-shots/`
-- 测试基线更新：后端 205 例、前端 80 例（Vitest）
+- 测试基线更新：后端 275 例、前端 86 例（Vitest）
+- 整理仓库结构：删除与 `backend/storage/` 重复的根目录空 `storage/`；
+  `docs/OPTIMIZE-quick-wins.md` → `docs/OPTIMIZE-QUICK-WINS.md`（与同目录全大写命名对齐），
+  中文名测试报告改英文 kebab-case；
+  `.gitignore` 补 `.import_linter_cache/` `backend/uv.lock` `.trae/`；
+  `Makefile clean` 补齐缓存目录清理
 
 ### 已修复
 
@@ -42,12 +53,12 @@
   `formatReadingTime` / `formatYearMonth` 对 null / undefined / NaN 兜底，
   界面不再渲染出 "null" / "NaN"，新增 `format.spec.ts`
 - 后端 3 个文件补齐 ruff format（series 提交时 CI 受账号账单锁影响而漏检）
+- **Alembic 迁移与 ORM 建表索引漂移**：`create_notification_opt_outs` 迁移缺
+  `(email, article_id)` 复合唯一索引，导致「`alembic upgrade` 建库」与「ORM 建表」
+  两条路径产出的索引不一致、唯一约束实际失效；已在迁移中补齐并验证两条路径一致
 
 ### 计划中
 
-- 图片多尺寸与 AVIF 转换（上传时生成，老数据需回填脚本）
-- 站点统计时间序列与后台趋势图
-- 评论邮件通知（含退订）
 - 服务层读写分离（`ArticleService` 进一步拆分）与全站 API 限流扩容方案
 
 ## [1.0.0] - 2026-09-12

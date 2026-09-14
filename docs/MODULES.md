@@ -225,6 +225,6 @@ const action = useAction()
 ## 六、验证清单（重构完成的判据）
 
 1. `make lint`：ruff + import-linter 分层契约通过（依赖可视化、无循环）。
-2. `make check`：格式 + 类型 + 前后端全量测试（187 pytest / 71 vitest）。
+2. `make check`：格式 + 类型 + 前后端全量测试（275 pytest / 86 vitest）。
 3. 写路由保留显式 commit（`test_write_visibility.py` 是它的回归测试）。
 4. 新 composable 必须带 `.spec.ts`（见 `useConfirmDelete.spec.ts` 风格）。

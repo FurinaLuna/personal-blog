@@ -138,4 +138,7 @@ clean: ## 清理构建产物与缓存（不删数据库和媒体文件）
 	find $(BACKEND) -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 	find $(BACKEND) -type d -name .pytest_cache -prune -exec rm -rf {} + 2>/dev/null || true
 	find $(BACKEND) -type d -name .ruff_cache -prune -exec rm -rf {} + 2>/dev/null || true
+	find $(BACKEND) -type d -name .import_linter_cache -prune -exec rm -rf {} + 2>/dev/null || true
+	# 在仓库根目录跑 pytest/ruff/lint-imports 时也会在根上生成一份同名缓存，一并清掉
+	rm -rf .pytest_cache .ruff_cache .import_linter_cache 2>/dev/null || true
 	rm -f $(BACKEND)/.coverage $(BACKEND)/alembic_boot.db
