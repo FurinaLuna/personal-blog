@@ -5,10 +5,11 @@ from __future__ import annotations
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ArticleStatus, Comment, User, UserRole
+from app.models import Comment, User, UserRole
 from app.repositories import ArticleRepository, CommentRepository, SiteRepository
 from app.schemas.comment import CommentCreate, CommentRead
 from app.schemas.common import Page, PageParams
+from app.services.article_service import is_publicly_visible
 from app.utils.exceptions import BadRequestError, NotFoundError, PermissionDeniedError
 
 
@@ -50,8 +51,11 @@ class CommentService:
         is_staff = viewer is not None and (
             viewer.role is UserRole.ADMIN or article.author_id == viewer.id
         )
-        # 草稿只对 staff 可见；对其他人一律按「不存在」处理，不泄露它的存在性
-        if article.status is ArticleStatus.DRAFT and not is_staff:
+        # 草稿与「未到发布时间的定时文章」对非 staff 一律按「不存在」处理。
+        # 口径必须是**同一个函数**：曾经这里只判 article is None，于是草稿文章
+        # 本身匿名访问正确返回 404，评论接口却返回 200 —— 任何人都能枚举 id
+        # 读到未发布文章下的评论，「用 404 把草稿藏起来」这个决定就被绕过去了。
+        if not is_publicly_visible(article) and not is_staff:
             raise NotFoundError("文章不存在")
 
         roots = await self.comments.list_roots_for_article(article_id, approved_only=not is_staff)
@@ -137,7 +141,9 @@ class CommentService:
             BadRequestError: 文章关闭了评论 / 站点禁止游客评论 / 回复目标不属于本文。
         """
         article = await self.articles.get(article_id)
-        if article is None or article.status is ArticleStatus.DRAFT:
+        # 用与读路径同一个口径：草稿和未到发布时间的定时文章都不接受评论，
+        # 否则会出现「文章 404 但能往上评论」这种自相矛盾的状态
+        if article is None or not is_publicly_visible(article):
             raise NotFoundError("文章不存在或尚未发布")
         if not article.allow_comment:
             raise BadRequestError("该文章已关闭评论")

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.models.enums import ArticleStatus
 from app.schemas.attachment import ImageVariant
@@ -62,6 +62,25 @@ class ArticleSummary(BaseModel):
     tags: list[TagBrief] = Field(default_factory=list)
     comment_count: int = 0
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_scheduled(self) -> bool:
+        """是否处于「已排期但还没到发布时间」。
+
+        **派生字段而不是新增状态**：数据库里它仍然是 ``published`` +
+        一个未来的 ``published_at``。这样可见性判定只需要在既有的一处
+        （``is_publicly_visible``）加时间条件，不必改枚举、不必写迁移，
+        也不会出现「scheduled 到底算不算已发布」这种到处都要回答的问题。
+
+        前端后台靠它把这类文章标成「定时发布」，否则界面上显示「已发布」
+        而前台又搜不到，作者会以为是自己搞错了。
+        """
+        return (
+            self.status is ArticleStatus.PUBLISHED
+            and self.published_at is not None
+            and self.published_at > datetime.now(UTC)
+        )
+
 
 class ArticleDetail(ArticleSummary):
     """详情页：在列表字段基础上补正文与上下篇。
@@ -97,6 +116,13 @@ class ArticleCreate(BaseModel):
     content_md: str = Field(default="", description="Markdown 原文")
     cover_image: str | None = Field(default=None, max_length=500)
     status: ArticleStatus = ArticleStatus.DRAFT
+    published_at: datetime | None = Field(
+        default=None,
+        description=(
+            "发布时间。留空时：status=published 立即发布，否则为空。"
+            "传入**未来时间**即为定时发布——到点前对访客不可见。"
+        ),
+    )
     is_top: bool = False
     allow_comment: bool = True
     category_id: int | None = None
@@ -131,6 +157,10 @@ class ArticleUpdate(BaseModel):
     content_md: str | None = None
     cover_image: str | None = None
     status: ArticleStatus | None = None
+    published_at: datetime | None = Field(
+        default=None,
+        description="显式传时间可改期；传未来时间即改为定时发布。不传表示不动。",
+    )
     is_top: bool | None = None
     allow_comment: bool | None = None
     category_id: int | None = None

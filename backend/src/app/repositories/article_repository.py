@@ -43,6 +43,11 @@ class ArticleFilter:
     is_top: bool | None = None
     published_from: datetime | None = None
     published_to: datetime | None = None
+    # 「此刻对公众可见」：published_at 必须非空且不晚于该时刻。
+    # 用来实现定时发布——排在未来的文章不该出现在前台列表里。
+    # 与 published_to 的区别在于它**排除 NULL**：草稿没有发布时间，
+    # 不能因为「NULL <= 某时刻」在 SQL 里求值为 NULL 就被当成通过。
+    visible_at: datetime | None = None
 
     def is_empty(self) -> bool:
         return not any(
@@ -125,6 +130,11 @@ class ArticleRepository(BaseRepository[Article]):
             stmt = stmt.where(Article.published_at >= flt.published_from)
         if flt.published_to is not None:
             stmt = stmt.where(Article.published_at <= flt.published_to)
+        if flt.visible_at is not None:
+            stmt = stmt.where(
+                Article.published_at.is_not(None),
+                Article.published_at <= flt.visible_at,
+            )
         if flt.keyword and flt.keyword.strip():
             pattern = _like_pattern(flt.keyword.strip())
             stmt = stmt.where(

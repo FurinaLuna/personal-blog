@@ -39,6 +39,13 @@ export interface ArticleSummary {
   series_order: number
   tags: TagBrief[]
   comment_count: number
+  /**
+   * 已排期但还没到发布时间（后端派生字段）。
+   *
+   * 这类文章的 `status` 仍是 `published`，只是 `published_at` 在未来。
+   * 后台靠它显示「定时发布」，否则界面写「已发布」而前台搜不到，很费解。
+   */
+  is_scheduled: boolean
 }
 
 export interface ArticleDetail extends ArticleSummary {
@@ -57,6 +64,13 @@ export interface ArticlePayload {
   content_md: string
   cover_image?: string | null
   status?: ArticleStatus
+  /**
+   * 发布时间（ISO 字符串）。
+   *
+   * 传**未来时间**即为定时发布：到点前对访客不可见（详情 404、列表不出现、
+   * 不接受评论），到点后自动浮现，不需要任何定时任务。
+   */
+  published_at?: string | null
   is_top?: boolean
   allow_comment?: boolean
   category_id?: number | null

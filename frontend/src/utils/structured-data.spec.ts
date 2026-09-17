@@ -41,6 +41,7 @@ function makeArticle(overrides: Partial<ArticleDetail> = {}): ArticleDetail {
       { id: 4, name: 'SQL', slug: 'sql' },
     ],
     comment_count: 3,
+    is_scheduled: false,
     content_md: '# 起因',
     prev: null,
     next: null,

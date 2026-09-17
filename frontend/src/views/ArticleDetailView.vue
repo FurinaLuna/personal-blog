@@ -176,12 +176,18 @@ watch(
           >
             {{ article.data.value.category.name }}
           </RouterLink>
+          <!-- 非公开状态才显示徽标：已发布/定时发布对作者都是「你能看到但访客未必」 -->
           <span
-            v-if="article.data.value.status !== 'published'"
+            v-if="article.data.value.status !== 'published' || article.data.value.is_scheduled"
             class="rounded-md px-2 py-1 font-medium"
-            :class="statusBadgeClass(article.data.value.status)"
+            :class="statusBadgeClass(article.data.value.status, article.data.value.is_scheduled)"
           >
-            {{ statusLabel(article.data.value.status, { preview: true }) }}
+            {{
+              statusLabel(article.data.value.status, {
+                preview: true,
+                scheduled: article.data.value.is_scheduled,
+              })
+            }}
           </span>
         </div>
 

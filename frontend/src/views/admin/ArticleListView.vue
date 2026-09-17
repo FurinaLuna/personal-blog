@@ -151,8 +151,11 @@ onMounted(() => {
                   </div>
                 </td>
                 <td class="px-4 py-3">
-                  <span class="rounded-md px-2 py-0.5 text-xs" :class="statusBadgeClass(item.status)">
-                    {{ statusLabel(item.status) }}
+                  <span
+                    class="rounded-md px-2 py-0.5 text-xs"
+                    :class="statusBadgeClass(item.status, item.is_scheduled)"
+                  >
+                    {{ statusLabel(item.status, { scheduled: item.is_scheduled }) }}
                   </span>
                 </td>
                 <td class="px-4 py-3 text-right text-ink-soft">{{ item.view_count }}</td>
@@ -202,9 +205,9 @@ onMounted(() => {
               </RouterLink>
               <span
                 class="shrink-0 rounded-md px-2 py-0.5 text-xs"
-                :class="statusBadgeClass(item.status)"
+                :class="statusBadgeClass(item.status, item.is_scheduled)"
               >
-                {{ statusLabel(item.status) }}
+                {{ statusLabel(item.status, { scheduled: item.is_scheduled }) }}
               </span>
             </div>
 

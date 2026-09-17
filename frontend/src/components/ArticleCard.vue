@@ -50,11 +50,11 @@ function warm(): void {
             置顶
           </span>
           <span
-            v-if="article.status !== 'published'"
+            v-if="article.status !== 'published' || article.is_scheduled"
             class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium"
-            :class="statusBadgeClass(article.status)"
+            :class="statusBadgeClass(article.status, article.is_scheduled)"
           >
-            {{ statusLabel(article.status) }}
+            {{ statusLabel(article.status, { scheduled: article.is_scheduled }) }}
           </span>
           <RouterLink
             v-if="article.category"

@@ -39,12 +39,46 @@ const form = ref({
   content_md: '',
   cover_image: '',
   status: 'draft' as ArticleStatus,
+  /** 发布时间（ISO，UTC）。空串表示「没设过」。 */
+  published_at: '',
   is_top: false,
   allow_comment: true,
   category_id: null as number | null,
   series_id: null as number | null,
   series_order: 0,
   tags: [] as string[],
+})
+
+/**
+ * `<input type="datetime-local">` 与 ISO 字符串之间的双向桥。
+ *
+ * 两个格式互不兼容，转换必须显式做：
+ * - 控件要的是**本地时间** `YYYY-MM-DDTHH:mm`（不能带 Z）；
+ * - 接口要的是 ISO（带时区）。
+ *
+ * 直接 `new Date(iso)` 再取本地分量，浏览器会自动完成时区换算——
+ * 作者在 +08:00 填「明早 9 点」，存进去就是 01:00Z，展示回来还是本地 9 点。
+ */
+const publishAtLocal = computed({
+  get(): string {
+    const iso = form.value.published_at
+    if (!iso) return ''
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return ''
+    // 减去时区偏移再取 ISO 前缀，得到控件要的本地时间串
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    return local.toISOString().slice(0, 16)
+  },
+  set(value: string) {
+    // 控件给的是本地时间，`new Date('2026-09-20T09:00')` 在浏览器里按本地时区解释
+    form.value.published_at = value ? new Date(value).toISOString() : ''
+  },
+})
+
+/** 表单里是不是一个「排在未来」的时间。 */
+const isScheduledForm = computed(() => {
+  if (form.value.status !== 'published' || !form.value.published_at) return false
+  return new Date(form.value.published_at).getTime() > Date.now()
 })
 // 标签输入交互（键盘语义/去重/上限）交给 useTagInput；
 // 通过桥接 computed 让标签仍属于 form，草稿快照与提交 payload 结构不变
@@ -124,6 +158,7 @@ async function loadArticle(): Promise<void> {
       content_md: detail.content_md,
       cover_image: detail.cover_image ?? '',
       status: detail.status,
+      published_at: detail.published_at ?? '',
       is_top: detail.is_top,
       allow_comment: detail.allow_comment,
       category_id: detail.category?.id ?? null,
@@ -175,6 +210,9 @@ function buildPayload(status: ArticleStatus) {
     content_md: form.value.content_md,
     cover_image: form.value.cover_image.trim() || null,
     status,
+    // 始终显式传：空串 → null（清掉排期，回到「立即发布/不设时间」）。
+    // 不传的话后端会走「不修改」分支，作者就没法取消一个已设定的排期时间。
+    published_at: form.value.published_at || null,
     is_top: form.value.is_top,
     allow_comment: form.value.allow_comment,
     category_id: form.value.category_id,
@@ -229,6 +267,9 @@ async function save(status: ArticleStatus): Promise<void> {
   // 发布一篇新文章后下拉框仍显示"草稿"、按钮仍显示"发布"，
   // 作者无法确认到底发出去没有，很可能再点一次或跑去草稿箱里找。
   form.value.status = status
+  // 发布时间同理，而且这里**必须**以后端返回值为准：留空提交时后端会补上
+  // 「现在」，不回填的话输入框一直空着，作者会以为没设上时间。
+  form.value.published_at = saved.published_at ?? ''
 }
 
 onMounted(async () => {
@@ -355,6 +396,25 @@ watch(
               <option value="archived">已归档</option>
             </select>
           </label>
+
+          <!-- 定时发布：填一个未来的时间即可。用 <input type="datetime-local">
+               而不是自己搓日期选择器——原生控件自带时区处理、键盘输入与移动端适配。 -->
+          <label class="mt-3 block text-xs text-ink-soft">
+            发布时间
+            <input
+              v-model="publishAtLocal"
+              type="datetime-local"
+              class="input mt-1.5"
+              aria-label="发布时间（留空表示立即发布）"
+            />
+          </label>
+          <p class="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+            <template v-if="isScheduledForm">
+              到点前访客看不到这篇文章（详情 404、不出现在列表、不接受评论），
+              到点后自动出现，不需要你回来手动发布。
+            </template>
+            <template v-else>留空表示立即发布；填未来时间即为定时发布。</template>
+          </p>
 
           <label class="mt-3 flex items-center gap-2 text-sm text-ink-soft">
             <input v-model="form.is_top" type="checkbox" class="rounded border-border" />

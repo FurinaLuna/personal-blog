@@ -69,3 +69,28 @@ describe('emptyPage', () => {
     expect(second.items).toEqual([])
   })
 })
+
+describe('定时发布的展示', () => {
+  it('已发布但未到点：文案是「定时发布」而不是「已发布」', () => {
+    // 界面上两者都是 status=published，不区分的话前台搜不到会让人以为是自己搞错了
+    expect(statusLabel('published', { scheduled: true })).toBe('定时发布')
+  })
+
+  it('作者预览视角下附带「仅你可见」', () => {
+    expect(statusLabel('published', { scheduled: true, preview: true })).toBe('定时发布（仅你可见）')
+  })
+
+  it('定时发布用独立配色，与普通「已发布」区分开', () => {
+    expect(statusBadgeClass('published', true)).not.toBe(statusBadgeClass('published', false))
+  })
+
+  it('scheduled 只对 published 生效，草稿不会被误标', () => {
+    expect(statusLabel('draft', { scheduled: true })).toBe('草稿')
+    expect(statusBadgeClass('draft', true)).toBe(statusBadgeClass('draft', false))
+  })
+
+  it('不传 scheduled 时行为完全不变', () => {
+    expect(statusLabel('published')).toBe('已发布')
+    expect(statusBadgeClass('published')).toBe(statusBadgeClass('published', false))
+  })
+})

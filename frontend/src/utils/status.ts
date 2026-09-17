@@ -17,6 +17,10 @@ export interface StatusMeta {
 }
 
 const NEUTRAL_BADGE = 'bg-surface-muted text-ink-soft'
+/** 定时发布是「已发布」的一个子状态，用独立配色让它一眼可辨 */
+const SCHEDULED_BADGE = 'bg-sky-50 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200'
+const SCHEDULED_LABEL = '定时发布'
+const SCHEDULED_PREVIEW_LABEL = '定时发布（仅你可见）'
 
 const META: Record<ArticleStatus, StatusMeta> = {
   published: {
@@ -40,6 +44,13 @@ const META: Record<ArticleStatus, StatusMeta> = {
 export interface StatusLabelOptions {
   /** 作者视角：草稿文案变成「仅你可见」，避免作者以为访客也看得到 */
   preview?: boolean
+  /**
+   * 已排期但还没到发布时间。
+   *
+   * 后台列表里这类文章的 `status` 就是 `published`，不额外标记的话
+   * 界面显示「已发布」而前台又搜不到，作者会以为是自己搞错了。
+   */
+  scheduled?: boolean
 }
 
 /**
@@ -49,12 +60,17 @@ export interface StatusLabelOptions {
  * 界面降级成显示原始值，比整块徽标消失更容易发现。
  */
 export function statusLabel(status: ArticleStatus | string, options: StatusLabelOptions = {}): string {
+  // 定时发布优先于普通状态：它描述的是「什么时候可见」，比「已发布」更具体
+  if (options.scheduled && status === 'published') {
+    return options.preview ? SCHEDULED_PREVIEW_LABEL : SCHEDULED_LABEL
+  }
   const meta = META[status as ArticleStatus]
   if (!meta) return status
   return options.preview ? meta.previewLabel : meta.label
 }
 
 /** 状态徽标配色；未知状态用中性色。 */
-export function statusBadgeClass(status: ArticleStatus | string): string {
+export function statusBadgeClass(status: ArticleStatus | string, scheduled = false): string {
+  if (scheduled && status === 'published') return SCHEDULED_BADGE
   return META[status as ArticleStatus]?.badgeClass ?? NEUTRAL_BADGE
 }

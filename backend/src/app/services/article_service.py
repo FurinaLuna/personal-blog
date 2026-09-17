@@ -51,6 +51,47 @@ ALL_STATUSES: tuple[ArticleStatus, ...] = (
 )
 
 
+def _resolve_published_at(status: ArticleStatus, requested: datetime | None) -> datetime | None:
+    """决定文章最终落库的 ``published_at``。
+
+    规则：
+    - 显式传了时间就以它为准（**未来时间即定时发布**）；
+    - 没传但状态是「已发布」→ 立刻发布，取当前时间；
+    - 其余情况（草稿 / 归档）→ 不设发布时间。
+
+    还必须把时区归一成 UTC：接口可能收到带偏移的时间（``+08:00``）或
+    不带时区的裸时间。前者要换算，后者按 UTC 解释——混着存会让
+    「谁先谁后」的比较结果取决于服务器时区，是最难查的一类 bug。
+    """
+    if requested is not None:
+        return requested.astimezone(UTC) if requested.tzinfo else requested.replace(tzinfo=UTC)
+    if status is ArticleStatus.PUBLISHED:
+        return datetime.now(UTC)
+    return None
+
+
+def is_publicly_visible(article: Article) -> bool:
+    """这篇文章此刻是否对**公众**可见（不需要登录就能看）。
+
+    三态语义：
+
+    - ``draft``：不可见；
+    - ``published``：还要看 ``published_at`` 到了没有——排在未来的文章
+      就是**定时发布**，到点前与草稿同等对待；
+    - ``archived``：可见。归档只是「不做列表曝光」，直达链接仍然有效，
+      这是项目一开始就定下的语义，别在这里改掉。
+
+    抽成模块级函数是因为评论接口也要用同一个口径——两处各写一遍，
+    迟早会出现「文章 404 但评论区能打开」这种不一致（草稿评论泄露
+    就是这么来的）。
+    """
+    if article.status is ArticleStatus.DRAFT:
+        return False
+    if article.status is ArticleStatus.PUBLISHED:
+        return article.published_at is not None and article.published_at <= datetime.now(UTC)
+    return True
+
+
 def visible_link_statuses(viewer: User | None) -> tuple[ArticleStatus, ...]:
     """详情查询用的状态白名单。
 
@@ -119,8 +160,8 @@ class ArticleService:
 
     @staticmethod
     def _can_view(article: Article, viewer: User | None) -> bool:
-        """草稿只有作者本人和站长能看。"""
-        if article.status is not ArticleStatus.DRAFT:
+        """对公众可见的文章谁都能看；草稿与「未到发布时间的定时文章」只有作者本人和站长能看。"""
+        if is_publicly_visible(article):
             return True
         if viewer is None:
             return False
@@ -145,7 +186,11 @@ class ArticleService:
         author_id: int | None = None,
         sort: ArticleSort = ArticleSort.LATEST,
     ) -> Page[ArticleSummary]:
-        """前台列表：只返回已发布文章。"""
+        """前台列表：只返回已发布文章，且**已到发布时间**。
+
+        ``visible_at`` 这个条件就是定时发布的全部实现：排在未来时刻的文章
+        不会出现在列表里，到点之后自然浮现——不需要定时任务去改状态。
+        """
         flt = build_article_filter(keyword=keyword, category=category, tag=tag, author_id=author_id)
         scoped = ArticleFilter(
             keyword=flt.keyword,
@@ -154,6 +199,7 @@ class ArticleService:
             category_slug=flt.category_slug,
             tag_slug=flt.tag_slug,
             author_id=flt.author_id,
+            visible_at=datetime.now(UTC),
         )
         return await self._paginate(scoped, ArticleSorting(sort=sort), page_params)
 
@@ -325,7 +371,7 @@ class ArticleService:
             allow_comment=payload.allow_comment,
             series_order=payload.series_order,
             reading_time=estimate_reading_time(payload.content_md),
-            published_at=datetime.now(UTC) if payload.status is ArticleStatus.PUBLISHED else None,
+            published_at=_resolve_published_at(payload.status, payload.published_at),
             author=author,
             category=category,
             series=series,
@@ -365,8 +411,18 @@ class ArticleService:
             # 显式传 null 表示移出系列（FK 置空）；系列规则由 SeriesService 校验
             data["series"] = await self.series.ensure_series(data.pop("series_id"))
 
-        if data.get("status") is ArticleStatus.PUBLISHED and article.published_at is None:
-            # 首次发布时补上发布时间；之后反复切状态不会覆盖原发布时间
+        # 显式传了 published_at 就以它为准（未来时间 = 定时发布 / 改期）
+        if "published_at" in data:
+            requested = data.pop("published_at")
+            data["published_at"] = (
+                requested.astimezone(UTC)
+                if requested is not None and requested.tzinfo
+                else (requested.replace(tzinfo=UTC) if requested is not None else None)
+            )
+        elif data.get("status") is ArticleStatus.PUBLISHED and article.published_at is None:
+            # 首次发布且没指定时间：立刻发布。
+            # 注意是 elif——显式传了时间就不能被这里覆盖掉，
+            # 否则「设定一个未来的发布时间」会被无声地改成「现在」。
             data["published_at"] = datetime.now(UTC)
 
         # 按约定过滤 None：只允许 NULLABLE_FIELDS 里的字段被清空
