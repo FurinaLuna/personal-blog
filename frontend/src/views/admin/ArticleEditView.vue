@@ -214,6 +214,11 @@ async function save(status: ArticleStatus): Promise<void> {
   }
   // 后端可能会规范化 slug，回填以免下次保存又用旧的
   form.value.slug = saved.slug
+  // 状态也必须回填。状态是从「点了哪个按钮」传进来的参数，但界面读的是
+  // form.status（下拉框的 v-model、按钮文案都由它驱动）。不回填的话，
+  // 发布一篇新文章后下拉框仍显示"草稿"、按钮仍显示"发布"，
+  // 作者无法确认到底发出去没有，很可能再点一次或跑去草稿箱里找。
+  form.value.status = status
 }
 
 onMounted(async () => {

@@ -355,6 +355,51 @@ class TestDetail:
         ]
         assert after == before + 1
 
+    async def test_view_does_not_touch_updated_at(
+        self, client: AsyncClient, published_article: dict[str, object]
+    ) -> None:
+        """阅读量变化不是内容修改，不能改 updated_at。
+
+        列上的 ``onupdate`` 对 Core ``update()`` 同样生效，早先没显式钉住它，
+        于是**读一次文章就改一次 updated_at**。后果有两个，都是用户可见的：
+        后台默认排序 ``sort=updated`` 实际变成「最近被看过的」，热门旧文会压过
+        刚编辑过的；sitemap 的 ``<lastmod>`` 每次访问都变，等于告诉爬虫
+        全站天天在改。
+        """
+        first = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        assert first["view_count"] == published_article["view_count"] + 1
+
+        # 再读几次，updated_at 必须纹丝不动
+        for _ in range(2):
+            later = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        assert later["view_count"] > first["view_count"]
+        assert later["updated_at"] == first["updated_at"]
+
+    async def test_like_does_not_touch_updated_at(
+        self, client: AsyncClient, published_article: dict[str, object]
+    ) -> None:
+        """点赞同理：计数变化不该被当成内容更新。"""
+        before = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        await client.post(f"/api/v1/articles/{published_article['id']}/like")
+        after = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        assert after["updated_at"] == before["updated_at"]
+
+    async def test_editing_does_touch_updated_at(
+        self,
+        client: AsyncClient,
+        published_article: dict[str, object],
+        author_headers: dict[str, str],
+    ) -> None:
+        """反向断言：真正的内容修改必须更新 updated_at，别修过头。"""
+        before = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        await client.patch(
+            f"/api/v1/articles/{published_article['id']}",
+            json={"summary": "改过的摘要"},
+            headers=author_headers,
+        )
+        after = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        assert after["updated_at"] > before["updated_at"]
+
     async def test_missing_article_returns_404(self, client: AsyncClient) -> None:
         assert (await client.get("/api/v1/articles/no-such-slug")).status_code == 404
 

@@ -36,6 +36,12 @@ class CommentService:
 
         登录的作者/站长能看到待审核评论（否则自己回复完看不到会很困惑），
         访客只看到已审核的。
+
+        **草稿的评论对非staff一律 404**，与详情接口的口径保持一致。
+        这里曾经只判 ``article is None``：结果是草稿文章本身匿名访问正确返回 404，
+        但 ``GET /comments/article/{id}`` 返回 200 —— 任何人都能枚举 id 读到
+        未发布文章下的评论（评论者昵称、网站、正文），把「草稿用 404 藏起来」
+        这个决定整个绕过去了。
         """
         article = await self.articles.get(article_id)
         if article is None:
@@ -44,6 +50,10 @@ class CommentService:
         is_staff = viewer is not None and (
             viewer.role is UserRole.ADMIN or article.author_id == viewer.id
         )
+        # 草稿只对 staff 可见；对其他人一律按「不存在」处理，不泄露它的存在性
+        if article.status is ArticleStatus.DRAFT and not is_staff:
+            raise NotFoundError("文章不存在")
+
         roots = await self.comments.list_roots_for_article(article_id, approved_only=not is_staff)
         return [self._to_read(root, include_pending=is_staff) for root in roots]
 

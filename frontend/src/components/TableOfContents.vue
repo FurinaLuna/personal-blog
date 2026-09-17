@@ -5,7 +5,7 @@
  * 用 IntersectionObserver 而不是监听 scroll 事件：前者由浏览器在合成线程计算，
  * 不会因为滚动而频繁触发 JS，长文章的滚动流畅度差距很明显。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { TocItem } from '@/utils/markdown'
 
@@ -81,6 +81,27 @@ onMounted(() => {
     }
   })
 })
+
+/**
+ * 文章换了一篇时重建观察器。
+ *
+ * 这是真实踩过的坑：`onMounted` 只会在组件**首次挂载**时跑一次，而从
+ * 文章 A 点进文章 B 时（下一篇 / 系列 / 相关阅读）走的是同一个路由记录，
+ * `App.vue` 的 `<component :is="Page" />` 没有 `:key`，Vue 会复用组件实例、
+ * 不重新挂载。正文由 `v-html` 整体换掉，可观察器还盯着**已经被移除的旧标题**，
+ * 结果是跳转之后目录高亮彻底不动了，必须整页刷新才恢复。
+ *
+ * `nextTick` 而不是 `requestAnimationFrame`：这里要的是「v-html 的新节点
+ * 已经进 DOM」，nextTick 正是这个语义；rAF 只保证「下一帧」，
+ * 在快速连续跳转时有可能早于 DOM 更新。
+ */
+watch(
+  () => props.items,
+  () => {
+    activeId.value = ''
+    void nextTick(() => setupObserver())
+  },
+)
 
 onBeforeUnmount(() => observer?.disconnect())
 </script>

@@ -341,13 +341,19 @@ class ArticleRepository(BaseRepository[Article]):
         - 配合 ``set_committed_value``：把新值直接告诉 ORM 并标记为「已提交」，
           这样响应里能拿到新计数，也不会反过来生成一条多余的 UPDATE。
 
+        ``updated_at`` 必须显式钉住（``updated_at=Article.updated_at``）：
+        列上的 ``onupdate`` 对 Core ``update()`` 同样生效，不钉住的话**读一次文章
+        就会改一次 updated_at**。后果是后台默认排序 ``sort=updated`` 变成
+        「最近被看过的」，热门旧文会压过刚编辑过的；同时 sitemap 的 ``<lastmod>``
+        每次访问都变，等于告诉爬虫全站天天在改。计数变化不是内容修改。
+
         Returns:
             自增后的阅读量。
         """
         await self.session.execute(
             update(Article)
             .where(Article.id == article.id)
-            .values(view_count=Article.view_count + 1)
+            .values(view_count=Article.view_count + 1, updated_at=Article.updated_at)
             .execution_options(synchronize_session=False)
         )
         new_value = (article.view_count or 0) + 1
@@ -355,11 +361,11 @@ class ArticleRepository(BaseRepository[Article]):
         return new_value
 
     async def increment_like(self, article: Article) -> int:
-        """原子自增点赞数，说明同 ``increment_view``。"""
+        """原子自增点赞数，说明同 ``increment_view``（含 updated_at 必须钉住的理由）。"""
         await self.session.execute(
             update(Article)
             .where(Article.id == article.id)
-            .values(like_count=Article.like_count + 1)
+            .values(like_count=Article.like_count + 1, updated_at=Article.updated_at)
             .execution_options(synchronize_session=False)
         )
         new_value = (article.like_count or 0) + 1

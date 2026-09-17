@@ -49,7 +49,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             await session.commit()
         except Exception:
             await session.rollback()
-            logger.exception("初始化数据失败，应用继续启动但可能缺少默认账号")
+            # 日志必须与实际行为一致：这里是 raise，应用**不会**启动。
+            # 之前写的是「应用继续启动但可能缺少默认账号」，一旦真出事，
+            # 看日志的人会以为只是缺个账号，而进程其实已经退出了。
+            logger.exception("初始化数据失败，应用将拒绝启动（见上方异常原因）")
             raise
 
     logger.info("%s 已启动（env=%s）", settings.app_name, settings.app_env)

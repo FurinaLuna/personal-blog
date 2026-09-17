@@ -93,7 +93,7 @@ class CommentCreate(BaseModel):
         if not parts.netloc:
             raise ValueError("网站地址格式不正确")
         try:
-            parts.port
+            _ = parts.port
         except ValueError as exc:
             raise ValueError("网站地址格式不正确") from exc
         return candidate

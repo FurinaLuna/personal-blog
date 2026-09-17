@@ -323,6 +323,46 @@ class TestVisibility:
         ).json()
         assert {item["id"] for item in staff_view} == {pending["id"], approved["id"]}
 
+    async def test_draft_comments_not_readable_by_guest(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """草稿的评论列表对非 staff 必须 404，与文章详情的口径一致。
+
+        曾经只判「文章存不存在」：草稿文章本身匿名访问正确返回 404，
+        但评论接口返回 200，任何人都能枚举 id 读到未发布文章下的评论，
+        「用 404 把草稿藏起来」这个决定就被绕过去了。
+        """
+        draft = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+
+        # 文章详情本身是 404
+        assert (await client.get(f"/api/v1/articles/{draft['id']}")).status_code == 404
+        # 评论列表也必须 404，而不是 200 + 空数组
+        response = await client.get(f"/api/v1/comments/article/{draft['id']}")
+        assert response.status_code == 404
+
+    async def test_draft_comments_readable_by_author(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """作者自己要能看自己的草稿评论区，否则没法先审后发。"""
+        draft = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+        response = await client.get(
+            f"/api/v1/comments/article/{draft['id']}", headers=author_headers
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+
 
 class TestModeration:
     async def test_moderation_list_requires_author(

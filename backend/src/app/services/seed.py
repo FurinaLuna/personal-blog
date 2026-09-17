@@ -236,26 +236,39 @@ async def seed_site_profile(session: AsyncSession) -> SiteProfile:
 
 
 async def seed_demo_content(session: AsyncSession, admin: User) -> None:
-    """写入演示文章。已有文章时直接跳过。"""
+    """写入演示文章。已有文章时直接跳过。
+
+    分类与标签**必须复用已存在的行**，不能无脑 INSERT：它们的 name 都是
+    ``unique=True``，而「文章数为 0」并不蕴含「分类标签表是空的」。
+    踩过的路径：站长把演示文章删光 → 下次启动 here 判定文章数为 0 →
+    再去插一遍同名分类 → ``IntegrityError`` → lifespan 回滚并重新抛出 →
+    **应用直接起不来**。而 SEED_DEMO_DATA 默认就是 true。
+    """
     from sqlalchemy import func, select
 
     existing = await session.execute(select(func.count()).select_from(Article))
     if int(existing.scalar_one()) > 0:
         return
 
-    # 分类
+    # 分类：按 slug 复用（slug 是唯一键，比 name 更稳定）
     category_map: dict[str, Category] = {}
     for name, slug, description, order in DEMO_CATEGORIES:
-        category_map[slug] = Category(
-            name=name, slug=slug, description=description, sort_order=order
-        )
-        session.add(category_map[slug])
+        found = await session.execute(select(Category).where(Category.slug == slug))
+        category = found.scalars().first()
+        if category is None:
+            category = Category(name=name, slug=slug, description=description, sort_order=order)
+            session.add(category)
+        category_map[slug] = category
 
-    # 标签
+    # 标签：按 name 复用（Tag.name 唯一，slug 会退让成 -2 之类）
     tag_map: dict[str, Tag] = {}
     for name in DEMO_TAGS:
-        tag_map[name] = Tag(name=name, slug=slugify(name, fallback_prefix="tag"))
-        session.add(tag_map[name])
+        found = await session.execute(select(Tag).where(Tag.name == name))
+        tag = found.scalars().first()
+        if tag is None:
+            tag = Tag(name=name, slug=slugify(name, fallback_prefix="tag"))
+            session.add(tag)
+        tag_map[name] = tag
 
     await session.flush()
 
