@@ -91,19 +91,32 @@ async function removeArticle(): Promise<void> {
   await router.push('/')
 }
 
+/**
+ * 相关文章请求的「代次」标记。
+ *
+ * 正文由 useAsyncData 内部的请求 id 保护，但 related 是裸写的：
+ * 快速连点两篇（A → B → C）时，B 的响应可能后于 C 的到达，
+ * 于是 C 的正文下面挂着 B 的推荐 —— 内容是错的，而且没有任何报错，
+ * 是最难被发现的一类 bug。每次切换文章自增一次，回来时代次对不上就丢弃。
+ */
+let relatedGeneration = 0
+
 watch(
   () => route.params.slug,
   () => {
     // 切换文章时重置页面级状态，否则上一篇的"已点赞"会串到这一篇
     liked.value = false
     related.value = []
+    const generation = ++relatedGeneration
     void article.run().then(() => {
       const item = article.data.value
-      if (!item) return
+      if (!item || generation !== relatedGeneration) return
       // 相关文章是「锦上添花」：失败只记录不打扰，正文阅读不受影响
       articleApi
         .related(item.id)
         .then((list) => {
+          // 迟到的响应直接丢弃，不要覆盖当前文章的结果
+          if (generation !== relatedGeneration) return
           related.value = list
         })
         .catch(() => {

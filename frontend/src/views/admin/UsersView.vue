@@ -132,6 +132,13 @@ onMounted(() => {
         <div v-for="index in 3" :key="index" class="skeleton h-10 rounded-lg"></div>
       </div>
 
+      <!-- 失败态必须与「空列表」分开：否则站长看到的是「0 个用户」，
+           分不清是还没有别的用户还是请求挂了 -->
+      <div v-else-if="auth.usersError" class="p-6 text-center text-sm text-ink-soft" role="alert">
+        <p>{{ auth.usersError }}</p>
+        <button type="button" class="btn--ghost mt-4" @click="auth.fetchUsers()">重试</button>
+      </div>
+
       <div v-else class="hidden overflow-x-auto md:block">
         <table class="w-full min-w-[680px] text-sm">
           <thead class="bg-surface-muted text-xs text-ink-soft">
@@ -208,7 +215,7 @@ onMounted(() => {
       </div>
 
       <!-- 移动端：卡片列表（表格 min-w 680 在窄屏只能横向滚动） -->
-      <ul v-if="!auth.usersLoading" class="divide-y divide-border md:hidden">
+      <ul v-if="!auth.usersLoading && !auth.usersError" class="divide-y divide-border md:hidden">
         <li v-for="item in auth.users" :key="item.id" class="p-4">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">

@@ -195,10 +195,29 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
       <p v-if="!canComment" class="text-sm text-ink-soft">本站已关闭游客评论，登录后即可参与讨论。</p>
 
       <template v-else>
+        <!-- placeholder 不是可访问名称：读屏软件可能完全忽略它，而且用户一输入就消失。
+             这里用 aria-label 补上名称，同时保留现有的纯 placeholder 视觉设计。 -->
         <div v-if="!auth.isAuthenticated" class="mb-3 grid gap-3 sm:grid-cols-3">
-          <input v-model="form.author_name" class="input" placeholder="昵称（必填）" maxlength="50" />
-          <input v-model="form.author_email" class="input" type="email" placeholder="邮箱（选填，不公开）" />
-          <input v-model="form.author_site" class="input" placeholder="网站（选填）" />
+          <input
+            v-model="form.author_name"
+            class="input"
+            placeholder="昵称（必填）"
+            aria-label="昵称（必填）"
+            maxlength="50"
+          />
+          <input
+            v-model="form.author_email"
+            class="input"
+            type="email"
+            placeholder="邮箱（选填，不公开）"
+            aria-label="邮箱（选填，不公开）"
+          />
+          <input
+            v-model="form.author_site"
+            class="input"
+            placeholder="网站（选填）"
+            aria-label="网站（选填）"
+          />
         </div>
         <p v-else class="mb-3 text-sm text-ink-soft">
           以 <span class="font-medium text-ink">{{ auth.displayName }}</span> 的身份发表
@@ -208,6 +227,7 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
           v-model="form.content"
           class="input min-h-[104px] resize-y"
           placeholder="说点什么…"
+          aria-label="评论内容"
           maxlength="2000"
         />
 

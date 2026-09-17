@@ -6,7 +6,7 @@
  * 这个项目里写文章的人只有一个（站长自己），为一个用户引入几百 KB 的编辑器不划算。
  * 真需要更复杂的能力（协同编辑、公式、思维导图）再换，替换成本也就是这一个组件。
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useUpload } from '@/composables/useUpload'
 import { renderMarkdown } from '@/utils/markdown'
@@ -28,7 +28,41 @@ const fileInput = ref<HTMLInputElement | null>(null)
 /** 上传交互（校验/提示/计数）交给 useUpload；这里只负责把结果插入光标处 */
 const upload = useUpload()
 
-const html = computed(() => renderMarkdown(props.modelValue).html)
+/**
+ * 预览防抖。
+ *
+ * 整条渲染管线（marked 解析 → DOMPurify 消毒 → hljs 逐块高亮 → 重新序列化）
+ * 在一篇长文上是几十毫秒级。跟着每次按键同步跑，敲起来会明显发黏。
+ * 200ms 是「打字停顿」与「感觉不到延迟」之间的常用折中。
+ */
+const PREVIEW_DEBOUNCE_MS = 200
+
+/** 供预览使用的正文。与 modelValue 之间有防抖延迟。 */
+const previewSource = ref(props.modelValue)
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (previewTimer) clearTimeout(previewTimer)
+    previewTimer = setTimeout(() => {
+      previewSource.value = value
+    }, PREVIEW_DEBOUNCE_MS)
+  },
+)
+
+onBeforeUnmount(() => {
+  if (previewTimer) clearTimeout(previewTimer)
+})
+
+/**
+ * 预览 HTML。
+ *
+ * 注意：模板里必须用 `v-if` 而不是 `v-show` 控制它的挂载 —— computed 是惰性的，
+ * 只有真正被渲染时才会求值。用 `v-show` 的话子树照样渲染，**编辑模式下每敲一个字
+ * 都会白跑一遍完整渲染管线**（而 'edit' 正是默认模式）。
+ */
+const html = computed(() => renderMarkdown(previewSource.value).html)
 const charCount = computed(() => props.modelValue.length)
 
 /** 在光标处包裹一层语法；没有选中内容时插入占位文本并选中它，省一次手动选中 */
@@ -183,8 +217,16 @@ function onPaste(event: ClipboardEvent): void {
         >
           还没有内容。
         </div>
-        <!-- 与 MarkdownRenderer 一样，内容已由 utils/markdown.ts 消毒 -->
-        <div v-else class="prose prose-slate max-w-none dark:prose-invert" v-html="html" />
+        <!-- 与 MarkdownRenderer 一样，内容已由 utils/markdown.ts 消毒。
+
+             这里用 `v-else-if="mode !== 'edit'"` 而不是裸 `v-else`，是为了让
+             编辑模式下**根本不渲染**这个节点：computed 惰性求值，
+             节点不存在就不会去算 `html`，也就不会每敲一个字都跑一遍渲染管线。 -->
+        <div
+          v-else-if="mode !== 'edit'"
+          class="prose prose-slate max-w-none dark:prose-invert"
+          v-html="html"
+        />
       </div>
     </div>
 

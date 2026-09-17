@@ -84,8 +84,20 @@ onMounted(() => {
     <div class="card p-4">
       <h2 class="mb-3 text-sm font-medium text-ink">新建系列</h2>
       <div class="flex flex-wrap items-start gap-2">
-        <input v-model="newName" class="input w-48" placeholder="系列名称（如 SQLite 踩坑记）" maxlength="100" />
-        <input v-model="newDescription" class="input w-64" placeholder="一句话简介（选填）" maxlength="200" />
+        <input
+          v-model="newName"
+          class="input w-48"
+          placeholder="系列名称（如 SQLite 踩坑记）"
+          aria-label="系列名称"
+          maxlength="100"
+        />
+        <input
+          v-model="newDescription"
+          class="input w-64"
+          placeholder="一句话简介（选填）"
+          aria-label="系列简介（选填）"
+          maxlength="200"
+        />
         <button type="button" class="btn--primary" :disabled="action.running.value" @click="createSeries">
           {{ action.running.value ? '创建中…' : '创建' }}
         </button>
@@ -117,8 +129,14 @@ onMounted(() => {
       <ul v-else class="divide-y divide-border">
         <li v-for="item in series.data.value" :key="item.id" class="px-5 py-3">
           <div v-if="editingId === item.id" class="space-y-2">
-            <input v-model="editDraft.name" class="input" maxlength="100" />
-            <input v-model="editDraft.description" class="input" placeholder="简介" maxlength="200" />
+            <input v-model="editDraft.name" class="input" aria-label="系列名称" maxlength="100" />
+            <input
+              v-model="editDraft.description"
+              class="input"
+              placeholder="简介"
+              aria-label="系列简介"
+              maxlength="200"
+            />
             <div class="flex gap-2">
               <button type="button" class="btn--primary flex-1 text-xs" @click="saveEdit">保存</button>
               <button type="button" class="btn--ghost flex-1 text-xs" @click="editingId = null">取消</button>

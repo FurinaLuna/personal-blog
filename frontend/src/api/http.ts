@@ -173,34 +173,53 @@ function shouldSkipRefresh(config?: AxiosRequestConfig): boolean {
   return url.includes('/auth/login') || url.includes('/auth/token') || url.includes('/auth/refresh')
 }
 
+/**
+ * 强制登出：清掉凭证并回到登录页。
+ *
+ * 抽成函数是因为有两条路径需要它：续期失败，以及**续期成功但重放请求仍然 401**。
+ * 后者以前走不到这里，会出现「token 还在、user 还在、路由守卫继续放行，
+ * 但每个请求都 401、页面永远是空的」这种没有出口的状态。
+ */
+function forceLogout(): void {
+  tokenStore.clear()
+  // 用 replace 而不是 push：登出后不该还能按返回键回到需要登录的页面
+  if (!window.location.pathname.startsWith('/login')) {
+    const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+    window.location.replace(`/login?redirect=${redirect}`)
+  }
+}
+
 http.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const original = error.config as (AxiosRequestConfig & { _retried?: boolean }) | undefined
 
-    if (
-      error.response?.status === 401 &&
-      original &&
-      !original._retried &&
-      !shouldSkipRefresh(original) &&
-      tokenStore.refresh
-    ) {
-      original._retried = true
-      try {
-        refreshPromise = refreshPromise ?? refreshTokens()
-        const tokens = await refreshPromise
-        original.headers = { ...original.headers, Authorization: `Bearer ${tokens.access_token}` }
-        return await http.request(original)
-      } catch {
-        tokenStore.clear()
-        // 用 replace 而不是 push：登出后不该还能按返回键回到需要登录的页面
-        if (!window.location.pathname.startsWith('/login')) {
-          const redirect = encodeURIComponent(window.location.pathname + window.location.search)
-          window.location.replace(`/login?redirect=${redirect}`)
-        }
+    if (error.response?.status === 401 && original) {
+      // 已经续期并重放过一次还是 401：说明凭证本身已经死了
+      // （账号被停用 / 强制重新登录）。再刷新也没有意义，直接登出。
+      if (original._retried) {
+        forceLogout()
         return await Promise.reject(new ApiError('登录已过期，请重新登录', 401, 'token_expired'))
-      } finally {
-        refreshPromise = null
+      }
+
+      if (!shouldSkipRefresh(original) && tokenStore.refresh) {
+        original._retried = true
+        try {
+          refreshPromise = refreshPromise ?? refreshTokens()
+          const tokens = await refreshPromise
+          original.headers = {
+            ...original.headers,
+            Authorization: `Bearer ${tokens.access_token}`,
+          }
+          return await http.request(original)
+        } catch {
+          forceLogout()
+          return await Promise.reject(
+            new ApiError('登录已过期，请重新登录', 401, 'token_expired'),
+          )
+        } finally {
+          refreshPromise = null
+        }
       }
     }
 

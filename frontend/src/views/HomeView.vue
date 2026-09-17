@@ -191,6 +191,7 @@ onMounted(() => {
           class="input"
           type="search"
           placeholder="搜索标题、摘要或正文…"
+          aria-label="搜索文章"
           maxlength="100"
         />
         <button type="submit" class="btn--primary shrink-0">搜索</button>

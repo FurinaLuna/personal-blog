@@ -25,7 +25,15 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
-    <div v-if="!site.stats" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <!-- 失败态：必须显式区分「加载中」和「加载失败」。
+         以前两者共用同一个分支，接口一挂 KPI 卡片就永远停在骨架屏上，
+         既看不出出错了，也没有重试入口。 -->
+    <div v-if="site.statsError" class="card p-6 text-center text-sm text-ink-soft" role="alert">
+      <p>{{ site.statsError }}</p>
+      <button type="button" class="btn--ghost mt-4" @click="site.loadStats()">重试</button>
+    </div>
+
+    <div v-else-if="!site.stats" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div v-for="index in 4" :key="index" class="card p-5">
         <div class="skeleton h-3.5 w-16"></div>
         <div class="skeleton mt-3 h-7 w-12"></div>

@@ -109,9 +109,14 @@ export function useDraftAutosave<T>(options: DraftAutosaveOptions<T>) {
   function write(): void {
     if (!available.value || !options.enabled()) return
 
+    // 只取一次快照：以前为了「内容没变就不写」先 JSON.stringify 一遍，
+    // 真正落盘时又调了一次 snapshot()。两次调用之间表单可能已被改动，
+    // 于是「用来比对的」和「实际存下的」不是同一份内容，去重会误判。
+    let payload: T
     let payloadJson: string
     try {
-      payloadJson = JSON.stringify(options.snapshot())
+      payload = options.snapshot()
+      payloadJson = JSON.stringify(payload)
     } catch {
       // snapshot 里出现循环引用、BigInt 之类的问题：关掉自动保存，不要每 3 秒抛一次
       console.debug('[draft] 快照序列化失败，已停止自动保存')
@@ -128,7 +133,7 @@ export function useDraftAutosave<T>(options: DraftAutosaveOptions<T>) {
         JSON.stringify({
           savedAt: Date.now(),
           key: options.key(),
-          payload: options.snapshot(),
+          payload,
         } satisfies DraftSnapshot<T>),
       )
       lastWritten = payloadJson

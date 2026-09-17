@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 文章编辑器（新建 / 编辑共用）。 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { ApiError, articleApi, categoryApi, seriesApi, tagApi } from '@/api'
@@ -23,6 +23,14 @@ const articleId = computed(() => {
   return raw ? Number(raw) : null
 })
 const isEdit = computed(() => articleId.value !== null)
+
+/**
+ * 刚由「新建」保存成功后 replace 出来的 id。
+ *
+ * 用来把「我自己刚触发的路由变化」从「用户切到了另一篇文章」里区分出来：
+ * 前者不该重新拉取覆盖表单，后者必须。
+ */
+let justSavedId: number | null = null
 
 const form = ref({
   title: '',
@@ -208,8 +216,10 @@ async function save(status: ArticleStatus): Promise<void> {
   // 服务端已落库，本地快照完成使命：留着只会在下次打开时误报「有未保存内容」
   draft.clear()
 
-  // 新建时把 URL 换成编辑态，避免用户继续点"保存"又创建一篇重复文章
+  // 新建时把 URL 换成编辑态，避免用户继续点"保存"又创建一篇重复文章。
+  // 记下 id，让上面的 watch 知道这次路由变化是"自己人"，不必重新拉取。
   if (!isEdit.value) {
+    justSavedId = saved.id
     await router.replace(`/admin/articles/${saved.id}/edit`)
   }
   // 后端可能会规范化 slug，回填以免下次保存又用旧的
@@ -231,8 +241,30 @@ onMounted(async () => {
     console.debug('[article-edit] 标签列表加载失败，改为手动输入')
     allTags.value = []
   }
-  await loadArticle()
 })
+
+/**
+ * 跟随路由里的文章 id 加载。
+ *
+ * 以前只绑在 onMounted 上：组件实例被复用而 id 变化时（直接改地址栏、
+ * 或将来任何「从编辑器跳到另一个编辑器」的入口），表单会**静静地继续显示上一篇**，
+ * 而保存会 PATCH 到新 id 上 —— 一条链接之遥的数据丢失。
+ *
+ * 唯一的例外是「新建保存成功后 router.replace 成编辑态」那一次：
+ * 那时表单里已经是刚保存的内容，重新拉取只会白跑一趟，
+ * 还可能因为草稿时间戳比对弹出无意义的「恢复草稿」提示。
+ */
+watch(
+  articleId,
+  (id) => {
+    if (id !== null && id === justSavedId) {
+      justSavedId = null
+      return
+    }
+    void loadArticle()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -297,6 +329,7 @@ onMounted(async () => {
             v-model="form.title"
             class="input text-lg font-medium"
             placeholder="文章标题"
+            aria-label="文章标题"
             maxlength="200"
             @input="fieldErrors.title = ''"
           />
@@ -396,6 +429,7 @@ onMounted(async () => {
             v-model="newTagName"
             class="input"
             placeholder="输入后回车添加"
+            aria-label="添加标签"
             :list="'tag-suggestions'"
             @keydown="onTagKeydown"
             @blur="addTag(newTagName)"
@@ -412,6 +446,7 @@ onMounted(async () => {
             v-model="form.summary"
             class="input min-h-[88px] resize-y"
             placeholder="留空则自动从正文提取"
+            aria-label="文章摘要"
             maxlength="500"
           />
         </div>
@@ -453,7 +488,12 @@ onMounted(async () => {
 
         <div class="card p-4">
           <h3 class="mb-3 text-sm font-medium text-ink">URL 别名</h3>
-          <input v-model="form.slug" class="input font-mono text-xs" placeholder="留空自动生成" />
+          <input
+            v-model="form.slug"
+            class="input font-mono text-xs"
+            placeholder="留空自动生成"
+            aria-label="URL 别名"
+          />
           <p class="mt-2 text-xs text-ink-faint">
             已发布文章的别名一旦改动，原有外链会失效，请谨慎修改。
           </p>

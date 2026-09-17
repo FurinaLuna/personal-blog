@@ -79,7 +79,12 @@ onMounted(() => {
     <!-- 工具条 -->
     <div class="flex flex-wrap items-center gap-3">
       <form class="flex flex-1 gap-2 sm:max-w-md" @submit.prevent="reload()">
-        <input v-model="keyword" class="input" placeholder="搜索标题或正文…" />
+        <input
+          v-model="keyword"
+          class="input"
+          placeholder="搜索标题或正文…"
+          aria-label="搜索文章"
+        />
         <button type="submit" class="btn--ghost shrink-0">搜索</button>
       </form>
 

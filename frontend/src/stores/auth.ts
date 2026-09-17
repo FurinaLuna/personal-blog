@@ -5,8 +5,7 @@ import { computed, ref } from 'vue'
 import { ApiError, authApi, tokenStore } from '@/api'
 import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
-export const useAuthStore = defineStore('auth', () => {
-  const user = ref<User | null>(null)
+export const useAuthStore = defineStore('auth', () => {  const user = ref<User | null>(null)
   /** 是否已经尝试过恢复登录态（用于避免路由守卫在恢复完成前误判为未登录） */
   const restored = ref(false)
   const restoring = ref(false)
@@ -35,6 +34,30 @@ export const useAuthStore = defineStore('auth', () => {
   let restorePromise: Promise<void> | null = null
 
   /**
+   * 带重试的 /auth/me。
+   *
+   * 只对**瞬时**错误重试：401 / 403 是确定答案，重试没有意义，立刻抛出。
+   * 两次之间隔 400ms —— 足够跨过一次连接抖动或后端重启，
+   * 又短到用户感觉不到卡顿。
+   */
+  async function attemptRestore(attempts: number): Promise<User> {
+    let lastError: unknown
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await authApi.me()
+      } catch (error) {
+        lastError = error
+        // 确定性失败：凭证问题重试多少次都一样
+        if (error instanceof ApiError && (error.isUnauthorized || error.isForbidden)) throw error
+        if (attempt < attempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 400))
+        }
+      }
+    }
+    throw lastError
+  }
+
+  /**
    * 恢复登录态。
    *
    * 只在有 token 时才请求 /auth/me —— 否则未登录用户每次进站都会白白吃一个 401。
@@ -54,16 +77,25 @@ export const useAuthStore = defineStore('auth', () => {
 
       restoring.value = true
       try {
-        user.value = await authApi.me()
+        // 网络抖动时重试一次再下结论。这个请求是「进入后台的第一道门」，
+        // 一次瞬时 502 就把有登录态的作者弹回登录页，体验上非常像"被登出了"。
+        user.value = await attemptRestore(2)
       } catch (error) {
-        // 401 说明凭证已失效，其余错误（网络抖动）不清理，下次再试
         if (error instanceof ApiError && error.isUnauthorized) {
+          // 401 是**确定的**答案：凭证已失效
           tokenStore.clear()
+          user.value = null
+          restored.value = true
+        } else {
+          // 其余错误（断网 / 502 / 超时）是**不确定**的答案。
+          // 以前这里也置 restored = true，等于把「网络不好」永久缓存成
+          // 「你没登录」—— 之后守卫再也不会重试，用户只能刷新整页才能恢复。
+          // 保持 restored = false，下一次路由跳转就会自动再试一次。
+          user.value = null
+          restored.value = false
         }
-        user.value = null
       } finally {
         restoring.value = false
-        restored.value = true
       }
     }
 
@@ -115,11 +147,19 @@ export const useAuthStore = defineStore('auth', () => {
 
   const users = ref<User[]>([])
   const usersLoading = ref(false)
+  /** 用户列表加载失败的提示。为 null 表示没出错。 */
+  const usersError = ref<string | null>(null)
 
   async function fetchUsers(): Promise<void> {
     usersLoading.value = true
+    usersError.value = null
     try {
       users.value = await authApi.listUsers()
+    } catch (error) {
+      // 必须显式接管：否则请求失败时表格渲染成空列表、计数显示 0，
+      // 站长无法区分「还没有别的用户」和「请求挂了」，而且 rejection 无人处理。
+      usersError.value = error instanceof ApiError ? error.message : '用户列表加载失败'
+      users.value = []
     } finally {
       usersLoading.value = false
     }
@@ -154,6 +194,7 @@ export const useAuthStore = defineStore('auth', () => {
     displayName,
     users,
     usersLoading,
+    usersError,
     restore,
     login,
     logout,

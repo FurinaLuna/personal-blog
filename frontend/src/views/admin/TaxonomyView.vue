@@ -119,8 +119,19 @@ onMounted(() => {
       <div class="card p-4">
         <h2 class="mb-3 text-sm font-medium text-ink">新建分类</h2>
         <div class="space-y-2">
-          <input v-model="newCategory.name" class="input" placeholder="分类名称" maxlength="50" />
-          <input v-model="newCategory.description" class="input" placeholder="一句话描述（选填）" />
+          <input
+            v-model="newCategory.name"
+            class="input"
+            placeholder="分类名称"
+            aria-label="分类名称"
+            maxlength="50"
+          />
+          <input
+            v-model="newCategory.description"
+            class="input"
+            placeholder="一句话描述（选填）"
+            aria-label="分类描述（选填）"
+          />
           <button type="button" class="btn--primary w-full" :disabled="action.running.value" @click="createCategory">
             添加分类
           </button>
@@ -141,8 +152,13 @@ onMounted(() => {
         <ul v-else class="divide-y divide-border">
           <li v-for="item in categories.data.value" :key="item.id" class="px-4 py-3">
             <div v-if="editingCategoryId === item.id" class="space-y-2">
-              <input v-model="categoryDraft.name" class="input" />
-              <input v-model="categoryDraft.description" class="input" placeholder="描述" />
+              <input v-model="categoryDraft.name" class="input" aria-label="分类名称" />
+              <input
+                v-model="categoryDraft.description"
+                class="input"
+                placeholder="描述"
+                aria-label="分类描述"
+              />
               <div class="flex gap-2">
                 <button type="button" class="btn--primary flex-1 text-xs" @click="saveCategory">保存</button>
                 <button type="button" class="btn--ghost flex-1 text-xs" @click="editingCategoryId = null">
@@ -188,6 +204,7 @@ onMounted(() => {
             v-model="newTagName"
             class="input"
             placeholder="标签名称"
+            aria-label="标签名称"
             maxlength="50"
             @keydown.enter.prevent="createTag"
           />

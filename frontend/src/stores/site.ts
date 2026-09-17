@@ -2,7 +2,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { siteApi } from '@/api'
+import { ApiError, siteApi } from '@/api'
 import type { SiteProfile, SiteProfilePayload, SiteStats } from '@/types'
 
 const FALLBACK: SiteProfile = {
@@ -61,9 +61,24 @@ export const useSiteStore = defineStore('site', () => {
   }
 
   const stats = ref<SiteStats | null>(null)
+  /** 统计加载失败的提示。为 null 表示没出错。 */
+  const statsError = ref<string | null>(null)
+  const statsLoading = ref(false)
 
   async function loadStats(): Promise<void> {
-    stats.value = await siteApi.stats()
+    statsLoading.value = true
+    statsError.value = null
+    try {
+      stats.value = await siteApi.stats()
+    } catch (error) {
+      // 不接管异常的话，仪表盘的 KPI 卡片会永远停在骨架屏上：
+      // 模板的门槛是 `v-if="!site.stats"`，而失败后 stats 一直是 null，
+      // 既没有错误提示也没有重试入口，promise 的 rejection 也无人处理。
+      statsError.value = error instanceof ApiError ? error.message : '统计数据加载失败'
+      stats.value = null
+    } finally {
+      statsLoading.value = false
+    }
   }
 
   return {
@@ -75,6 +90,8 @@ export const useSiteStore = defineStore('site', () => {
     socialLinks,
     skills,
     stats,
+    statsError,
+    statsLoading,
     load,
     update,
     loadStats,

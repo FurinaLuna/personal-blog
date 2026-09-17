@@ -8,7 +8,7 @@
  * 复用同一个 `TableOfContents`，所以目录数据结构、高亮逻辑、缩进规则
  * 与桌面端完全一致，不会出现「两端长得不一样」的维护负担。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import TableOfContents from '@/components/TableOfContents.vue'
 import type { TocItem } from '@/utils/markdown'
@@ -17,6 +17,8 @@ const props = defineProps<{ items: TocItem[] }>()
 
 const open = ref(false)
 const button = ref<HTMLButtonElement | null>(null)
+/** 抽屉面板本身：打开时接住焦点，Tab 才不会跑到遮罩背后的正文上 */
+const panel = ref<HTMLElement | null>(null)
 
 const hasToc = computed(() => props.items.length > 1)
 
@@ -47,6 +49,18 @@ onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   lockScroll(false)
+})
+
+/**
+ * 抽屉开合时锁滚动并把焦点移进去。
+ *
+ * 以前只有 onBeforeUnmount 里调 lockScroll(false) —— 也就是**从没锁过**：
+ * 抽屉上写着 aria-modal="true"（声明自己是模态），可正文照样在背后滚动，
+ * 焦点也还停在那个浮动按钮上。声明了模态就必须兑现。
+ */
+watch(open, (isOpen) => {
+  lockScroll(isOpen)
+  if (isOpen) void nextTick(() => panel.value?.focus())
 })
 
 // 文章切换时目录会整体重建，直接收起，避免出现「上一篇文章的抽屉还开着」
@@ -83,10 +97,12 @@ watch(
       >
         <div
           v-if="open"
+          ref="panel"
           class="card fixed inset-x-4 bottom-24 z-50 max-h-[60vh] overflow-auto p-4 shadow-xl"
           role="dialog"
           aria-modal="true"
           aria-label="文章目录"
+          tabindex="-1"
         >
           <div class="mb-2 flex items-center justify-between">
             <p class="text-xs font-medium uppercase tracking-wide text-ink-faint">目录</p>
