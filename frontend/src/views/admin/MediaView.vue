@@ -125,6 +125,7 @@ onMounted(() => {
         multiple
         accept="image/*,.pdf,.zip,.txt,.md,.csv,.json,.docx,.xlsx,.pptx,.epub"
         class="hidden"
+        aria-label="选择要上传的文件"
         @change="onUploadChange"
       />
     </div>

@@ -368,7 +368,8 @@ watch(
 
         <div class="card p-4">
           <h3 class="mb-3 text-sm font-medium text-ink">分类</h3>
-          <select v-model="form.category_id" class="input">
+          <!-- 上方的 <h3> 只是视觉标题，读屏软件不会把它当成这个下拉框的名称 -->
+          <select v-model="form.category_id" class="input" aria-label="文章分类">
             <option :value="null">未分类</option>
             <option v-for="item in categories.data.value" :key="item.id" :value="item.id">
               {{ item.name }}
@@ -380,7 +381,7 @@ watch(
           <h3 class="mb-3 text-sm font-medium text-ink">
             系列 <span class="text-xs font-normal text-ink-faint">（技术连载 / 合集）</span>
           </h3>
-          <select v-model="form.series_id" class="input">
+          <select v-model="form.series_id" class="input" aria-label="所属系列">
             <option :value="null">未挂系列</option>
             <option v-for="item in seriesOptions.data.value" :key="item.id" :value="item.id">
               {{ item.name }}
@@ -482,6 +483,7 @@ watch(
             type="file"
             accept="image/*"
             class="hidden"
+            aria-label="上传封面图"
             @change="onCoverChange"
           />
         </div>

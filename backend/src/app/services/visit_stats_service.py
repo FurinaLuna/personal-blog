@@ -65,3 +65,22 @@ class VisitStatsService:
             views, uv = by_date.get(day, (0, 0))
             stats.append(DailyViewStats(date=day.isoformat(), views=views, unique_visitors=uv))
         return stats
+
+    async def prune(self, *, retention_days: int | None = None) -> int:
+        """删掉留存期之外的访问日志，返回删除行数。
+
+        为什么必须有这个操作：``record()`` 每次详情访问写一行，而读取只覆盖近
+        ``DAILY_STATS_MAX_DAYS`` 天。没有清理的话这张表只增不减——
+        单篇热门文章就能贡献几万行，一年下来几十万行，代价体现在备份体积、
+        迁移耗时和 ``VACUUM`` 时间上，而收益是零。
+
+        留存期默认为配置里的 ``VISIT_LOG_RETENTION_DAYS``（180 天，是读取窗口的
+        两倍，留出回头看的余地）；调用方也可以显式传值。
+        只 flush 不 commit，事务边界交给调用方。
+        """
+        days = retention_days if retention_days is not None else settings.visit_log_retention_days
+        if days <= 0:
+            # 显式关掉清理（或配成 0）时不动数据，避免误把整张表删空
+            return 0
+        cutoff = datetime.now(UTC).date() - timedelta(days=days)
+        return await self.visit_logs.delete_before(cutoff)

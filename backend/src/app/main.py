@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app import __version__
 from app.api.feed import router as feed_router
@@ -27,6 +28,7 @@ from app.db.base import Base
 from app.db.session import async_session_factory, engine
 from app.models import User  # noqa: F401 - 触发所有模型注册到 Base.metadata
 from app.services.seed import ensure_seed
+from app.services.visit_stats_service import VisitStatsService
 from app.utils.exceptions import DomainError, UnauthorizedError
 from app.utils.logging import get_request_id, setup_logging
 from app.utils.storage import storage
@@ -55,9 +57,32 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             logger.exception("初始化数据失败，应用将拒绝启动（见上方异常原因）")
             raise
 
+    await _prune_visit_logs()
+
     logger.info("%s 已启动（env=%s）", settings.app_name, settings.app_env)
     yield
     await engine.dispose()
+
+
+async def _prune_visit_logs() -> None:
+    """启动时清理过期的访问日志（尽力而为）。
+
+    放在启动而不是定时任务里：个人博客是单实例部署，没有调度器；
+    而这个操作是走索引的范围删除，在几十万行的量级上是毫秒级，
+    对启动时间没有可感知影响。
+
+    **失败绝不影响启动**：清理是维护动作，不是服务可用性的前提。
+    数据库暂时不可用时，宁可带着旧日志启动，也不能因为一个维护任务
+    把整个站点挡在门外。异常只记日志。
+    """
+    try:
+        async with async_session_factory() as session:
+            removed = await VisitStatsService(session).prune()
+            await session.commit()
+        if removed:
+            logger.info("已清理 %d 条超过留存期的访问日志", removed)
+    except Exception:
+        logger.warning("访问日志清理失败（不影响启动）", exc_info=True)
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
@@ -80,6 +105,30 @@ def _register_exception_handlers(app: FastAPI) -> None:
                 "request_id": get_request_id(),
             },
             headers=headers or None,
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def integrity_error_handler(_request: Request, exc: IntegrityError) -> JSONResponse:
+        """把数据库完整性约束冲突翻译成 409，而不是 500。
+
+        「先查重、再插入」这个模式在本项目里到处都是（用户名 / 邮箱 / slug /
+        分类名 / 标签名），而两步之间永远存在竞态窗口：两个请求同时通过查重，
+        其中一个必然在 INSERT 时撞唯一键。**这不是 bug，是并发下的正常结果**，
+        正确的回答是 409「已存在」，而不是 500「服务器开小差了」——
+        500 会让用户以为是自己操作错了或者站点坏了。
+
+        ``get_session`` 依赖已经回滚了事务，这里只负责把它翻译成合适的响应。
+        原始异常写进日志（带上 request_id），但不回给客户端：
+        数据库错误信息会暴露表名与列名。
+        """
+        logger.warning("数据库完整性约束冲突：%s", exc, exc_info=True)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "该内容已存在（可能是同名的分类、标签、用户名、邮箱或链接别名）",
+                "code": "conflict",
+                "request_id": get_request_id(),
+            },
         )
 
     @app.exception_handler(RequestValidationError)

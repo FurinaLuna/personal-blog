@@ -91,6 +91,7 @@ onMounted(() => {
       <select
         v-model="status"
         class="rounded-lg border border-border bg-surface px-2.5 py-2 text-sm text-ink"
+        aria-label="按状态筛选"
         @change="reload()"
       >
         <option v-for="option in STATUS_OPTIONS" :key="option.value" :value="option.value">

@@ -75,6 +75,8 @@ shots/
 # 数据库一致性备份（VACUUM INTO 产物，本地用）
 blog.db.bak-*
 backend/blog.db.bak-*
+# scripts/backup_db.py 的输出目录：里面是完整数据库快照，绝不能入库
+backend/backups/
 playwright-report/
 test-results/
 # 样式基线的采集体（本地比对用，比对完即弃）

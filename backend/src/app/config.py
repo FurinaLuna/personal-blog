@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     # 限流开关。压测 / 本地联调时可临时关闭（生产不建议）。
     rate_limit_enabled: bool = True
 
+    # ---------- 访问日志留存 ----------
+    # visit_logs 每次详情访问写一行，而仪表盘最多只读近 90 天。
+    # 不清理的话这张表会无限增长（个人博客量级下一年约几十万行），
+    # 最终拖慢备份与迁移。保留期给到 90 天的两倍，留出回头看的余地。
+    visit_log_retention_days: int = 180
+
     # ---------- 文件上传 ----------
     storage_dir: Path = BASE_DIR / "storage"
     media_url_prefix: str = "/media"

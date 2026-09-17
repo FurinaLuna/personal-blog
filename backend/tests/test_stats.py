@@ -134,3 +134,90 @@ class TestDailyViewsApi:
 
     async def test_guest_gets_401(self, client: AsyncClient) -> None:
         assert (await client.get(STATS_URL)).status_code == 401
+
+
+class TestVisitLogPruning:
+    """访问日志留存清理。
+
+    存在意义：record() 每次详情访问写一行，而读取只覆盖近 90 天。
+    没有清理的话这张表只增不减，代价（备份体积 / 迁移耗时 / VACUUM 时间）
+    是持续的，而收益是零。
+    """
+
+    async def _insert_old_log(self, article_id: int, days_ago: int, count: int = 1) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from app.db.session import async_session_factory
+        from app.repositories import VisitLogRepository
+
+        day = (datetime.now(UTC) - timedelta(days=days_ago)).date()
+        async with async_session_factory() as session:
+            repo = VisitLogRepository(session)
+            for index in range(count):
+                await repo.create(article_id=article_id, date=day, ip_hash=f"old{index:062d}")
+            await session.commit()
+
+    async def test_prune_removes_only_expired_rows(
+        self,
+        client: AsyncClient,
+        published_article: dict,
+        admin_headers: dict[str, str],
+    ) -> None:
+        """留存期外的删掉，期内的保留。"""
+        article_id = int(published_article["id"])
+        await self._insert_old_log(article_id, days_ago=400, count=3)
+        await self._insert_old_log(article_id, days_ago=10, count=2)
+
+        response = await client.post(
+            "/api/v1/stats/visit-logs/prune?retention_days=180", headers=admin_headers
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["removed"] == 3
+        assert body["retention_days"] == 180
+
+        # 近 10 天那两条必须还在：清理不能误伤读取窗口内的数据
+        from sqlalchemy import func, select
+
+        from app.db.session import async_session_factory
+        from app.models import VisitLog
+
+        async with async_session_factory() as session:
+            remaining = await session.execute(select(func.count()).select_from(VisitLog))
+            assert int(remaining.scalar_one()) == 2
+
+    async def test_prune_keeps_what_the_chart_reads(
+        self,
+        client: AsyncClient,
+        published_article: dict,
+        admin_headers: dict[str, str],
+    ) -> None:
+        """清理之后趋势曲线不能出现空洞：默认留存期必须大于读取窗口。"""
+        article_id = int(published_article["id"])
+        await self._insert_old_log(article_id, days_ago=80, count=1)
+
+        await client.post("/api/v1/stats/visit-logs/prune", headers=admin_headers)
+
+        rows = (await client.get(f"{STATS_URL}?days=90", headers=admin_headers)).json()
+        assert len(rows) == 90
+        # 80 天前那条仍在：说明默认留存期（180 天）确实比读取窗口（90 天）宽
+        assert rows[-81]["views"] == 1
+
+    async def test_only_admin_can_prune(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """破坏性维护操作不能开放给作者。"""
+        response = await client.post("/api/v1/stats/visit-logs/prune", headers=author_headers)
+        assert response.status_code == 403
+
+    async def test_guest_cannot_prune(self, client: AsyncClient) -> None:
+        assert (await client.post("/api/v1/stats/visit-logs/prune")).status_code == 401
+
+    async def test_retention_days_is_validated(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """retention_days=0 会让「删掉 0 天前的所有行」= 清空整张表，必须挡在路由层。"""
+        response = await client.post(
+            "/api/v1/stats/visit-logs/prune?retention_days=0", headers=admin_headers
+        )
+        assert response.status_code == 422

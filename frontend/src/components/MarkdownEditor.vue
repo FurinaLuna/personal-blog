@@ -173,7 +173,14 @@ function onPaste(event: ClipboardEvent): void {
       >
         {{ upload.uploading.value ? '上传中…' : '图片' }}
       </button>
-      <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onFileChange" />
+      <input
+        ref="fileInput"
+        type="file"
+        accept="image/*"
+        class="hidden"
+        aria-label="插入图片"
+        @change="onFileChange"
+      />
 
       <div class="ml-auto flex items-center gap-1">
         <button
@@ -199,6 +206,7 @@ function onPaste(event: ClipboardEvent): void {
         :style="{ minHeight: `${minHeight}px` }"
         :value="modelValue"
         :placeholder="placeholder"
+        aria-label="正文（Markdown）"
         spellcheck="false"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
         @paste="onPaste"

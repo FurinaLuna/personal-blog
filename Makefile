@@ -10,16 +10,22 @@ FRONTEND := frontend
 # Windows 用 Scripts/python.exe，类 Unix 用 bin/python
 ifeq ($(OS),Windows_NT)
   VENV_PY := $(BACKEND)/.venv/Scripts/python.exe
-  LINT_IMPORTS := $(BACKEND)/.venv/Scripts/lint-imports.exe
 else
   VENV_PY := $(BACKEND)/.venv/bin/python
-  LINT_IMPORTS := $(BACKEND)/.venv/bin/lint-imports
 endif
+
+# 分层契约走 backend/scripts/lint_imports.py 包装，而不是裸 lint-imports：
+# .importlinter 里的契约名与注释是中文，import-linter 用系统默认编码读它，
+# 在中文 Windows（GBK）上会直接抛 UnicodeDecodeError 并以 1 退出——
+# 看起来像"契约被破坏"，实际只是文件读不出来。包装脚本会在子进程里
+# 以 UTF-8 模式重新执行，任何平台、任何 locale 下行为一致。
+LINT_IMPORTS := $(abspath $(VENV_PY)) scripts/lint_imports.py
 
 .DEFAULT_GOAL := help
 .PHONY: help install install-backend install-frontend dev dev-backend dev-frontend \
-        test test-frontend test-all test-cov lint fmt fmt-check check smoke interaction full-check \
-        migrate migration seed build build-preview \
+        test test-frontend test-all test-cov lint lint-frontend fmt fmt-check check \
+        smoke interaction full-check \
+        migrate migration seed backup backup-list build build-preview \
         docker-up docker-down docker-logs docker-migrate clean
 
 help: ## 显示所有可用命令
@@ -78,7 +84,10 @@ fmt-check: ## 检查格式是否符合规范（CI 用）
 typecheck: ## 前端类型检查
 	cd $(FRONTEND) && npm run type-check
 
-check: lint fmt-check typecheck test-frontend test ## 一次跑完所有检查（提交前跑这个）
+lint-frontend: ## 前端静态检查（ESLint：bug 与无障碍，不管排版风格）
+	cd $(FRONTEND) && npm run lint
+
+check: lint fmt-check typecheck lint-frontend test-frontend test ## 一次跑完所有检查（提交前跑这个）
 
 interaction: ## 真实交互验证（点击驱动的失败路径；需先 make dev 起好前后端）
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
@@ -110,6 +119,12 @@ migrate-down: ## 回滚一步迁移
 seed: ## 重新写入演示数据（清空数据库后执行）
 	cd $(BACKEND) && rm -f blog.db && $(abspath $(VENV_PY)) -m uvicorn app.main:app --app-dir src --port 8000 &
 	@sleep 4 && curl -fsS http://127.0.0.1:8000/health && echo " ← 演示数据已写入（可 Ctrl+C 停掉服务）"
+
+backup: ## 备份数据库到 backend/backups/（VACUUM INTO，只保留最近 14 份）
+	cd $(BACKEND) && $(abspath $(VENV_PY)) scripts/backup_db.py --keep 14
+
+backup-list: ## 列出已有的备份
+	@ls -lht $(BACKEND)/backups/ 2>/dev/null || echo "还没有备份（先跑 make backup）"
 
 # ---------------------------------------------------------------- 构建与部署
 

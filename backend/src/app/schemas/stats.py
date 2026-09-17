@@ -13,3 +13,10 @@ class DailyViewStats(BaseModel):
     date: str
     views: int
     unique_visitors: int
+
+
+class PruneResult(BaseModel):
+    """访问日志清理结果。"""
+
+    removed: int
+    retention_days: int
