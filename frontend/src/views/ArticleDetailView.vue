@@ -77,6 +77,28 @@ const publishedLabel = computed(() => {
   return item ? formatDate(item.published_at ?? item.created_at) : ''
 })
 
+/**
+ * 修订信息：只在「确实改过」时显示。
+ *
+ * 读者对技术文章很在意这一点——「写于两年前」和「上个月刚更新过」
+ * 会影响要不要继续读。而这个信息只有在 updated_at 真正表示
+ * 「内容最后修改时间」时才有意义（阅读量自增曾经会污染它，已修）。
+ *
+ * 阈值取 1 天：保存草稿、改个错别字这类顺手改动不值得单独标一行，
+ * 否则每篇刚编辑过的文章都挂上「有更新」，提示就失去意义了。
+ */
+const REVISION_NOTICE_THRESHOLD_MS = 24 * 60 * 60 * 1000
+
+const updatedLabel = computed(() => {
+  const item = article.data.value
+  if (!item?.published_at) return ''
+  const published = Date.parse(item.published_at)
+  const updated = Date.parse(item.updated_at)
+  if (Number.isNaN(published) || Number.isNaN(updated)) return ''
+  if (updated - published < REVISION_NOTICE_THRESHOLD_MS) return ''
+  return formatDate(item.updated_at)
+})
+
 async function like(): Promise<void> {
   const item = article.data.value
   if (!item || likeAction.running.value) return
@@ -199,6 +221,10 @@ watch(
         <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
           <time :datetime="article.data.value.published_at ?? article.data.value.created_at">
             {{ publishedLabel }}
+          </time>
+          <!-- 内容确实改过时才出现。读者很在意「这是旧文还是刚更新过」 -->
+          <time v-if="updatedLabel" :datetime="article.data.value.updated_at">
+            修订于 {{ updatedLabel }}
           </time>
           <span>{{ formatReadingTime(article.data.value.reading_time) }}</span>
           <span>{{ formatCount(article.data.value.view_count) }} 次阅读</span>
