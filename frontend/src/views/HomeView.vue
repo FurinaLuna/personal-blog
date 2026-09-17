@@ -22,6 +22,7 @@ import { useHead } from '@/composables/useHead'
 import { useSiteStore } from '@/stores/site'
 import type { ArticleSort, ArticleSummary, Category, Page, Tag } from '@/types'
 import { emptyPage as emptyPageOf } from '@/utils/pagination'
+import { buildSiteJsonLd } from '@/utils/structured-data'
 
 const route = useRoute()
 const router = useRouter()
@@ -100,8 +101,27 @@ const activeFilterLabel = computed(() => {
   return ''
 })
 
-// 浏览器标签页标题跟随当前筛选状态，多开几个标签页时不会分不清谁是谁
-useHead(computed(() => ({ title: activeFilterLabel.value || undefined })))
+/**
+ * 首页的 head：标题跟随筛选状态，外加站点级结构化数据。
+ *
+ * 必须是**一次** useHead 调用。每次调用都会注册一个独立的 watcher 并整体
+ * 覆盖 head，写成两次的话后一次会把前一次设的标题冲掉——
+ * 表现就是「点标签筛选后标签页标题不再跟着变」。
+ *
+ * `WebSite` / `Person` 描述的是**站点**而不是某个页面，每个页面都塞一份
+ * 属于重复声明；首页是搜索引擎确认「这个站是谁的」最自然的落点。
+ * 用 computed 让它跟随站点档案（后台改昵称/头像后无需刷新即可生效）。
+ */
+useHead(
+  computed(() => ({
+    // 浏览器标签页标题跟随当前筛选状态，多开几个标签页时不会分不清谁是谁
+    title: activeFilterLabel.value || undefined,
+    jsonLd: site.loaded ? buildSiteJsonLd(site.profile) : null,
+    // 筛选/排序/翻页都只是同一份内容的不同视图，规范地址始终指向首页，
+    // 否则 ?tag=x&sort=hottest&page=3 会被当成一个独立页面参与排名
+    canonical: new URL('/', window.location.origin).href,
+  })),
+)
 
 const hasFilter = computed(() => Boolean(activeTag.value || activeCategory.value || keyword.value))
 

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
-import { useHead } from '@/composables/useHead'
+import { useHead, type PageMeta } from '@/composables/useHead'
 
 function makeRouter(): Router {
   return createRouter({
@@ -29,7 +29,7 @@ function makeRouter(): Router {
 }
 
 /** 造一个使用 useHead 的宿主组件，方便测挂载/卸载两侧的行为。 */
-function makeHost(meta: () => { title?: string; description?: string; image?: string }) {
+function makeHost(meta: () => PageMeta) {
   return defineComponent({
     setup() {
       useHead(meta)
@@ -118,5 +118,123 @@ describe('useHead meta 标签', () => {
     current.value = { title: 'B' }
     await nextTick()
     expect(document.head.querySelector('meta[property="og:image"]')).toBeNull()
+  })
+})
+
+describe('useHead canonical', () => {
+  it('未显式指定时自引用当前路径，并丢掉查询串', async () => {
+    const router = makeRouter()
+    await router.push('/?page=3&sort=hottest')
+    await router.isReady()
+
+    mount(makeHost(() => ({})), { global: { plugins: [router] } })
+
+    const href = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href
+    // 排序/筛选参数不构成独立内容，不能进 canonical
+    expect(href).toBe(`${window.location.origin}/`)
+    expect(href).not.toContain('page=3')
+  })
+
+  it('显式传入时以传入值为准（文章页用 slug 地址）', async () => {
+    const router = makeRouter()
+    await router.push('/article/5')
+    await router.isReady()
+
+    mount(makeHost(() => ({ canonical: 'https://blog.example.com/article/hello' })), {
+      global: { plugins: [router] },
+    })
+
+    expect(document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href).toBe(
+      'https://blog.example.com/article/hello',
+    )
+  })
+
+  it('同一页面内只保留一个 canonical 标签', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    await router.isReady()
+
+    const current = ref<{ canonical?: string }>({ canonical: 'https://a.example.com/' })
+    mount(makeHost(() => current.value), { global: { plugins: [router] } })
+    current.value = { canonical: 'https://b.example.com/' }
+    await nextTick()
+
+    const links = document.head.querySelectorAll('link[rel="canonical"]')
+    expect(links).toHaveLength(1)
+    expect((links[0] as HTMLLinkElement).href).toBe('https://b.example.com/')
+  })
+})
+
+describe('useHead JSON-LD', () => {
+  function jsonLdText(): string | null {
+    return document.getElementById('blog-json-ld')?.textContent ?? null
+  }
+
+  beforeEach(() => {
+    document.getElementById('blog-json-ld')?.remove()
+  })
+
+  it('写入 JSON-LD 数据块', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    await router.isReady()
+
+    mount(makeHost(() => ({ jsonLd: { '@type': 'BlogPosting', headline: '标题' } })), {
+      global: { plugins: [router] },
+    })
+
+    const script = document.getElementById('blog-json-ld') as HTMLScriptElement
+    expect(script.type).toBe('application/ld+json')
+    expect(JSON.parse(jsonLdText() as string)).toEqual({
+      '@type': 'BlogPosting',
+      headline: '标题',
+    })
+  })
+
+  it('页面没有结构化数据时不留下上一页的', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    await router.isReady()
+
+    const current = ref<{ jsonLd?: Record<string, unknown> | null }>({
+      jsonLd: { '@type': 'BlogPosting' },
+    })
+    mount(makeHost(() => current.value), { global: { plugins: [router] } })
+    expect(jsonLdText()).not.toBeNull()
+
+    current.value = { jsonLd: null }
+    await nextTick()
+    expect(jsonLdText()).toBeNull()
+  })
+
+  it('同一页面内只保留一个数据块（更新而不是追加）', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    await router.isReady()
+
+    const current = ref<{ jsonLd?: Record<string, unknown> | null }>({
+      jsonLd: { '@type': 'A' },
+    })
+    mount(makeHost(() => current.value), { global: { plugins: [router] } })
+
+    current.value = { jsonLd: { '@type': 'B' } }
+    await nextTick()
+
+    expect(document.querySelectorAll('script[type="application/ld+json"]')).toHaveLength(1)
+    expect(JSON.parse(jsonLdText() as string)['@type']).toBe('B')
+  })
+
+  it('序列化失败时不抛异常，页面照常渲染', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    await router.isReady()
+
+    const circular: Record<string, unknown> = { '@type': 'Broken' }
+    circular.self = circular
+
+    expect(() =>
+      mount(makeHost(() => ({ jsonLd: circular })), { global: { plugins: [router] } }),
+    ).not.toThrow()
+    expect(jsonLdText()).toBeNull()
   })
 })

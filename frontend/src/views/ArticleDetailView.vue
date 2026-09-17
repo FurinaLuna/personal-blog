@@ -13,14 +13,17 @@ import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
 import { useAuthStore } from '@/stores/auth'
+import { useSiteStore } from '@/stores/site'
 import type { ArticleDetail, ArticleSummary } from '@/types'
 import { buildSrcset, formatCount, formatDate, formatReadingTime } from '@/utils/format'
 import { statusBadgeClass, statusLabel } from '@/utils/status'
 import { renderMarkdown } from '@/utils/markdown'
+import { articleCanonicalUrl, buildArticleJsonLd } from '@/utils/structured-data'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const site = useSiteStore()
 
 const liked = ref(false)
 // 点赞与删除分开计数：点赞是高频轻操作，不该让删除按钮的状态跟着它变
@@ -41,15 +44,23 @@ const rendered = computed(() => {
   return source ? renderMarkdown(source) : { html: '', toc: [] }
 })
 
-// 标题 / OG meta 跟随文章变化（摘要取后端字段，没有就退化为站点默认文案）
+// 标题 / OG meta / canonical / 结构化数据跟随文章变化
+// （摘要取后端字段，没有就退化为站点默认文案）
 useHead(
   computed(() => {
     const item = article.data.value
+    const siteName = site.profile.owner_name
     return {
       title: item?.title,
       description: item?.summary ?? undefined,
       image: item?.cover_image ?? undefined,
       type: 'article' as const,
+      // 显式用 slug 构造规范地址：/article/{id} 与 /article/{slug} 都能打开同一篇，
+      // 不指出规范版本会被搜索引擎当成重复内容，权重被摊薄
+      canonical: item ? articleCanonicalUrl(item.slug) : undefined,
+      jsonLd: item
+        ? buildArticleJsonLd(item, { siteName, siteUrl: window.location.origin })
+        : null,
     }
   }),
 )
