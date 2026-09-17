@@ -28,6 +28,16 @@ export const articleApi = {
     return api.get<ArticleDetail>(`/articles/${slugOrId}`)
   },
 
+  /**
+   * 全文检索：**按相关度排序**（标题权重最高，其次摘要，最后正文）。
+   *
+   * 与 `list({ keyword })` 的区别在语义：列表接口的关键词是「筛选」，
+   * 结果仍按时间/热度排；这个接口回答的是「哪篇最相关」。
+   */
+  search(q: string, query: Omit<ArticleListQuery, 'keyword'> = {}) {
+    return api.get<Page<ArticleSummary>>('/articles/search', { q, ...query })
+  },
+
   related(id: number, limit = 5) {
     // 第二参是扁平的查询参数对象（旧实现误写成 { params: { limit } }，
     // axios 会序列化成 params[limit]=5，后端从未收到过这个 limit）

@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, String, cast, func, or_, select, update
+from sqlalchemy import Select, String, bindparam, cast, func, or_, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import ColumnElement
 
@@ -97,6 +98,120 @@ class ArticleListRow:
 
 class ArticleRepository(BaseRepository[Article]):
     model = Article
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+        # None = 还没探测过。探测结果缓存在实例上（仓储是请求级的，生命周期正好）
+        self._fts_available: bool | None = None
+
+    @property
+    def supports_full_text_search(self) -> bool:
+        """当前连接上 FTS5 全文检索是否可用（需先 ``detect_full_text_search``）。
+
+        只判断方言是不够的：``articles_fts`` 是 FTS5 **虚拟表**，
+        ``Base.metadata.create_all`` 不会创建它——只有跑过 alembic 迁移才有。
+        于是「按 README 快速开始直接启动（自动建表、不跑迁移）」这条最常见的
+        开发路径上，``MATCH articles_fts`` 会抛 "no such table" 变成 500。
+
+        所以这里要求先实际探测一次，缺索引时返回 False，调用方安静地退回 LIKE。
+        """
+        return self._fts_available is True
+
+    async def detect_full_text_search(self) -> bool:
+        """探测并缓存 FTS 可用性，返回探测结果。"""
+        from app.db.fulltext import fulltext_available
+
+        self._fts_available = await fulltext_available(self.session)
+        return self._fts_available
+
+    @staticmethod
+    def _fts_query(query: str) -> str:
+        """把用户输入转成安全的 FTS5 查询串。
+
+        整串用双引号包成**短语**，内部的 ``"`` 双写转义。这样做有两个好处：
+
+        1. **防语法注入**：FTS5 的查询语法里有 ``*`` ``(`` ``)`` ``:`` ``^``
+           ``NOT`` ``OR`` ``-`` 等操作符，直接拼进去轻则报错、重则改变查询语义。
+           包成短语之后它们都只是普通字符。
+        2. 语义正确：用户要搜的就是「这几个字连在一起」，而不是一次布尔查询。
+        """
+        escaped = query.strip().replace('"', '""')
+        return f'"{escaped}"'
+
+    async def search_ids(
+        self,
+        query: str,
+        *,
+        limit: int,
+        statuses: tuple[ArticleStatus, ...] = (),
+        visible_at: datetime | None = None,
+    ) -> list[int]:
+        """FTS5 全文检索，按相关度（bm25）返回文章 id。
+
+        可见性条件必须写进**同一条 SQL**：先按相关度取前 N 条、再在外面过滤掉
+        不可见的，会导致「第一页只剩两条」这种分页数量对不上的问题——
+        草稿与未到发布时间的文章都还在索引里。
+
+        ``bm25()`` 返回的是**越小越相关**的负数，所以是 ``ORDER BY score``（升序）。
+        这一点很容易写反，写反的结果是搜索结果完全颠倒。
+
+        注意：trigram 分词要求查询词不少于 3 个字符，调用方需自行判断
+        （见 ``ArticleService.search``），这里不做兼容——短查询走 LIKE 更准。
+        """
+        if not query.strip():
+            return []
+
+        stmt = text(
+            """
+            SELECT a.id AS id
+            FROM articles_fts
+            JOIN articles a ON a.id = articles_fts.rowid
+            WHERE articles_fts MATCH :query
+              AND (:status_filter = 0 OR a.status IN :statuses)
+              AND (
+                  :visible_at IS NULL
+                  OR (a.published_at IS NOT NULL AND a.published_at <= :visible_at)
+              )
+            ORDER BY bm25(articles_fts, 10.0, 5.0, 1.0), a.id DESC
+            LIMIT :limit
+            """
+        ).bindparams(
+            bindparam("query", value=self._fts_query(query)),
+            bindparam("status_filter", value=1 if statuses else 0),
+            bindparam(
+                "statuses",
+                value=[s.value if hasattr(s, "value") else s for s in statuses],
+                expanding=True,
+            ),
+            bindparam("visible_at", value=visible_at),
+            bindparam("limit", value=limit),
+        )
+        result = await self.session.execute(stmt)
+        return [int(row.id) for row in result.all()]
+
+    async def list_by_ids_ordered(self, ids: list[int]) -> list[ArticleListRow]:
+        """按给定 id 顺序取文章（含已审核评论数）。
+
+        搜索结果必须保持**相关度顺序**，而 SQL 的 ``IN`` 不保证顺序，
+        所以在 Python 侧按传入的 id 顺序重排。数量受搜索上限约束（≤50），
+        重排成本可以忽略。
+
+        渲染所需的关联（author / category / series / tags）由 mapper 级的
+        eager 策略自动带出，这里不需要显式 selectinload。
+        """
+        if not ids:
+            return []
+
+        comment_count = self._comment_count_expr()
+        stmt = select(Article, comment_count).where(Article.id.in_(ids))
+        rows = (await self.session.execute(stmt)).all()
+
+        by_id = {
+            article.id: ArticleListRow(article=article, comment_count=int(count))
+            for article, count in rows
+        }
+        # 只保留确实取到的（可能刚好被并发删掉了），并严格按相关度顺序排列
+        return [by_id[item_id] for item_id in ids if item_id in by_id]
 
     # ------------------------------------------------------------------ 查询
 

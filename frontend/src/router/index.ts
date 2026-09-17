@@ -59,6 +59,14 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '归档' },
   },
   {
+    // 独立搜索页：首页的 ?keyword= 是「在列表里筛」（按时间排），
+    // 这里是「按相关度找」（走 FTS5），两者语义不同，所以是两个入口。
+    path: '/search',
+    name: 'search',
+    component: () => import('@/views/SearchView.vue'),
+    meta: { title: '搜索' },
+  },
+  {
     path: '/series',
     name: 'series',
     component: () => import('@/views/SeriesView.vue'),

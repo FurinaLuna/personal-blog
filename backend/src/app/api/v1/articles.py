@@ -48,6 +48,25 @@ async def list_articles(
     )
 
 
+@router.get("/search", response_model=Page[ArticleSummary], summary="全文检索（前台）")
+async def search_articles(
+    session: SessionDep,
+    page_params: PageParamsDep,
+    q: Annotated[str, Query(min_length=1, max_length=100, description="搜索词")],
+) -> Page[ArticleSummary]:
+    """站内搜索：按相关度返回命中文章。
+
+    与列表接口的 ``keyword`` 参数的区别在**排序**：列表接口的关键词是筛选，
+    结果仍按时间/热度排；这个接口按 bm25 相关度排（标题权重最高）。
+    独立成一个端点而不是给列表接口加 ``sort=relevance``，是因为两者的
+    语义与实现路径都不同——列表走 LIKE，这里走 FTS5。
+
+    声明在 ``/archive`` 旁边而不是 ``/{slug_or_id}`` 之后：静态路径必须
+    先注册，否则 ``/search`` 会被当成 slug 去查文章。
+    """
+    return await ArticleService(session).search(keyword=q, page_params=page_params)
+
+
 @router.get("/archive", response_model=list[ArchiveGroup], summary="按月归档")
 async def list_archive(
     session: SessionDep,

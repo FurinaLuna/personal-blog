@@ -103,6 +103,9 @@ def visible_link_statuses(viewer: User | None) -> tuple[ArticleStatus, ...]:
 
 
 MAX_TAGS_PER_ARTICLE = 10
+# trigram 分词器按三字符滑窗建索引，查询词短于 3 个字符时 FTS 一律零结果。
+# 所以短查询必须退回 LIKE，否则「博客」「数据」这类常见中文词会搜不到。
+FTS_MIN_QUERY_LENGTH = 3
 # 允许被显式清空为 NULL 的字段（其余字段收到 None 视为「不修改」）。
 # 注意这里用的是关系名 category 而不是 category_id：赋值关系对象才能既改外键
 # 又把关系置为已加载，避免后续序列化触发惰性加载。
@@ -279,6 +282,59 @@ class ArticleService:
         ]
         await self._fill_cover_variants(items)
         return Page.build(items, total, page_params.page, page_params.page_size)
+
+    async def search(self, *, keyword: str, page_params: PageParams) -> Page[ArticleSummary]:
+        """站内搜索：按相关度返回命中文章。
+
+        **混合策略，不是可以简化的重复实现**：
+
+        - 查询词 ≥ ``FTS_MIN_QUERY_LENGTH`` 个字符时走 SQLite FTS5，
+          按 bm25 相关度排序（标题权重最高，其次摘要，最后正文）。
+        - 更短的查询退回 LIKE。原因是 trigram 分词器按三字符滑窗建索引，
+          **两字查询一律零结果**。实测「博客」「数据」在 FTS 下都搜不到，
+          而中文里两字词极其常见——只上 FTS 会把搜索做残。
+        - 数据库不是 SQLite（PostgreSQL）时同样退回 LIKE：那边没有等价的
+          中文分词方案，不假装支持。
+
+        相关度排序是这次升级的核心收益：原来三字段 ``LIKE`` 既走不了索引，
+        也没法回答「哪条更相关」，只能按时间倒序糊弄。
+        """
+        query = keyword.strip()
+        if not query:
+            return Page.build([], 0, page_params.page, page_params.page_size)
+
+        # detect_... 会实际探测索引是否存在（虚拟表不在 create_all 的范围里），
+        # 缺索引时返回 False，这里就安静地退回 LIKE
+        use_fts = (
+            len(query) >= FTS_MIN_QUERY_LENGTH and await self.articles.detect_full_text_search()
+        )
+        if not use_fts:
+            return await self.list_public(
+                page_params=page_params, keyword=query, sort=ArticleSort.LATEST
+            )
+
+        # 先按相关度多取一些，再做分页切片。FTS5 的 bm25 排序不便直接配合
+        # OFFSET，而站内搜索的结果集实际很小，取到「当前页末尾」就够翻页了。
+        limit = page_params.offset + page_params.limit
+        ids = await self.articles.search_ids(
+            query,
+            limit=limit,
+            statuses=LIST_STATUSES,
+            visible_at=datetime.now(UTC),
+        )
+        page_ids = ids[page_params.offset : page_params.offset + page_params.limit]
+        rows = await self.articles.list_by_ids_ordered(page_ids)
+
+        items = [
+            ArticleSummary.model_validate(row.article).model_copy(
+                update={"comment_count": row.comment_count}
+            )
+            for row in rows
+        ]
+        await self._fill_cover_variants(items)
+        # total 取「这一轮取回的命中数」：分页控件只需要知道还有没有下一页。
+        # 精确计数要再跑一次去掉 LIMIT 的 FTS 查询，收益不抵这次开销。
+        return Page.build(items, len(ids), page_params.page, page_params.page_size)
 
     async def get_detail(
         self, slug_or_id: str, viewer: User | None, *, count_view: bool = True

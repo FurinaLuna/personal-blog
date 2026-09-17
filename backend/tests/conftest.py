@@ -30,6 +30,7 @@ os.environ["STORAGE_DIR"] = (Path(tempfile.gettempdir()) / "personal_blog_media"
 
 # 上面的环境变量必须早于下面这些 import，故有意忽略 E402
 from app.db.base import Base  # noqa: E402
+from app.db.fulltext import ensure_fulltext_index  # noqa: E402
 from app.db.session import async_session_factory, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.seed import ensure_seed  # noqa: E402
@@ -63,6 +64,13 @@ async def db_reset() -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+
+    # FTS5 虚拟表不在 Base.metadata 里，create_all 不会建它。
+    # 测试环境也要建，否则搜索用例测的就全是 LIKE 降级路径，
+    # 「FTS 到底有没有生效」永远验证不到。
+    async with async_session_factory() as session:
+        await ensure_fulltext_index(session)
+        await session.commit()
 
     async with async_session_factory() as session:
         await ensure_seed(session)
