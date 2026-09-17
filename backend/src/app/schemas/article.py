@@ -61,6 +61,10 @@ class ArticleSummary(BaseModel):
     series_order: int = 0
     tags: list[TagBrief] = Field(default_factory=list)
     comment_count: int = 0
+    # 搜索结果专用：正文里命中关键词的那一段（纯文本，高亮交给前端）。
+    # 其余接口一律为 None —— 加这个字段而不是另立一个 SearchResult schema，
+    # 是为了让搜索结果能直接复用 ArticleCard，不必在组件里写两套分支。
+    snippet: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -39,6 +39,8 @@ export interface ArticleSummary {
   series_order: number
   tags: TagBrief[]
   comment_count: number
+  /** 搜索结果专用：正文里命中关键词的那一段（纯文本，高亮由前端做）。其余接口为 null。 */
+  snippet?: string | null
   /**
    * 已排期但还没到发布时间（后端派生字段）。
    *

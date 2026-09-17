@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, String, bindparam, cast, func, or_, select, text, update
+from sqlalchemy import Select, String, case, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import ColumnElement
@@ -17,6 +17,13 @@ from app.repositories.base import BaseRepository
 # 「有效发布时间」：已发布用 published_at，草稿回退到 created_at。
 # 统一用它排序，就不用到处处理 NULL 在 SQLite / PostgreSQL 中排序位置不一致的坑。
 _EFFECTIVE_DATE = func.coalesce(Article.published_at, Article.created_at)
+
+
+# LIKE 的转义符。抽成常量是刻意的：内联写进 f-string 时，
+# ESCAPE '{_LIKE_ESCAPE}' 里的 \' 会被 Python 当成转义引号、反斜杠被吞掉，
+# SQL 里剩下的引号会把后续内容当成字符串字面量，报
+# "ESCAPE expression must be a single character" —— 排查起来很费时间。
+_LIKE_ESCAPE = "\\"
 
 
 def _like_pattern(keyword: str) -> str:
@@ -138,56 +145,210 @@ class ArticleRepository(BaseRepository[Article]):
         escaped = query.strip().replace('"', '""')
         return f'"{escaped}"'
 
-    async def search_ids(
+    # ------------------------------------------------------------------ 搜索
+    #
+    # 两条检索路径共用同一套**排序语义**：相关度越高越靠前，其次越新越靠前。
+    # 分数统一采用「越小越好」的约定（与 bm25 一致），这样两条路径的
+    # ORDER BY 方向相同，也不会再出现「换个字数排序就变了」。
+
+    @staticmethod
+    def _like_score_expr(pattern: str) -> ColumnElement[float]:
+        """LIKE 路径的相关度分：标题 > 摘要 > 正文。
+
+        用**负数**（越小越好）与 bm25 的方向对齐，避免两条路径一个升序
+        一个降序、read 的时候要看半天才敢确认没写反。
+
+        档位取**十的幂**（-100 / -10 / -1）而不是 -10/-5/-1，是因为后面还要
+        除以时间衰减因子：档距必须**大于最大衰减倍数**，否则衰减会把标题命中
+        降级成摘要档。这个坑真实踩到过——-10 / 2.0 恰好等于 -5，
+        于是六年前的标题命中与最近的摘要命中并列，再由时间分胜负。
+        """
+        return (
+            case((Article.title.ilike(pattern, escape="\\"), -100.0), else_=0.0)
+            + case((Article.summary.ilike(pattern, escape="\\"), -10.0), else_=0.0)
+            + case((Article.content_md.ilike(pattern, escape="\\"), -1.0), else_=0.0)
+        )
+
+    @staticmethod
+    def _recency_divisor_expr(*, now: datetime) -> ColumnElement[float]:
+        """按年龄放大分数的**除数**（时间衰减）。
+
+        必须用**除法**而不是减法。两个原因，都是实测出来的：
+
+        1. **bm25 的量纲随语料规模与词频变化几个数量级**：实测同一套代码在
+           3 篇语料下稀有词约 -1.0，202 篇下约 -8.8，而高频词只有 -0.000001。
+           任何固定的加减值都会在某个区间里彻底压倒相关度——语料小的时候
+           加 0.5 就等于「完全按时间排」。
+        2. 分数是「越小越好」，乘以大于 1 的因子反而会让旧文**更靠前**。
+           除以因子才是降权。
+
+        分档而不是连续函数：跨方言（SQLite / PostgreSQL）能写出完全一致的
+        表达，且参数肉眼可核对。
+        """
+        one_year_ago = now - timedelta(days=365)
+        three_years_ago = now - timedelta(days=365 * 3)
+        return case(
+            (Article.published_at >= one_year_ago, 1.0),
+            (Article.published_at >= three_years_ago, 1.5),
+            else_=2.0,
+        )
+
+    async def search_fulltext(
         self,
         query: str,
         *,
         limit: int,
+        offset: int = 0,
         statuses: tuple[ArticleStatus, ...] = (),
         visible_at: datetime | None = None,
-    ) -> list[int]:
-        """FTS5 全文检索，按相关度（bm25）返回文章 id。
+        now: datetime,
+    ) -> tuple[list[int], int]:
+        """FTS5 检索，返回 ``(本页文章 id, 命中总数)``。
 
-        可见性条件必须写进**同一条 SQL**：先按相关度取前 N 条、再在外面过滤掉
-        不可见的，会导致「第一页只剩两条」这种分页数量对不上的问题——
-        草稿与未到发布时间的文章都还在索引里。
+        ``bm25()`` 返回**越小越相关**的负数，所以是 ``ORDER BY score``（升序）。
 
-        ``bm25()`` 返回的是**越小越相关**的负数，所以是 ``ORDER BY score``（升序）。
-        这一点很容易写反，写反的结果是搜索结果完全颠倒。
+        ## 排序：先分层，再精排，最后看时间
 
-        注意：trigram 分词要求查询词不少于 3 个字符，调用方需自行判断
-        （见 ``ArticleService.search``），这里不做兼容——短查询走 LIKE 更准。
+        1. **命中位置分层**（标题 > 摘要 > 正文）——语料无关的硬规则；
+        2. bm25 层内精排；
+        3. 新文优先。
+
+        分层必须放在 bm25 前面。实测 bm25 的量纲随语料规模剧烈变化：3 篇语料下
+        稀有词约 -1.0，高频词只有 -1e-6。小语料或常见词时 bm25 几乎没有区分力，
+        单靠它排序会退化成纯时间序——标题命中反而输给正文命中
+        （这个用例在 tests/test_search.py::TestRecencyDecay 里）。
+
+        时间衰减用 ``/ 年龄因子``：同等相关度下新文优先，而旧文的强相关匹配
+        依然能压过新文的弱匹配——除法的效果与分数大小成比例，这正是我们想要的。
+
+        可见性条件必须写进**同一条 SQL**：先按相关度取前 N 条、再在外面过滤，
+        会出现「第一页只剩两条」这种分页数量对不上的问题。
+
+        短查询（<3 字符）不走这里——trigram 分词要求查询词不少于 3 个字符，
+        调用方需自行判断，见 ``ArticleService.search``。
         """
         if not query.strip():
-            return []
+            return [], 0
 
-        stmt = text(
-            """
-            SELECT a.id AS id
+        params = {
+            "query": self._fts_query(query),
+            # 状态与可见性条件在 count 与分页两条 SQL 里必须完全一致，
+            # 否则会出现「总数说有 12 条，翻到第 3 页却是空的」
+            "now": now,
+            "one_year_ago": now - timedelta(days=365),
+            "three_years_ago": now - timedelta(days=365 * 3),
+            "like_pattern": _like_pattern(query),
+            "limit": limit,
+            "offset": offset,
+        }
+        where = """
             FROM articles_fts
             JOIN articles a ON a.id = articles_fts.rowid
             WHERE articles_fts MATCH :query
-              AND (:status_filter = 0 OR a.status IN :statuses)
-              AND (
-                  :visible_at IS NULL
-                  OR (a.published_at IS NOT NULL AND a.published_at <= :visible_at)
-              )
-            ORDER BY bm25(articles_fts, 10.0, 5.0, 1.0), a.id DESC
-            LIMIT :limit
-            """
-        ).bindparams(
-            bindparam("query", value=self._fts_query(query)),
-            bindparam("status_filter", value=1 if statuses else 0),
-            bindparam(
-                "statuses",
-                value=[s.value if hasattr(s, "value") else s for s in statuses],
-                expanding=True,
+              AND a.status = 'published'
+              AND a.published_at IS NOT NULL
+              AND a.published_at <= :now
+        """
+        # 状态白名单用固定字面量而不是参数化的 IN：只有「前台已发布」一种用法，
+        # 而多一个 expanding 参数会让下面两条 SQL 的绑定复杂一倍。
+        if statuses and tuple(statuses) != (ArticleStatus.PUBLISHED,):
+            listed = ", ".join(f"'{s.value if hasattr(s, 'value') else s}'" for s in statuses)
+            where = where.replace("a.status = 'published'", f"a.status IN ({listed})")
+
+        divisor = """
+            CASE
+                WHEN a.published_at >= :one_year_ago THEN 1.0
+                WHEN a.published_at >= :three_years_ago THEN 1.5
+                ELSE 2.0
+            END
+        """
+
+        count_result = await self.session.execute(text(f"SELECT count(*) AS n {where}"), params)
+        total = int(count_result.scalar_one())
+
+        page_result = await self.session.execute(
+            text(
+                f"""
+                SELECT a.id AS id
+                {where}
+                ORDER BY
+                    -- 主排序键是「命中位置」的分层，语料无关。档位取十的幂，
+                    -- 保证任何倍数的年龄衰减都跨不过档位（见 _like_score_expr）：
+                    -- 标题命中 > 摘要命中 > 正文命中。实测 bm25 在小语料下
+                    -- IDF 趋近 0（高频词只有 -1e-6），此时它没有区分力，
+                    -- 单靠它排序会退化成纯时间序——标题命中反而输给正文命中。
+                    (
+                        CASE WHEN a.title LIKE :like_pattern ESCAPE '{_LIKE_ESCAPE}'
+                             THEN -100.0 ELSE 0.0 END
+                      + CASE WHEN a.summary LIKE :like_pattern ESCAPE '{_LIKE_ESCAPE}'
+                             THEN -10.0 ELSE 0.0 END
+                      + CASE WHEN a.content_md LIKE :like_pattern ESCAPE '{_LIKE_ESCAPE}'
+                             THEN -1.0 ELSE 0.0 END
+                    ) / ({divisor}),
+                    -- 层内用 bm25 精排（词频、文档长度归一化）。
+                    -- 语料够大时它才有意义，所以放在第二键。
+                    bm25(articles_fts, 10.0, 5.0, 1.0) / ({divisor}),
+                    a.published_at DESC, a.id DESC
+                LIMIT :limit OFFSET :offset
+                """
             ),
-            bindparam("visible_at", value=visible_at),
-            bindparam("limit", value=limit),
+            params,
         )
-        result = await self.session.execute(stmt)
-        return [int(row.id) for row in result.all()]
+        return [int(row.id) for row in page_result.all()], total
+
+    async def search_keyword(
+        self,
+        keyword: str,
+        *,
+        limit: int,
+        offset: int = 0,
+        statuses: tuple[ArticleStatus, ...] = (),
+        visible_at: datetime | None = None,
+        now: datetime,
+    ) -> tuple[list[int], int]:
+        """LIKE 检索，返回 ``(本页文章 id, 命中总数)``。
+
+        给 trigram 覆盖不到的两字 / 单字查询兜底，也是非 SQLite 数据库上
+        唯一的检索路径。
+
+        **不带 is_top 权重**：搜索场景里「置顶」没有任何意义。之前走
+        ``list_public(sort=LATEST)`` 时置顶优先会生效，于是搜「数据」
+        第一篇是那篇只在正文里顺带提了一句的置顶文章——这是真实踩到的
+        不一致（见 tests/test_search.py::TestRankingConsistency）。
+        """
+        pattern = _like_pattern(keyword)
+        score = self._like_score_expr(pattern)
+        divisor = self._recency_divisor_expr(now=now)
+
+        conditions = [
+            Article.title.ilike(pattern, escape="\\")
+            | Article.summary.ilike(pattern, escape="\\")
+            | Article.content_md.ilike(pattern, escape="\\")
+        ]
+        if statuses:
+            conditions.append(Article.status.in_(list(statuses)))
+        if visible_at is not None:
+            conditions.append(Article.published_at.is_not(None))
+            conditions.append(Article.published_at <= visible_at)
+
+        count_stmt = select(func.count()).select_from(Article).where(*conditions)
+        total = int((await self.session.execute(count_stmt)).scalar_one())
+        if total == 0:
+            return [], 0
+
+        page_stmt = (
+            select(Article.id)
+            .where(*conditions)
+            .order_by(
+                (score / divisor).asc(),
+                _EFFECTIVE_DATE.desc(),
+                Article.id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = await self.session.execute(page_stmt)
+        return [int(row.id) for row in rows.all()], total
 
     async def list_by_ids_ordered(self, ids: list[int]) -> list[ArticleListRow]:
         """按给定 id 顺序取文章（含已审核评论数）。

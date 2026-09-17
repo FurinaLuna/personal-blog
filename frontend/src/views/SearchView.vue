@@ -126,7 +126,12 @@ function goPage(next: number): void {
 
       <template v-else>
         <div class="space-y-4">
-          <ArticleCard v-for="item in results.data.value.items" :key="item.id" :article="item" />
+          <ArticleCard
+            v-for="item in results.data.value.items"
+            :key="item.id"
+            :article="item"
+            :highlight="query"
+          />
         </div>
 
         <Pagination

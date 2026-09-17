@@ -70,3 +70,42 @@ def strip_markdown(content_md: str, limit: int = 200) -> str:
     text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)
     text = re.sub(r"[*_~`>]", "", text)
     return truncate(re.sub(r"\s+", " ", text).strip(), limit)
+
+
+# 命中片段的上下文窗口：前后各留这么多字符。太短看不出语境，
+# 太长会把卡片撑成一段正文。
+SNIPPET_CONTEXT = 40
+
+
+def build_snippet(article: object, keyword: str) -> str | None:
+    """截取正文里命中关键词的那一段，作为搜索结果片段。
+
+    纯文本（不生成高亮标签）：**渲染责任归前端**。后端塞 HTML 标记的话，
+    前端就得决定是信任它（引入 XSS 面）还是再消毒一遍（白做一遍功），
+    而高亮本来就是纯展示逻辑。
+
+    返回 None 的三种情况，调用方据此隐藏片段行：
+    - 关键词为空；
+    - 正文里没有这个词（命中的是标题或摘要——那两处前端会自行高亮）；
+    - 正文为空。
+    """
+    text = str(getattr(article, "content_md", "") or "")
+    needle = (keyword or "").strip()
+    if not text or not needle:
+        return None
+
+    # 大小写不敏感地找第一处。用 lower() 而不是正则：搜索词里可能有
+    # 正则元字符（`.` `*` `(`），拼进 pattern 轻则报错重则语义全变。
+    index = text.lower().find(needle.lower())
+    if index < 0:
+        return None
+
+    start = max(0, index - SNIPPET_CONTEXT)
+    end = min(len(text), index + len(needle) + SNIPPET_CONTEXT)
+
+    # 去掉换行再截断：Markdown 正文里换行很多，直接展示会是一片碎行。
+    # 先取窗口再压平，避免压平后位置偏移算错。
+    window = " ".join(text[start:end].split())
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(text) else ""
+    return f"{prefix}{window}{suffix}"

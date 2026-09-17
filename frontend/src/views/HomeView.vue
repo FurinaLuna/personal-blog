@@ -138,8 +138,21 @@ function clearFilters(): void {
   updateQuery({ tag: undefined, category: undefined, keyword: undefined, page: undefined })
 }
 
+/**
+ * 首页的搜索框**直接跳到搜索页**，而不是在本页做关键词筛选。
+ *
+ * 这里曾经是「在列表里筛」：结果按时间排、置顶优先，一篇只在正文里顺带
+ * 提一句的置顶文章会压过标题命中的那篇。而 `/search` 走的是相关度排序。
+ * 同一个搜索框在用户眼里就是同一个功能，给它两套排序规则只会让人困惑
+ * （「为什么我搜这个词出来的是这篇？」）——所以收敛成一个入口。
+ *
+ * 首页仍保留 `?keyword=` 的**筛选**能力（从标签/分类进来的链接可能带着它），
+ * 只是不再由这个输入框产生。要「浏览式筛选」的用户走标签云与分类页。
+ */
 function search(): void {
-  updateQuery({ keyword: keyword.value.trim() || undefined, page: undefined })
+  const value = keyword.value.trim()
+  if (!value) return
+  void router.push({ path: '/search', query: { q: value } })
 }
 
 function changePage(next: number): void {

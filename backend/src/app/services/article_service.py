@@ -39,7 +39,7 @@ from app.utils.exceptions import (
     PermissionDeniedError,
 )
 from app.utils.slug import unique_slug
-from app.utils.text import estimate_reading_time, strip_markdown
+from app.utils.text import build_snippet, estimate_reading_time, strip_markdown
 
 # 列表页可见：归档文章按定义「不再出现在默认列表」，但直达链接仍可访问
 LIST_STATUSES: tuple[ArticleStatus, ...] = (ArticleStatus.PUBLISHED,)
@@ -287,57 +287,72 @@ class ArticleService:
         return Page.build(items, total, page_params.page, page_params.page_size)
 
     async def search(self, *, keyword: str, page_params: PageParams) -> Page[ArticleSummary]:
-        """站内搜索：按相关度返回命中文章。
+        """站内搜索：按相关度返回命中文章（含命中片段）。
 
-        **混合策略，不是可以简化的重复实现**：
+        ## 两条检索路径，**同一套排序语义**
 
-        - 查询词 ≥ ``FTS_MIN_QUERY_LENGTH`` 个字符时走 SQLite FTS5，
-          按 bm25 相关度排序（标题权重最高，其次摘要，最后正文）。
+        - 查询词 ≥ ``FTS_MIN_QUERY_LENGTH`` 个字符时走 SQLite FTS5（bm25 排序）。
         - 更短的查询退回 LIKE。原因是 trigram 分词器按三字符滑窗建索引，
-          **两字查询一律零结果**。实测「博客」「数据」在 FTS 下都搜不到，
-          而中文里两字词极其常见——只上 FTS 会把搜索做残。
-        - 数据库不是 SQLite（PostgreSQL）时同样退回 LIKE：那边没有等价的
-          中文分词方案，不假装支持。
+          **两字查询一律零结果**——实测「博客」「数据」在 FTS 下都搜不到，
+          而中文里两字词极其常见。数据库不是 SQLite 时同样走 LIKE。
 
-        相关度排序是这次升级的核心收益：原来三字段 ``LIKE`` 既走不了索引，
-        也没法回答「哪条更相关」，只能按时间倒序糊弄。
+        关键是两条路径**排序逻辑必须一致**：都是「相关度优先（标题 > 摘要 >
+        正文），同等相关度下新文优先」，且**都不看置顶**。这一点曾经做错过——
+        短查询走的是列表接口的 `sort=LATEST`，而它置顶优先，于是搜「数据」
+        第一篇是只在正文里顺带提了一句的置顶文章，搜「数据层」第一篇却是
+        标题命中。同一个搜索框，排序随字数变化。
+
+        ## 为什么不在这里做「按相关度整体排序后再切页」
+
+        排序完全交给 SQL。曾经为了省一次查询，把 ``total`` 取成
+        「这一页取回了几条」，结果命中 12 条时 total 显示 10，
+        前端据此判断「没有下一页」，第 11 条之后**永远翻不到**。
+        总数必须是真实的 COUNT，翻页必须走 LIMIT/OFFSET。
         """
         query = keyword.strip()
         if not query:
             return Page.build([], 0, page_params.page, page_params.page_size)
 
-        # detect_... 会实际探测索引是否存在（虚拟表不在 create_all 的范围里），
-        # 缺索引时返回 False，这里就安静地退回 LIKE
+        now = datetime.now(UTC)
+        # 先探测索引是否存在：``articles_fts`` 是虚拟表，create_all 不会建它
+        # （只有跑过迁移才有），缺了就安静退回 LIKE 而不是抛 500
         use_fts = (
             len(query) >= FTS_MIN_QUERY_LENGTH and await self.articles.detect_full_text_search()
         )
-        if not use_fts:
-            return await self.list_public(
-                page_params=page_params, keyword=query, sort=ArticleSort.LATEST
+
+        if use_fts:
+            ids, total = await self.articles.search_fulltext(
+                query,
+                limit=page_params.limit,
+                offset=page_params.offset,
+                statuses=LIST_STATUSES,
+                visible_at=now,
+                now=now,
+            )
+        else:
+            ids, total = await self.articles.search_keyword(
+                query,
+                limit=page_params.limit,
+                offset=page_params.offset,
+                statuses=LIST_STATUSES,
+                visible_at=now,
+                now=now,
             )
 
-        # 先按相关度多取一些，再做分页切片。FTS5 的 bm25 排序不便直接配合
-        # OFFSET，而站内搜索的结果集实际很小，取到「当前页末尾」就够翻页了。
-        limit = page_params.offset + page_params.limit
-        ids = await self.articles.search_ids(
-            query,
-            limit=limit,
-            statuses=LIST_STATUSES,
-            visible_at=datetime.now(UTC),
-        )
-        page_ids = ids[page_params.offset : page_params.offset + page_params.limit]
-        rows = await self.articles.list_by_ids_ordered(page_ids)
-
+        rows = await self.articles.list_by_ids_ordered(ids)
         items = [
             ArticleSummary.model_validate(row.article).model_copy(
-                update={"comment_count": row.comment_count}
+                update={
+                    "comment_count": row.comment_count,
+                    # 命中片段：回答「这条为什么会出现」。正文命中的时候标题和摘要
+                    # 里可能一个字都没有，没有片段用户只能靠猜。
+                    "snippet": build_snippet(row.article, query),
+                }
             )
             for row in rows
         ]
         await self._fill_cover_variants(items)
-        # total 取「这一轮取回的命中数」：分页控件只需要知道还有没有下一页。
-        # 精确计数要再跑一次去掉 LIMIT 的 FTS 查询，收益不抵这次开销。
-        return Page.build(items, len(ids), page_params.page, page_params.page_size)
+        return Page.build(items, total, page_params.page, page_params.page_size)
 
     async def get_detail(
         self, slug_or_id: str, viewer: User | None, *, count_view: bool = True

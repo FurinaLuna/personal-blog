@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 
 import type { ArticleSummary } from '@/types'
 import { buildSrcset, formatCount, formatDate, formatReadingTime } from '@/utils/format'
+import { highlightSegments } from '@/utils/highlight'
 import { statusBadgeClass, statusLabel } from '@/utils/status'
 import { prefetchRoute } from '@/utils/prefetch'
 
@@ -16,9 +17,24 @@ const props = withDefaults(
      * 其余卡片保持 lazy。传 true 的应当只有一两条。
      */
     priority?: boolean
+    /**
+     * 搜索关键词。传入后标题 / 摘要 / 命中片段里命中的部分会被标出来，
+     * 让用户一眼看到「为什么这条会出现」。列表页不传，行为与之前完全一致。
+     */
+    highlight?: string
   }>(),
-  { priority: false },
+  { priority: false, highlight: '' },
 )
+
+/**
+ * 分段交给 `utils/highlight` 做，模板只负责渲染 `<mark>`。
+ *
+ * 刻意**不拼 HTML 再用 v-html**：正文与搜索词都是外部输入，
+ * 拼 HTML 就多了一处必须消毒的地方；分段 + 插值天然转义，没有注入面。
+ */
+const titleSegments = computed(() => highlightSegments(props.article.title, props.highlight))
+const summarySegments = computed(() => highlightSegments(props.article.summary, props.highlight))
+const snippetSegments = computed(() => highlightSegments(props.article.snippet, props.highlight))
 
 const publishedLabel = computed(
   () => formatDate(props.article.published_at ?? props.article.created_at),
@@ -72,12 +88,32 @@ function warm(): void {
             @mouseenter="warm"
             @focusin="warm"
           >
-            {{ article.title }}
+            <template v-for="(segment, index) in titleSegments" :key="index">
+              <mark v-if="segment.match" class="hl">{{ segment.text }}</mark>
+              <template v-else>{{ segment.text }}</template>
+            </template>
           </RouterLink>
         </h2>
 
-        <p v-if="article.summary" class="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-soft">
-          {{ article.summary }}
+        <!-- 命中片段优先于摘要：正文命中时标题与摘要里可能一个字都没有，
+             不给出处用户只能靠猜"这条为什么会出现"。 -->
+        <p
+          v-if="snippetSegments.length"
+          class="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-soft"
+        >
+          <template v-for="(segment, index) in snippetSegments" :key="index">
+            <mark v-if="segment.match" class="hl">{{ segment.text }}</mark>
+            <template v-else>{{ segment.text }}</template>
+          </template>
+        </p>
+        <p
+          v-else-if="article.summary"
+          class="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-soft"
+        >
+          <template v-for="(segment, index) in summarySegments" :key="index">
+            <mark v-if="segment.match" class="hl">{{ segment.text }}</mark>
+            <template v-else>{{ segment.text }}</template>
+          </template>
         </p>
 
         <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
