@@ -32,6 +32,24 @@
   `.gitignore` 补 `.import_linter_cache/` `backend/uv.lock` `.trae/`；
   `Makefile clean` 补齐缓存目录清理
 
+- 新增**文章版本历史**：内容（标题/摘要/正文）真正变化时自动存快照，
+  支持查看与一键恢复；恢复前会先为当前内容留一版，恢复错了可以退回
+- 新增**定时发布**：`published_at` 传未来时间即为排期，到点自动可见，
+  不需要任何定时任务；后台列表标记「定时发布」并提示
+- 搜索升级为 **SQLite FTS5 全文检索**（trigram 分词 + bm25 相关度排序），
+  两字以内的中文查询退回 LIKE 兜底；新增独立搜索页与「相关度 + 时间衰减」排序
+- 新增 **canonical 与 JSON-LD 结构化数据**（BlogPosting / WebSite + Person），
+  补齐 `og:site_name` / `og:locale` / twitter 卡片
+- 详情页显示「修订于」（内容确实改过时才出现，阈值 1 天）
+- 前端接入 **ESLint**（定位为抓 bug 与无障碍，不管排版风格），
+  纳入 `make check` 与 CI
+- CI 新增 **e2e job**：起前后端 + 真实浏览器跑 `smoke` 与 `interaction`，
+  失败时上传截图与双份服务日志
+- 新增 `backend/scripts/backup_db.py`（`VACUUM INTO` 一致性备份 + 轮转）
+  与 `backend/scripts/lint_imports.py`（跨平台分层契约检查）
+- `visit_logs` 增加留存清理（180 天，启动时自动执行，另有站长端可按需触发）
+- 测试基线更新：后端 **370** 例、前端 **138** 例
+
 ### 已修复
 
 - **登录成功后不跳转**：`auth` store 的 `login()` 成功时返回 `undefined`，
@@ -56,6 +74,37 @@
 - **Alembic 迁移与 ORM 建表索引漂移**：`create_notification_opt_outs` 迁移缺
   `(email, article_id)` 复合唯一索引，导致「`alembic upgrade` 建库」与「ORM 建表」
   两条路径产出的索引不一致、唯一约束实际失效；已在迁移中补齐并验证两条路径一致
+
+- **`X-Forwarded-For` 取值端写反导致限流可绕过 / 或全站被一个人锁死**：
+  取的是最左一跳（客户端可随意伪造），而 nginx 的 `$proxy_add_x_forwarded_for`
+  是**追加**语义、可信跳在最右；现优先取 `X-Real-IP`，否则取最右一跳
+- **生产环境缺少启动门禁**：用仓库里公开的默认 JWT 密钥 / 管理员口令
+  也能正常启动并对外服务；现 `APP_ENV=production` 时逐项校验并拒绝启动
+- **评论「网站」字段未校验协议**：前端直接绑到 `:href` 而 Vue 不清洗动态 href，
+  提交 `javascript:` 可存储并触发；现后端限定 http/https，前端兜底存量数据
+- **文章间跳转后目录高亮永久失效**：`IntersectionObserver` 只在 `onMounted` 建立，
+  而组件实例被复用；现随目录数据变化重建
+- **阅读量/点赞自增会改 `updated_at`**：列上的 `onupdate` 对 Core `update()`
+  同样生效，导致后台 `sort=updated` 变成「最近被看过的」、sitemap 的
+  `<lastmod>` 每次访问都变
+- **删光演示文章后重启应用起不来**：`seed_demo_content` 只按文章数判断，
+  而分类/标签的 name 是唯一键，重复插入触发 `IntegrityError` 并冒到 lifespan
+- **草稿与未到发布时间的文章的评论可被匿名读取**：读路径漏了可见性检查，
+  与详情页的 404 口径不一致
+- **搜索分页失效**：`total` 取的是本页条数，命中 12 条时显示 5 条，
+  前端据此判断「没有下一页」，第 6 条之后永远打不开；现为真实 COUNT + LIMIT/OFFSET
+- **搜索排序随查询字数变化**：短查询走列表接口因而「置顶优先」，
+  搜「数据」第一篇是只在正文顺带提及的置顶文章；现两条路径共用同一套排序语义
+- **前端静默失败面**：仪表盘 KPI 与用户列表加载失败时永远停在骨架屏/空表；
+  瞬时网络错误被永久缓存成「未登录」；主题 store 裸访问 `localStorage`
+  可能让整页空白
+- **无障碍**：`ConfirmDialog` / `MobileToc` 声明了 `aria-modal` 却不移动焦点、
+  不做 Tab 陷阱、移动目录从未锁定滚动；13 处表单控件只有 placeholder 没有可访问名称
+- **编辑器默认模式下每敲一个字跑整条 Markdown 渲染管线**（`v-show` 仍渲染子树）
+- `IntegrityError` 未翻译，并发写入冲突返回 500 而非 409
+- `articles_fts` 是虚拟表，`Base.metadata.create_all` 不会创建它，
+  而 autogenerate 会生成 `DROP TABLE articles_fts` —— 现补建 + 探测兜底 +
+  `include_object` 护栏
 
 ### 计划中
 
