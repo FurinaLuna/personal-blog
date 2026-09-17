@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { ApiError, articleApi, categoryApi, seriesApi, tagApi } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import RevisionHistory from '@/components/RevisionHistory.vue'
 import { useAction } from '@/composables/useAction'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useDraftAutosave } from '@/composables/useDraftAutosave'
@@ -31,6 +32,9 @@ const isEdit = computed(() => articleId.value !== null)
  * 前者不该重新拉取覆盖表单，后者必须。
  */
 let justSavedId: number | null = null
+
+/** 版本历史面板是否展开。收起时不请求，避免每次进编辑页都白拉一遍。 */
+const showHistory = ref(false)
 
 const form = ref({
   title: '',
@@ -272,6 +276,32 @@ async function save(status: ArticleStatus): Promise<void> {
   form.value.published_at = saved.published_at ?? ''
 }
 
+/**
+ * 从版本历史恢复之后：把返回的文章内容填回表单。
+ *
+ * 不在版本面板里直接改 form —— 表单是这一层拥有的状态，
+ * 让子组件去改父组件的数据源，会让「谁改了表单」变得难以追踪。
+ */
+function onRestored(restored: ArticleDetail): void {
+  form.value = {
+    title: restored.title,
+    slug: restored.slug,
+    summary: restored.summary ?? '',
+    content_md: restored.content_md,
+    cover_image: restored.cover_image ?? '',
+    status: restored.status,
+    published_at: restored.published_at ?? '',
+    is_top: restored.is_top,
+    allow_comment: restored.allow_comment,
+    category_id: restored.category?.id ?? null,
+    series_id: restored.series?.id ?? null,
+    series_order: restored.series_order ?? 0,
+    tags: restored.tags.map((tag) => tag.name),
+  }
+  // 恢复后的内容与本地草稿快照已经不一致，清掉以免下次进来提示「恢复未保存草稿」
+  draft.clear()
+}
+
 onMounted(async () => {
   void categories.run()
   void seriesOptions.run()
@@ -318,6 +348,15 @@ watch(
         <span v-if="form.slug" class="hidden font-mono text-xs text-ink-faint sm:inline">
           /article/{{ form.slug }}
         </span>
+        <button
+          v-if="isEdit"
+          type="button"
+          class="btn--ghost text-xs"
+          :aria-pressed="showHistory"
+          @click="showHistory = !showHistory"
+        >
+          {{ showHistory ? '隐藏历史' : '历史' }}
+        </button>
         <button type="button" class="btn--ghost" :disabled="action.running.value" @click="save('draft')">
           保存草稿
         </button>
@@ -560,6 +599,14 @@ watch(
             已发布文章的别名一旦改动，原有外链会失效，请谨慎修改。
           </p>
         </div>
+
+        <!-- 版本历史只在「编辑已有文章」时出现：
+             新建的文章还没有 id，也还没有任何历史可言 -->
+        <RevisionHistory
+          v-if="isEdit && articleId !== null && showHistory"
+          :article-id="articleId"
+          @restored="onRestored"
+        />
       </aside>
     </div>
 

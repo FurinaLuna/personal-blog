@@ -25,6 +25,7 @@ from app.models.enums import ArticleStatus, enum_values
 
 if TYPE_CHECKING:
     from app.models.comment import Comment
+    from app.models.revision import ArticleRevision
     from app.models.series import Series
     from app.models.taxonomy import Category, Tag
     from app.models.user import User
@@ -86,6 +87,12 @@ class Article(Base, TimestampMixin):
         secondary=article_tags, back_populates="articles", lazy="selectin"
     )
     comments: Mapped[list[Comment]] = relationship(
+        back_populates="article", cascade="all, delete-orphan", passive_deletes=True
+    )
+    # 版本历史。刻意**不设 lazy="selectin"**：文章详情/列表根本用不到版本，
+    # 预加载它等于每次读文章都多查一次全部历史——列表页会直接被打爆。
+    # 需要时由版本仓储显式查询。
+    revisions: Mapped[list[ArticleRevision]] = relationship(
         back_populates="article", cascade="all, delete-orphan", passive_deletes=True
     )
 

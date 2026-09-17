@@ -30,6 +30,7 @@ from app.schemas.attachment import ImageVariant
 from app.schemas.common import Page, PageParams
 from app.schemas.site import ArchiveGroup, ArchiveItem
 from app.services.attachment_service import AttachmentService
+from app.services.revision_service import RevisionService
 from app.services.series_service import SeriesService
 from app.services.taxonomy_service import TaxonomyService
 from app.utils.exceptions import (
@@ -158,6 +159,8 @@ class ArticleService:
         self.series = SeriesService(session)
         # 「封面 URL -> 多尺寸变体」的映射是附件域知识，装配在这里组合使用
         self.attachments = AttachmentService(session)
+        # 版本历史：只在内容真的变化时留痕，判定逻辑在 RevisionService 里
+        self.revisions = RevisionService(session)
 
     # ================================================================ 查询
 
@@ -443,6 +446,17 @@ class ArticleService:
         self._assert_can_edit(article, user)
 
         data = payload.model_dump(exclude_unset=True)
+
+        # 版本快照必须在**改之前**做，而且要在把 data 应用到对象上之前。
+        # 判定用的是「最终会写进去的值」：没传的字段沿用当前值，
+        # 所以这里先把三要素算出来，而不是只看 data 里有没有出现。
+        await self.revisions.snapshot_if_content_changed(
+            article,
+            new_title=data.get("title", article.title),
+            new_summary=data.get("summary", article.summary),
+            new_content_md=data.get("content_md", article.content_md),
+            author=user,
+        )
 
         if new_slug := data.pop("slug", None):
             # 只有显式传 slug 才改 URL。仅在标题变化时自动改 slug 是个坏主意——

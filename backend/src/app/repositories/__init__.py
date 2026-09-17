@@ -14,6 +14,7 @@ from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.base import BaseRepository
 from app.repositories.comment_repository import CommentRepository
 from app.repositories.notification_opt_out_repository import NotificationOptOutRepository
+from app.repositories.revision_repository import ArticleRevisionRepository
 from app.repositories.series_repository import SeriesRepository
 from app.repositories.site_repository import SiteRepository
 from app.repositories.taxonomy_repository import CategoryRepository, TagRepository
@@ -24,6 +25,7 @@ __all__ = [
     "ArticleFilter",
     "ArticleListRow",
     "ArticleRepository",
+    "ArticleRevisionRepository",
     "ArticleSorting",
     "AttachmentRepository",
     "BaseRepository",

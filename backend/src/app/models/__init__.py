@@ -11,6 +11,7 @@ from app.models.attachment import Attachment
 from app.models.comment import Comment
 from app.models.enums import ArticleSort, ArticleStatus, UserRole
 from app.models.notification_opt_out import NotificationOptOut
+from app.models.revision import ArticleRevision
 from app.models.series import Series
 from app.models.site import SiteProfile
 from app.models.taxonomy import Category, Tag
@@ -19,6 +20,7 @@ from app.models.visit_log import VisitLog
 
 __all__ = [
     "Article",
+    "ArticleRevision",
     "ArticleSort",
     "ArticleStatus",
     "Attachment",

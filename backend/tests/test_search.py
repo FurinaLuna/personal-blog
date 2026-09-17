@@ -38,9 +38,7 @@ class TestSearchBasics:
         """q 是必填的，空串直接 422，而不是返回全站文章。"""
         assert (await client.get(SEARCH_URL)).status_code == 422
 
-    async def test_matches_title(
-        self, client: AsyncClient, author_headers: dict[str, str]
-    ) -> None:
+    async def test_matches_title(self, client: AsyncClient, author_headers: dict[str, str]) -> None:
         article = await _publish(
             client, author_headers, title="深入理解 PostgreSQL 的索引", content_md="正文内容"
         )
@@ -210,7 +208,7 @@ class TestFallbackWithoutIndex:
             content_md="关键词 Trombone",
         )
 
-        async def no_index(_session):  # noqa: ANN001, ANN202
+        async def no_index(_session):
             return False
 
         monkeypatch.setattr(fulltext, "fulltext_available", no_index)

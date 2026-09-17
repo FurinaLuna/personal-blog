@@ -35,6 +35,29 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# FTS5 全文检索的虚拟表（以及 SQLite 自动生成的影子表）。
+# 它们不在 Base.metadata 里——是**虚拟表**，由迁移或应用启动时用裸 DDL 建的。
+_FTS_TABLE_PREFIX = "articles_fts"
+
+
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    """告诉 autogenerate 忽略哪些对象。
+
+    **这是一个防误删的护栏，不是洁癖。** ``articles_fts`` 是 FTS5 虚拟表，
+    数据库里有、``Base.metadata`` 里没有，所以 autogenerate 会认为
+    「这个表被删掉了」，于是在下次 ``make migration`` 时生成一条
+    ``DROP TABLE articles_fts``——跑下去就是**搜索索引被静默删掉**，
+    而且它出现在一个看起来完全无关的迁移里，review 时极容易漏过。
+
+    SQLite 还会为虚拟表自动建 ``articles_fts_data`` / ``_idx`` / ``_docsize``
+    / ``_config`` 这几张影子表，同样要一并排除。用前缀匹配，
+    将来加别的 FTS 表也不用回来改。
+    """
+    # 等价于 return not (...)：写成提前 return 更贴合「默认全都要、只排除 FTS」的意图
+    return not (type_ == "table" and name is not None and name.startswith(_FTS_TABLE_PREFIX))
+
 
 def render_item(type_: str, obj: object, autogen_context: object) -> str | bool:
     """自定义类型的迁移渲染方式。
@@ -64,6 +87,7 @@ def run_migrations_offline() -> None:
         compare_type=True,
         compare_server_default=True,
         render_item=render_item,
+        include_object=include_object,
         # SQLite 不支持 ALTER COLUMN，必须开启批处理模式
         render_as_batch=settings.database_url.startswith("sqlite"),
     )
@@ -80,6 +104,7 @@ def do_run_migrations(connection: Connection) -> None:
         compare_type=True,
         compare_server_default=True,
         render_item=render_item,
+        include_object=include_object,
         render_as_batch=settings.database_url.startswith("sqlite"),
     )
     with context.begin_transaction():
