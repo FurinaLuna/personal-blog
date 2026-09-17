@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
+from app.utils.ratelimit import limiter
 from tests.factories import make_article_payload
 
 
@@ -98,6 +99,62 @@ class TestCreate:
             json={"author_name": "甲", "content": "   "},
         )
         assert response.status_code == 422
+
+    async def test_javascript_scheme_site_rejected(
+        self, client: AsyncClient, published_article: dict
+    ) -> None:
+        """网站字段必须挡掉伪协议。
+
+        前端把它直接绑到 `:href` 上，而 Vue 不清洗动态 href——
+        放行 `javascript:` 等于给访客一个存储型 XSS 的入口。
+        """
+        for evil in (
+            "javascript:alert(document.cookie)",
+            "JavaScript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            # 换行拆开伪协议：浏览器解析 URL 时会把空白剥掉，
+            # 所以这一条在浏览器眼里就是 `javascript:alert(1)`
+            "java\nscript:alert(1)",
+            "  javascript:alert(1)  ",
+        ):
+            # 每条都要重置限流：评论配额是 5 次/分，用例里连续发 6 条
+            # 会被自己的限流挡成 429，看起来像校验没生效
+            limiter.reset()
+            response = await client.post(
+                f"/api/v1/comments/article/{published_article['id']}",
+                json=_comment(author_site=evil),
+            )
+            assert response.status_code == 422, f"{evil!r} 竟然被接受了"
+
+    async def test_http_site_accepted_and_bare_domain_normalized(
+        self, client: AsyncClient, published_article: dict
+    ) -> None:
+        """正常网址要能用：带协议的保持原样，裸域名补 https。"""
+        response = await client.post(
+            f"/api/v1/comments/article/{published_article['id']}",
+            json=_comment(author_site="https://example.com/about"),
+        )
+        assert response.status_code == 201
+        assert response.json()["author_site"] == "https://example.com/about"
+
+        bare = await client.post(
+            f"/api/v1/comments/article/{published_article['id']}",
+            json=_comment(author_site="example.com"),
+        )
+        assert bare.status_code == 201
+        assert bare.json()["author_site"] == "https://example.com"
+
+    async def test_blank_site_becomes_null(
+        self, client: AsyncClient, published_article: dict
+    ) -> None:
+        """留空是「没填」，不是「填错了」。"""
+        response = await client.post(
+            f"/api/v1/comments/article/{published_article['id']}",
+            json=_comment(author_site="   "),
+        )
+        assert response.status_code == 201
+        assert response.json()["author_site"] is None
 
     async def test_too_long_content_rejected(
         self, client: AsyncClient, published_article: dict

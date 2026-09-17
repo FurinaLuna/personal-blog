@@ -13,6 +13,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # backend/ 目录（config.py -> app/ -> src/ -> backend/）
 BASE_DIR = Path(__file__).resolve().parents[2]
 
+# 开发默认值单独抽成常量：check_production_safety() 要拿它做「是否仍在使用
+# 仓库里公开的默认值」的比对，写成两处字面量迟早会改漏一处而让门禁失效。
+_DEFAULT_JWT_SECRET = "dev-only-secret-key-change-me-in-production-0123456789"
+_DEFAULT_ADMIN_PASSWORD = "admin123456"
+
 
 class Settings(BaseSettings):
     """全局配置对象。
@@ -46,7 +51,7 @@ class Settings(BaseSettings):
     # ---------- JWT ----------
     # 开发默认值刻意凑够 32 字节以上：PyJWT 对 HS256 的密钥长度有下限警告，
     # 密钥长度不足会显著降低签名强度。生产必须用 `openssl rand -hex 32` 重新生成。
-    jwt_secret_key: str = "dev-only-secret-key-change-me-in-production-0123456789"
+    jwt_secret_key: str = _DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
     refresh_token_expire_days: int = 7
@@ -126,7 +131,7 @@ class Settings(BaseSettings):
     # ---------- 初始化管理员 / 演示数据 ----------
     admin_username: str = "admin"
     admin_email: str = "admin@example.com"
-    admin_password: str = "admin123456"
+    admin_password: str = _DEFAULT_ADMIN_PASSWORD
     seed_demo_data: bool = True
 
     @field_validator(
@@ -153,6 +158,65 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
+
+    def check_production_safety(self) -> list[str]:
+        """生产环境的安全门禁：返回所有「用开发默认值上生产」的问题清单。
+
+        为什么需要它：``is_production`` 原本只用来决定要不要关掉 ``/docs``，
+        也就是说一个只改了 ``APP_ENV=production`` 的实例，会带着
+        **写在开源仓库里的 JWT 密钥和管理员密码** 正常启动并对外服务。
+        这类配置错误的代价是不可逆的——密钥一旦公开就不能再算作秘密。
+
+        返回清单而不是直接抛异常，是为了把问题一次报全：运维改一轮就该过，
+        而不是修一个报一个。
+
+        Returns:
+            人类可读的问题描述列表；生产环境无问题时为空列表。
+        """
+        if not self.is_production:
+            return []
+
+        problems: list[str] = []
+
+        # 密钥：默认值人人可见，长度不足则 HS256 强度不够
+        if self.jwt_secret_key == _DEFAULT_JWT_SECRET:
+            problems.append(
+                "JWT_SECRET_KEY 仍是仓库里的开发默认值——任何人都能伪造登录态。"
+                "请用 `openssl rand -hex 32` 生成后写入环境变量。"
+            )
+        elif len(self.jwt_secret_key.encode("utf-8")) < 32:
+            secret_bytes = len(self.jwt_secret_key.encode("utf-8"))
+            problems.append(
+                f"JWT_SECRET_KEY 长度不足 32 字节（当前 {secret_bytes}），"
+                "HS256 签名强度不够。请用 `openssl rand -hex 32` 重新生成。"
+            )
+
+        # 管理员口令：默认值同样是公开的。首次启动会用它建号，
+        # 即使之后在后台改过密码，这个默认值留在 .env 里也仍是隐患。
+        if self.admin_password == _DEFAULT_ADMIN_PASSWORD:
+            problems.append(
+                "ADMIN_PASSWORD 仍是仓库里的开发默认值——等于把管理员账号公开。"
+                "请改成强口令（首次启动 / 重置数据库时才会真正生效）。"
+            )
+        elif len(self.admin_password) < 8:
+            problems.append("ADMIN_PASSWORD 少于 8 位，请改成更强的口令。")
+
+        # 生产必须由 Alembic 管表结构。开着它意味着「改错模型 = 生产库被静默改表」
+        if self.db_auto_create:
+            problems.append(
+                "DB_AUTO_CREATE=true：生产必须设为 false，改由 `alembic upgrade head` 管理表结构，"
+                "否则一次模型误改就会在生产悄悄改表。"
+            )
+
+        # 演示数据会往生产库里塞 4 篇假文章，且是 ensure_seed 的触发条件
+        if self.seed_demo_data:
+            problems.append("SEED_DEMO_DATA=true：生产必须设为 false，否则会写入演示文章。")
+
+        # Debug 打开时异常会带堆栈细节
+        if self.debug:
+            problems.append("DEBUG=true：生产必须设为 false，避免把内部堆栈暴露给访客。")
+
+        return problems
 
     @property
     def upload_dir(self) -> Path:

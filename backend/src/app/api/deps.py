@@ -104,6 +104,13 @@ AdminUser = Annotated[User, Depends(require_admin)]
 AuthorUser = Annotated[User, Depends(require_author)]
 
 
+def _clean_ip(value: str | None) -> str | None:
+    """规范化候选 IP：去空白、丢弃明显非法的空串、限长防日志/内存被灌爆。"""
+    if not value:
+        return None
+    return value.strip()[:64] or None
+
+
 def client_ip(request: Request) -> str | None:
     """取客户端 IP。
 
@@ -111,12 +118,26 @@ def client_ip(request: Request) -> str | None:
     盲信它等于把限流变成「改个头就能绕过」，更糟的是能借伪造 IP 把别人封掉，
     或者把伪造 IP 当成评论者地址存进数据库。
     只有当部署确实在可信反代（nginx）之后时，才通过 ``TRUST_PROXY_HEADERS=true`` 打开。
+
+    **取值端是右不是左**（这里曾经取错过，是个真实的限流绕过漏洞）：
+
+    - ``X-Real-IP`` 优先。nginx 配置写的是 ``proxy_set_header X-Real-IP $remote_addr``，
+      它恒等于 nginx 直连的对端地址，客户端改不动。
+    - ``X-Forwarded-For`` 退而取**最右一跳**。因为 nginx 用的是
+      ``$proxy_add_x_forwarded_for``，它的语义是「在客户端传来的值后面**追加** $remote_addr」，
+      所以最右才是最近一跳可信代理写进去的、真正的来源 IP；最左是客户端自己塞的。
+      取最左等于「谁都能换个头拿一个全新的限流桶」，限流形同不存在，
+      而且伪造 IP 会被当成评论者地址存库。
     """
     if settings.trust_proxy_headers:
+        real_ip = _clean_ip(request.headers.get("X-Real-IP"))
+        if real_ip:
+            return real_ip
+
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
-            # 只取第一跳：右侧的若干跳是代理自己追加的，语义上是「更近的代理」
-            return forwarded.split(",")[0].strip()[:64] or None
+            # 取最右一跳：那才是最近的代理追加的，左侧都是可伪造的
+            return _clean_ip(forwarded.split(",")[-1])
     return request.client.host if request.client else None
 
 

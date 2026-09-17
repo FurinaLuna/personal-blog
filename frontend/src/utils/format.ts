@@ -121,3 +121,25 @@ export function truncate(text: string, limit: number): string {
 export function buildSrcset(variants: ImageVariant[]): string {
   return variants.map((variant) => `${variant.url} ${variant.width}w`).join(', ')
 }
+
+/**
+ * 过滤出可以安全放进 `href` 的地址，不安全时返回 `null`（调用方渲染成纯文本）。
+ *
+ * 为什么需要：Vue **不清洗**动态 `href`，`javascript:` / `data:` 这类伪协议
+ * 会被原样写进 DOM。评论的「网站」字段完全由访客控制，后端虽然已加了
+ * http/https 校验，但**库里可能还留着修复之前存下的脏数据**，
+ * 所以前端这道防线不是重复劳动，而是给存量数据兜底。
+ */
+export function safeExternalUrl(value: string | null | undefined): string | null {
+  if (!value) return null
+  const candidate = value.trim()
+  if (!candidate) return null
+  try {
+    // 用 URL 解析而不是正则：正则很容易被 `java\nscript:`、大小写混写、
+    // 前置空白这类变体绕过；URL 解析走的是浏览器同一套规则。
+    const url = new URL(candidate)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}

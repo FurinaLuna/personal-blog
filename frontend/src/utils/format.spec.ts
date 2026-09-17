@@ -12,6 +12,7 @@ import {
   formatCount,
   formatReadingTime,
   formatYearMonth,
+  safeExternalUrl,
 } from '@/utils/format'
 
 describe('formatCount', () => {
@@ -74,5 +75,28 @@ describe('buildSrcset', () => {
 
   it('空列表返回空串，调用方用 || undefined 让属性不渲染', () => {
     expect(buildSrcset([])).toBe('')
+  })
+})
+
+describe('safeExternalUrl', () => {
+  it('放行 http / https', () => {
+    expect(safeExternalUrl('https://example.com/a')).toBe('https://example.com/a')
+    expect(safeExternalUrl('http://example.com')).toBe('http://example.com/')
+  })
+
+  it('挡掉伪协议——Vue 不清洗动态 href，这些会被原样写进 DOM', () => {
+    expect(safeExternalUrl('javascript:alert(document.cookie)')).toBeNull()
+    expect(safeExternalUrl('JavaScript:alert(1)')).toBeNull()
+    expect(safeExternalUrl('  javascript:alert(1)')).toBeNull()
+    expect(safeExternalUrl('data:text/html,<script>alert(1)</script>')).toBeNull()
+    expect(safeExternalUrl('vbscript:msgbox(1)')).toBeNull()
+  })
+
+  it('空值与垃圾输入返回 null，交给调用方渲染成纯文本', () => {
+    expect(safeExternalUrl(null)).toBeNull()
+    expect(safeExternalUrl(undefined)).toBeNull()
+    expect(safeExternalUrl('')).toBeNull()
+    expect(safeExternalUrl('   ')).toBeNull()
+    expect(safeExternalUrl('不是一个网址')).toBeNull()
   })
 })

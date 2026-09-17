@@ -106,8 +106,30 @@ def _register_exception_handlers(app: FastAPI) -> None:
         )
 
 
+def _enforce_production_safety() -> None:
+    """生产启动门禁：带着开发默认值上生产就直接拒绝启动。
+
+    这类问题的代价不可逆（密钥一旦公开就不再是秘密），所以选择「启动失败」
+    而不是「打条警告继续跑」——警告在容器日志里没人看，而启动失败一定会被处理。
+
+    Raises:
+        RuntimeError: 生产环境下仍在使用不安全的默认配置。
+    """
+    problems = settings.check_production_safety()
+    if not problems:
+        return
+    detail = "\n".join(f"  {index}. {text}" for index, text in enumerate(problems, start=1))
+    raise RuntimeError(
+        "检测到生产环境使用不安全的默认配置，已拒绝启动：\n"
+        f"{detail}\n"
+        "（这些默认值都写在开源仓库里，等同于公开。逐条修正 backend/.env 后重启即可。）"
+    )
+
+
 def create_app() -> FastAPI:
     """应用工厂。测试里也用它，保证测试环境的 app 与生产同构。"""
+    _enforce_production_safety()
+
     setup_logging(
         json_output=settings.log_json,
         level=getattr(logging, settings.log_level.upper(), logging.INFO),

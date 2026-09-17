@@ -15,7 +15,7 @@ import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { useSiteStore } from '@/stores/site'
 import type { Comment } from '@/types'
-import { formatRelative } from '@/utils/format'
+import { formatRelative, safeExternalUrl } from '@/utils/format'
 
 const props = defineProps<{
   articleId: number
@@ -143,9 +143,12 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
         </p>
 
         <div class="mt-2 flex items-center gap-3 text-xs">
+          <!-- 地址必须过一遍 safeExternalUrl：Vue 不清洗动态 href，
+               而 author_site 完全由访客控制，`javascript:` 会被原样写进 DOM。
+               存量数据里可能有修复之前存入的脏值，所以这里始终拦截。 -->
           <a
-            v-if="comment.author_site"
-            :href="comment.author_site"
+            v-if="safeExternalUrl(comment.author_site)"
+            :href="safeExternalUrl(comment.author_site)!"
             target="_blank"
             rel="noopener noreferrer nofollow"
             class="text-brand-600 hover:text-brand-700"

@@ -63,18 +63,49 @@ class TestRateLimitIsolation:
         assert blocked.status_code == 429
 
     def test_trusted_proxy_header_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """打开 TRUST_PROXY_HEADERS 后，取第一跳作为客户端 IP。"""
+        """打开 TRUST_PROXY_HEADERS 后，取最右一跳作为客户端 IP。
+
+        最右一跳才是最近的可信代理（nginx 用 $proxy_add_x_forwarded_for **追加**）
+        写进去的真实来源；左侧全部由客户端提供，可任意伪造。
+        早期实现取的是最左，导致「改个请求头就换一个限流桶」。
+        """
 
         class FakeRequest:
-            def __init__(self) -> None:
-                self.headers = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
+            def __init__(self, headers: dict[str, str]) -> None:
+                self.headers = headers
+                self.client = type("Client", (), {"host": "10.0.0.1"})()
+
+        # 客户端伪造了最左一跳；可信的是 nginx 追加在最右的真实来源
+        monkeypatch.setattr(settings, "trust_proxy_headers", True)
+        assert client_ip(FakeRequest({"X-Forwarded-For": "9.9.9.9, 203.0.113.7"})) == "203.0.113.7"
+
+        # X-Real-IP 优先于 XFF：nginx 里它恒等于 $remote_addr，客户端改不动
+        assert (
+            client_ip(FakeRequest({"X-Real-IP": "203.0.113.9", "X-Forwarded-For": "9.9.9.9"}))
+            == "203.0.113.9"
+        )
+
+        # 仅单跳时最右即最左，行为不变
+        assert client_ip(FakeRequest({"X-Forwarded-For": "203.0.113.7"})) == "203.0.113.7"
+
+        monkeypatch.setattr(settings, "trust_proxy_headers", False)
+        assert client_ip(FakeRequest({"X-Forwarded-For": "9.9.9.9, 203.0.113.7"})) == "10.0.0.1"
+
+    def test_spoofed_xff_cannot_create_unlimited_buckets(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """伪造 XFF 不能绕过限流：不同伪造值必须映射到同一个桶。"""
+
+        class FakeRequest:
+            def __init__(self, spoofed: str) -> None:
+                self.headers = {"X-Forwarded-For": f"{spoofed}, 203.0.113.7"}
                 self.client = type("Client", (), {"host": "10.0.0.1"})()
 
         monkeypatch.setattr(settings, "trust_proxy_headers", True)
-        assert client_ip(FakeRequest()) == "203.0.113.7"  # type: ignore[arg-type]
-
-        monkeypatch.setattr(settings, "trust_proxy_headers", False)
-        assert client_ip(FakeRequest()) == "10.0.0.1"  # type: ignore[arg-type]
+        # 攻击者不断换最左值，但我们只认最右，所以永远得到同一个 IP
+        assert client_ip(FakeRequest("1.1.1.1")) == "203.0.113.7"  # type: ignore[arg-type]
+        assert client_ip(FakeRequest("2.2.2.2")) == "203.0.113.7"  # type: ignore[arg-type]
+        assert client_ip(FakeRequest("3.3.3.3")) == "203.0.113.7"  # type: ignore[arg-type]
 
     async def test_comment_and_login_buckets_are_independent(self, client: AsyncClient) -> None:
         """规则名参与 key：登录刷满不该把评论也一起封掉。"""
