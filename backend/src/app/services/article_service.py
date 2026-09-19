@@ -52,20 +52,26 @@ ALL_STATUSES: tuple[ArticleStatus, ...] = (
 )
 
 
+def _normalize_published_at(value: datetime) -> datetime:
+    """把客户端传来的时间归一成「UTC 带时区」。
+
+    接口可能收到带偏移的时间（``+08:00``）或不带时区的裸时间。前者要换算，
+    后者按 UTC 解释——混着存会让「谁先谁后」的比较结果取决于服务器时区，
+    是最难查的一类 bug。
+    """
+    return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+
+
 def _resolve_published_at(status: ArticleStatus, requested: datetime | None) -> datetime | None:
-    """决定文章最终落库的 ``published_at``。
+    """决定**新建**文章落库的 ``published_at``。
 
     规则：
     - 显式传了时间就以它为准（**未来时间即定时发布**）；
     - 没传但状态是「已发布」→ 立刻发布，取当前时间；
     - 其余情况（草稿 / 归档）→ 不设发布时间。
-
-    还必须把时区归一成 UTC：接口可能收到带偏移的时间（``+08:00``）或
-    不带时区的裸时间。前者要换算，后者按 UTC 解释——混着存会让
-    「谁先谁后」的比较结果取决于服务器时区，是最难查的一类 bug。
     """
     if requested is not None:
-        return requested.astimezone(UTC) if requested.tzinfo else requested.replace(tzinfo=UTC)
+        return _normalize_published_at(requested)
     if status is ArticleStatus.PUBLISHED:
         return datetime.now(UTC)
     return None
@@ -496,19 +502,30 @@ class ArticleService:
             # 显式传 null 表示移出系列（FK 置空）；系列规则由 SeriesService 校验
             data["series"] = await self.series.ensure_series(data.pop("series_id"))
 
-        # 显式传了 published_at 就以它为准（未来时间 = 定时发布 / 改期）
-        if "published_at" in data:
-            requested = data.pop("published_at")
-            data["published_at"] = (
-                requested.astimezone(UTC)
-                if requested is not None and requested.tzinfo
-                else (requested.replace(tzinfo=UTC) if requested is not None else None)
-            )
-        elif data.get("status") is ArticleStatus.PUBLISHED and article.published_at is None:
-            # 首次发布且没指定时间：立刻发布。
-            # 注意是 elif——显式传了时间就不能被这里覆盖掉，
-            # 否则「设定一个未来的发布时间」会被无声地改成「现在」。
-            data["published_at"] = datetime.now(UTC)
+        # ``published_at`` 的处理有一条不变量：**published 状态不能没有发布时间**。
+        #
+        # 违反它的后果很隐蔽：``is_publicly_visible()`` 对 published 且
+        # ``published_at is None`` 返回 False，于是文章对**公众彻底消失**
+        # （详情 404、不进列表、不接受评论），而作者自己因为
+        # ``_can_view`` 放行仍然看得到 —— 编辑器里一切正常，谁都发现不了。
+        #
+        # 这里踩过一次：写成 ``if "published_at" in data: ... elif ...``，
+        # 而前端每次保存都会带上 ``published_at: form.published_at || null``，
+        # 于是 if 分支永远命中、把 NULL 写回去，elif 成了死代码。
+        # 「新建草稿 → 点发布」走的正是这条路径，等于**所有经编辑器发布的文章
+        # 都对访客不可见**。
+        status_after = data.get("status", article.status)
+
+        if data.get("published_at") is not None:
+            # 显式给了时间（含未来的定时发布）：以它为准
+            data["published_at"] = _normalize_published_at(data["published_at"])
+        else:
+            # 没传，或显式传了 null。两种情况都**不能直接写 None**：
+            # 已有的发布时间要保留（重发一次不该让旧文掉出列表），
+            # 缺了则按最终状态补齐。
+            data.pop("published_at", None)
+            if status_after is ArticleStatus.PUBLISHED and article.published_at is None:
+                data["published_at"] = datetime.now(UTC)
 
         # 按约定过滤 None：只允许 NULLABLE_FIELDS 里的字段被清空
         cleaned = {

@@ -145,13 +145,50 @@ jobs:
           DATABASE_URL: sqlite+aiosqlite:///./ci_migration.db
           SEED_DEMO_DATA: 'false'
 
+  audit:
+    # 依赖漏洞是"上线时才发现、但上线前就能查出来"的典型。前端有 npm audit
+    # 的记录，后端此前完全没有 —— 这个 job 补上那半边。
+    #
+    # 单独成 job 而不是塞进 backend job：漏洞公告随时会新增，
+    # 让它失败时一眼能看出是"依赖有洞"而不是"代码挂了"。
+    name: 依赖 · 漏洞审计
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 刻意不把它加进 requirements.lock：安全扫描器需要**最新的漏洞库**，
+      # 把它钉死在某个版本反而会漏掉新公告。它是 CI 工具，不是运行时依赖。
+      - name: 安装 pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      # 审计的是锁文件 —— 也就是 CI 与生产镜像真正安装的那套版本。
+      # 拿 pyproject 的范围去审计没有意义（那只是一个区间）。
+      - name: 审计后端依赖（requirements.lock）
+        working-directory: backend
+        run: pip-audit -r requirements.lock --strict
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 前端用 lock 文件审计生产依赖；devDependencies 的漏洞不影响产物，
+      # 但 npm audit 默认会一起报，用 --omit=dev 聚焦真正会进产物的那些。
+      - name: 审计前端依赖（package-lock.json）
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
   e2e:
     # 为什么端到端必须进 CI：
     # 这个仓库里出现过的几个真实缺陷——「登录后被弹回登录页」「后台侧边栏渲染两遍」
     # 「文章间跳转后目录失效」——都有一个共同特征：类型检查全绿、单元测试全过、
     # 构建成功，只有真正打开浏览器才会暴露。它们此前只在本地跑，
     # 等于最值钱的那张回归网没有接到流水线上。
-    name: 端到端 · 真实浏览器（smoke + interaction）
+    name: 端到端 · 真实浏览器（smoke + interaction + full-check）
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -225,6 +262,11 @@ jobs:
 
       - name: 交互验证（真实点击的失败路径与写操作）
         run: node tools/interaction-check.mjs ./shots/interaction
+
+      # 全功能回归：后台写操作生命周期 + 列表边界 + 详情页交互 + 数据基线核对。
+      # 它会写数据但自清理；CI 的库本来就是一次性的，结束时核对基线正好。
+      - name: 全功能回归（写操作生命周期 + 数据基线核对）
+        run: node tools/full-check.mjs http://127.0.0.1:5173 ./shots/full
 
       # 失败时的现场比日志有用得多：截图能直接看出是渲染问题还是数据问题
       - name: 上传失败现场（截图与报告）

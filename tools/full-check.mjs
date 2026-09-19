@@ -892,7 +892,15 @@ try {
       const nested = document.querySelectorAll('#comments ul li').length
       return { ok: true, posted: Boolean(mine), hint, nested }
     })()`, true)
-    record('D8 二级评论：发表 → 回复 → 嵌套渲染', d8?.ok && d8?.posted && d8?.hint, `回复提示=${d8?.hint} 嵌套项=${d8?.nested}`)
+    // 失败详情要把三个条件都列出来：只写 hint 的话，`posted=false`
+    //（评论压根没出现）看起来会和「评论出现了但回复按钮没生效」一模一样，
+    // 而这两者的排查方向完全不同。
+    record(
+      'D8 二级评论：发表 → 回复 → 嵌套渲染',
+      d8?.ok && d8?.posted && d8?.hint,
+      `已发表=${d8?.posted} 回复提示=${d8?.hint} 嵌套项=${d8?.nested}` +
+        `${d8?.reason ? ` 原因=${d8.reason}` : ''} `,
+    )
 
     // 登记本轮评论，供 cleanup 回收
     const commentList = await api(`/api/v1/comments/article/${articleId}`)

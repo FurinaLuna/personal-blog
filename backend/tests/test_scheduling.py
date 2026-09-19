@@ -292,3 +292,108 @@ class TestScheduledPublishing:
         # （响应体里是 detail 而不是 items，断言会以 KeyError 的形式炸出来）
         listing = (await client.get("/api/v1/articles/manage/list", headers=admin_headers)).json()
         assert created["id"] in [item["id"] for item in listing["items"]]
+
+
+class TestPublishedAtInvariant:
+    """不变量：**published 状态不能没有发布时间**。
+
+    违反它的后果极度隐蔽 —— ``is_publicly_visible()`` 对
+    「published 但 published_at is None」返回 False，于是文章对公众
+    彻底消失（详情 404、不进列表、不接受评论），而作者自己因为
+    ``_can_view`` 放行仍然看得到。编辑器里一切正常，谁都发现不了。
+
+    这里踩过一次：更新逻辑写成 ``if "published_at" in data: ... elif ...``，
+    而前端每次保存都会带 ``published_at: form.published_at || null``，
+    于是 if 分支永远命中、把 NULL 写回去，elif 成了死代码 ——
+    等于**所有经编辑器发布的文章都对访客不可见**。
+    """
+
+    async def test_publishing_draft_with_explicit_null_sets_time(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """草稿 → 点发布（前端会带 published_at: null）→ 必须有发布时间。
+
+        这正是「点发布按钮」走的真实路径。
+        """
+        draft = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(title="草稿", content_md="x", status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+        assert draft["published_at"] is None
+
+        published = await client.patch(
+            f"/api/v1/articles/{draft['id']}",
+            json={"status": "published", "published_at": None},
+            headers=author_headers,
+        )
+        assert published.status_code == 200, published.text
+        body = published.json()
+        assert body["published_at"] is not None, "发布后没有发布时间 = 对公众不可见"
+        assert body["is_scheduled"] is False
+
+        # 对公众真的可见（这才是真正要保的东西）
+        assert (await client.get(f"/api/v1/articles/{draft['slug']}")).status_code == 200
+
+    async def test_republish_with_null_keeps_existing_time(
+        self, client: AsyncClient, published_article: dict, author_headers: dict[str, str]
+    ) -> None:
+        """已发布文章重发一次（正文改了、published_at 仍传 null）→ 发布时间保留。
+
+        不保留的话，作者每改一次错别字，文章就会掉出列表一次。
+        """
+        original = published_article["published_at"]
+
+        updated = await client.patch(
+            f"/api/v1/articles/{published_article['id']}",
+            json={"content_md": "改过的正文", "published_at": None},
+            headers=author_headers,
+        )
+        assert updated.status_code == 200
+        assert updated.json()["published_at"] == original
+        assert (
+            await client.get(f"/api/v1/articles/{published_article['slug']}")
+        ).status_code == 200
+
+    async def test_explicit_future_time_still_wins(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """修 published_at 不能把「定时发布」一起修坏：显式时间仍然优先。"""
+        article = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(title="定时", content_md="x", status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+
+        future = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+        updated = await client.patch(
+            f"/api/v1/articles/{article['id']}",
+            json={"status": "published", "published_at": future},
+            headers=author_headers,
+        )
+        assert updated.json()["is_scheduled"] is True
+        assert (await client.get(f"/api/v1/articles/{article['slug']}")).status_code == 404
+
+    async def test_no_published_article_without_time_exists_in_list(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """守住不变量本身：列表里出现的已发布文章都必须有时间。
+
+        这是「用户真正会遇到的现象」层面的断言——即使将来改动了实现，
+        只要这条成立，就不会出现「草稿发布后对访客消失」。
+        """
+        for index in range(3):
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(
+                    title=f"发布不变量 {index}", content_md="x", status="draft"
+                ),
+                headers=author_headers,
+            )
+        listing = (await client.get("/api/v1/articles?page_size=50")).json()
+        for item in listing["items"]:
+            assert item["published_at"] is not None, f"{item['title']} 已发布却没有发布时间"
