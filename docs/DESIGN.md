@@ -756,25 +756,28 @@ python-multipart, pyjwt, bcrypt, pillow
 git clone <你的仓库地址> personal-blog && cd personal-blog
 
 # 2. 准备生产配置
-cp backend/.env.example backend/.env
-#   编辑 backend/.env，至少改这四项：
-#     APP_ENV=production
-#     DEBUG=false
-#     DB_AUTO_CREATE=false
-#     JWT_SECRET_KEY=$(openssl rand -hex 32)
-#     ADMIN_PASSWORD=<强密码>
-#     SEED_DEMO_DATA=false
+#    ⚠️ 是**项目根目录**的 .env，不是 backend/.env：
+#    compose 的变量插值只读根目录这一份，backend/.env 是裸机开发用的。
+cp .env.example .env
+#    编辑 .env，三处必填（缺了 compose 直接拒绝启动）：
+#      POSTGRES_PASSWORD=<数据库口令>
+#      JWT_SECRET_KEY=$(openssl rand -hex 32)
+#      ADMIN_PASSWORD=<站长初始强口令>
+#    上线还要改：SITE_BASE_URL=https://你的域名
+#    APP_ENV / DEBUG / DB_AUTO_CREATE / SEED_DEMO_DATA 已由 compose 按
+#    生产侧设好，一般不用动。
 
-# 3. 构建并启动
+# 3. 构建并启动（容器入口会自动跑 alembic upgrade head）
 docker compose up -d --build
 
-# 4. 初始化数据库结构（生产用迁移，不用 create_all）
-docker compose exec backend alembic upgrade head
-
-# 5. 确认
-curl -fsS http://localhost:8000/health
+# 4. 确认
+curl -fsS http://localhost:8080/health
 docker compose ps
 ```
+
+> 后端**不发布** 8000 端口，上面这个 `/health` 是经 Nginx 反代的。
+> 想看接口文档要在根 `.env` 里设 `APP_ENV=development`（生产会关掉 `/docs`），
+> 或用 `docker compose exec backend curl -s 127.0.0.1:8000/health` 在容器内自测。
 
 #### 方式 B：裸机部署
 

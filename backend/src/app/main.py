@@ -200,7 +200,8 @@ def _enforce_production_safety() -> None:
     raise RuntimeError(
         "检测到生产环境使用不安全的默认配置，已拒绝启动：\n"
         f"{detail}\n"
-        "（这些默认值都写在开源仓库里，等同于公开。逐条修正 backend/.env 后重启即可。）"
+        "（这些默认值都写在开源仓库里，等同于公开。逐条修正后重启即可："
+        "Docker 部署改**项目根目录**的 .env，裸机部署改 backend/.env。）"
     )
 
 

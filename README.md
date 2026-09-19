@@ -246,7 +246,10 @@ personal-blog/
 
 ## 配置项
 
-全部通过环境变量注入，模板见 [`backend/.env.example`](backend/.env.example)。
+全部通过环境变量注入。Docker 部署的模板是根目录
+[`.env.example`](.env.example)，裸机开发的模板是
+[`backend/.env.example`](backend/.env.example)（内容更全，含上传白名单、
+限流、图片尺寸档位等）。
 **开发环境大部分可保持默认**，生产必须改的项已在表中标出。
 
 | 变量 | 默认值 | 说明 |
@@ -343,16 +346,27 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 
 ## 部署
 
+Docker Compose 部署读的是**项目根目录**的 `.env`（compose 的变量插值只认这个位置）：
+
 ```bash
-cp backend/.env.example backend/.env
-vim backend/.env          # 至少改 APP_ENV / DEBUG / DB_AUTO_CREATE /
-                          # JWT_SECRET_KEY / ADMIN_PASSWORD / SEED_DEMO_DATA /
-                          # CORS_ORIGINS / SITE_BASE_URL
+cp .env.example .env
+vim .env                  # 三处必填：POSTGRES_PASSWORD / JWT_SECRET_KEY / ADMIN_PASSWORD
 docker compose up -d --build
-docker compose exec backend alembic upgrade head
 ```
 
-前端 <http://localhost:8080>，后端 <http://localhost:8000>。
+少了必填项 `docker compose up` 会直接报错并告诉你缺哪个，
+**不会**带着仓库里的公开默认密钥启动。容器默认按生产跑
+（`APP_ENV=production`、`DEBUG=false`、`DB_AUTO_CREATE=false`、`SEED_DEMO_DATA=false`），
+表结构由容器入口自动执行 `alembic upgrade head`。
+上线前别忘了把 `.env` 里的 `SITE_BASE_URL` 改成正式域名。
+
+裸机部署（不用 Docker）走 `backend/.env`，流程见
+[`docs/DESIGN.md`](docs/DESIGN.md) 第 5 章。
+
+前端 <http://localhost:8080>。后端**不发布**端口，只经 Nginx 反代
+（`/api`、`/media`、`/feed.xml`、`/sitemap.xml`）从 compose 内网访问 ——
+映射到宿主机就等于绕开了 Nginx 那层的限流、CSP 与安全响应头。
+需要调试时：`docker compose exec backend curl -s 127.0.0.1:8000/health`。
 
 生产上线前的完整检查清单、备份方案与回滚条件见
 [`docs/DESIGN.md`](docs/DESIGN.md) 第 5 章，部署注意事项见 [SECURITY.md](SECURITY.md)。

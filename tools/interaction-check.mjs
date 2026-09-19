@@ -12,7 +12,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const BASE = 'http://127.0.0.1:5173'
+// 目标站点可用 INTERACTION_BASE 覆盖。
+// 需要它是因为本脚本与另外两个脚本的入参语义不同：smoke / full-check 的
+// argv[2] 是「要测哪个站点」，而这里的 argv[2] 是「截图放哪」。
+// 与其改动已有人在用的参数含义，不如多一个环境变量：
+//   INTERACTION_BASE=http://localhost:8080 node tools/interaction-check.mjs
+// 指向 Docker 栈（nginx 托管的构建产物）时，这套交互用例同样成立。
+const BASE = process.env.INTERACTION_BASE ?? 'http://127.0.0.1:5173'
 const PORT = 9229
 const OUT = process.argv[2] || join(tmpdir(), 'wave2-shots')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

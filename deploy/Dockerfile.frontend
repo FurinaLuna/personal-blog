@@ -23,7 +23,18 @@ FROM nginx:1.27-alpine AS runtime
 
 RUN rm -rf /usr/share/nginx/html/*
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+
+# nginx 配置取自 deploy/，但本镜像的构建上下文是 frontend/ ——
+# 上下文之外的文件 COPY 不到：原先是 `COPY deploy/nginx.conf`，会以
+# "failed to compute cache key: /deploy/nginx.conf not found" 直接构建失败。
+# （这是本文件真实存在的问题：Docker 一直没被跑过，所以一直没人发现。）
+#
+# 解法是让 compose 额外挂一个名为 deploy 的构建上下文进来，而不是把配置
+# 复制一份到 frontend/ —— 两份配置迟早漂移，而「改了没生效」在 nginx 上
+# 排查代价很高（nginx 自己的日志里什么都不会说）。
+# 因此：**本镜像要经 `docker compose build` 构建**，直接
+# `docker build frontend/` 会因为缺少这个上下文而报错。
+COPY --from=deploy nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

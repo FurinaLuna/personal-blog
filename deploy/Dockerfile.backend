@@ -1,29 +1,45 @@
 # 后端镜像
 #
 # 多阶段构建的意义有限（Python 不像 Node 有"构建产物"），
-# 但显式区分 builder / runtime 仍然值得：编译型依赖只在 builder 里装，
-# 运行时镜像不带编译工具链，体积更小、攻击面更小。
+# 但显式区分 builder / runtime 仍然值得：万一将来某个依赖需要现场编译，
+# 编译工具链只留在 builder 里，运行时镜像不带它，体积更小、攻击面更小。
 FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# asyncpg / pillow 的 wheel 是预编译的，这里只需要最基本的构建环境
-RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential \
- && rm -rf /var/lib/apt/lists/*
+# 这里**刻意不装 build-essential**。
+# 原先装着，是因为"编译型依赖总得有编译器"——但 requirements.lock 里 51 个包
+# 全都提供 cp312 的 manylinux wheel，实测整条 pip install 输出里
+# 一条 "Building wheel for ..." 都没有，编译器一次都没被调用。
+# 而 build-essential 要从 deb.debian.org 拉 ~200MB（首次构建实测多花 3 分半，
+# 国内网络更久），属于纯粹的等待成本。
+#
+# 将来真出现需要现场编译的依赖，pip 会以
+# "error: command 'gcc' failed: No such file or directory" 明确失败，
+# 那时把这行加回来即可 —— 失败是响亮的，不会悄悄产出坏镜像。
+#
+# RUN apt-get update \
+#  && apt-get install -y --no-install-recommends build-essential \
+#  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY pyproject.toml README.md requirements.lock ./
-COPY src ./src
 
-# 依赖按锁文件装，保证镜像可复现（范围声明在 pyproject.toml，确定答案在 requirements.lock）。
-# --no-deps 再装项目本身：避免 pip 又解析一遍依赖范围，与锁文件产生分歧。
+# 依赖清单和 src 分开 COPY，且**依赖装在 src 之前**。
+# 这里对应前端 Dockerfile 里"先只拷 package.json"那一步：
+# 装依赖是整条构建里最慢的一段，而它只取决于清单文件。
+# 两者写在同一个 RUN 里的话，改任何一行业务代码都会让依赖重装一遍。
+COPY pyproject.toml README.md requirements.lock ./
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --upgrade pip \
- && /opt/venv/bin/pip install -r requirements.lock \
- && /opt/venv/bin/pip install --no-deps .
+ && /opt/venv/bin/pip install -r requirements.lock
+
+COPY src ./src
+
+# --no-deps 装项目本身：避免 pip 又解析一遍依赖范围，与锁文件产生分歧
+# （依赖已经由上面那步按锁文件装好了，这里只装这个包自己）。
+RUN /opt/venv/bin/pip install --no-deps .
 
 
 FROM python:3.12-slim AS runtime
@@ -48,6 +64,14 @@ COPY --chown=app:app pyproject.toml README.md ./
 COPY --chown=app:app src ./src
 COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app alembic.ini ./
+
+# 入口脚本：先跑迁移再启动应用（为什么这么做见脚本内的注释）
+COPY --chown=app:app scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# 兜底去掉 CRLF：Windows 上检出时 *.sh 可能是 CRLF，而带 \r 的脚本在容器里
+# 会以「no such file or directory」告终 —— 和「文件真的不存在」长得一模一样，
+# 是个能把人带偏半小时的报错。.gitattributes 已为 *.sh 钉了 eol=lf，这里再防一手。
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+ && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # storage 会在 compose 里挂成卷，这里先建好并交出属主
 RUN mkdir -p /app/storage/uploads /app/storage/avatars && chown -R app:app /app/storage
@@ -78,4 +102,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 #   就被架空了：即使 ``TRUST_PROXY_HEADERS=false``，``request.client.host``
 #   也已经是客户端可控的值。实测：伪造 5 个不同的 XFF，访客 UV 从 1 涨到 5；
 #   换回 ``--no-proxy-headers`` 后同样的伪造只算 1 个访客。
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-proxy-headers"]

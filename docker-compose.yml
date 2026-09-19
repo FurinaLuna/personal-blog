@@ -1,10 +1,19 @@
 # 个人博客 · 一键启动
 #
-#   cp backend/.env.example backend/.env   # 然后按提示改生产配置
+#   cp .env.example .env        # ← 项目根目录，不是 backend/.env
+#   vim .env                    # 填 POSTGRES_PASSWORD / JWT_SECRET_KEY / ADMIN_PASSWORD
 #   docker compose up -d --build
-#   docker compose exec backend alembic upgrade head
 #
-# 前端 http://localhost:8080    后端 http://localhost:8000/docs
+#   前端 http://localhost:8080  （后端只经它反代，见文末「不发布 8000」那段）
+#
+# ── 为什么配置源是**项目根目录**的 .env ─────────────────────────────
+# compose 的 ${VAR} 变量插值只读「项目根目录的 .env」和当前 shell 环境，
+# **不读**服务的 env_file。所以把配置写在 backend/.env 里，
+# ${POSTGRES_PASSWORD} 依然取不到值，`docker compose up` 会直接报
+# 「required variable POSTGRES_PASSWORD is missing」。为了让「插值」和
+# 「容器内配置」只有一个来源，backend 服务的 env_file 也指向同一个根 .env。
+#
+# 裸机开发（直接跑 uvicorn / vite）仍然用 backend/.env，两者互不影响。
 
 services:
   db:
@@ -12,7 +21,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-blog}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      # :? 的写法让「没配密码」在 up 阶段就失败，而不是起一个空口令的库。
+      # compose 对未定义变量默认是**静默换成空字符串**，而数据库恰好是
+      # 那个「不对公网暴露、所以更不能空口令」的组件。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在项目根目录 .env 中设置 POSTGRES_PASSWORD（cp .env.example .env）}
       POSTGRES_DB: ${POSTGRES_DB:-blog}
       # 中文排序与大小写行为更可预期
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
@@ -35,11 +47,43 @@ services:
       dockerfile: ../deploy/Dockerfile.backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env
+      # 与插值用的是同一个文件：配置只有一个来源，不会出现「.env 改了、
+      # 容器里还是旧值」这种最难查的分裂状态。
+      - ./.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blog}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-blog}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blog}:${POSTGRES_PASSWORD:?请在项目根目录 .env 中设置 POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-blog}
       STORAGE_DIR: /app/storage
       TZ: Asia/Shanghai
+
+      # ── 部署默认按生产来 ───────────────────────────────────────
+      # 容器里跑的就是对外服务的实例，而 backend/.env 那套
+      # APP_ENV=development / DEBUG=true / DB_AUTO_CREATE=true 的开发默认值
+      # 一旦被带进来，就等于「以开发模式对外服务」：/docs 敞开、异常带堆栈、
+      # 改错模型会在生产库上静默改表。
+      # 这里逐个写死安全侧的默认值；想在本机用 docker 试玩，在根 .env 里
+      # 显式覆盖即可（environment 的值来自插值，所以 .env 依然说了算）。
+      APP_ENV: ${APP_ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      # 表结构改由容器入口的 `alembic upgrade head` 负责
+      # （backend/scripts/docker-entrypoint.sh），不再用 create_all ——
+      # 否则「应用自动建表」和「迁移」两条路径会撞车，把 alembic 卡在一个
+      # 一重放就报「表已存在」的状态。
+      DB_AUTO_CREATE: ${DB_AUTO_CREATE:-false}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+
+      # ── 密钥：缺失就 fail fast ─────────────────────────────────
+      # 应用侧还有一道 check_production_safety() 兜底，但那要等容器起来才报错，
+      # 表现出来是 restart 循环 + 得翻容器日志才知道原因；这里更早、更直白。
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?请在项目根目录 .env 中设置 JWT_SECRET_KEY（用 openssl rand -hex 32 生成）}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在项目根目录 .env 中设置 ADMIN_PASSWORD（管理员初始口令，不能用仓库里的默认值）}
+
+      # ── 对外地址 ───────────────────────────────────────────────
+      # 应用默认值指向 Vite 的 5173，在 docker 拓扑里是错的（前端在 8080），
+      # 会让 RSS / sitemap / 通知邮件里的绝对链接全都指向一个不存在的地址。
+      # 上线时在根 .env 里改成正式域名。
+      SITE_BASE_URL: ${SITE_BASE_URL:-http://localhost:8080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+
       # 后端确实部署在 nginx（frontend 容器）之后，所以**必须**打开它，
       # 否则取到的是 nginx 容器的 IP —— 全网共用一个限流桶，
       # 一个脚本就能把所有人的登录和评论锁死，UV 统计也恒为 1。
@@ -59,6 +103,9 @@ services:
     # 而 nginx 那一层的限流、CSP、安全响应头就全部失效了。
     # 需要调试时用 `docker compose exec backend curl 127.0.0.1:8000/health`，
     # 或临时加 `ports: ["127.0.0.1:8000:8000"]`（只绑本机回环，不要写 0.0.0.0）。
+    #
+    # 顺带一提：所以 `/docs` 在容器里是够不到的（nginx 也没有为它开 location），
+    # 而 APP_ENV=production 本来就会关掉它 —— 想看接口文档请跑裸机模式。
     expose:
       - "8000"
 
@@ -66,6 +113,13 @@ services:
     build:
       context: ./frontend
       dockerfile: ../deploy/Dockerfile.frontend
+      # nginx.conf 在 deploy/ 下，而构建上下文是 frontend/ —— 上下文之外的
+      # 文件 COPY 不到（写成 `COPY deploy/nginx.conf` 会直接构建失败）。
+      # 用 additional_contexts 把 deploy/ 也挂进来，而不是把配置复制一份进
+      # frontend/：两份配置迟早漂移，而「改了没生效」在 nginx 上代价很高。
+      # 需要 compose v2.17+ / BuildKit（Docker Desktop 默认满足）。
+      additional_contexts:
+        deploy: ./deploy
       args:
         VITE_API_BASE_URL: /api/v1
     restart: unless-stopped

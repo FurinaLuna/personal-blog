@@ -26,7 +26,7 @@ LINT_IMPORTS := $(abspath $(VENV_PY)) scripts/lint_imports.py
         test test-frontend test-all test-cov lint lint-frontend fmt fmt-check check \
         smoke interaction full-check \
         migrate migration seed backup backup-list build build-preview \
-        docker-up docker-down docker-logs docker-migrate clean
+        docker-config docker-up docker-down docker-logs docker-migrate clean
 
 help: ## 显示所有可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -134,7 +134,10 @@ build: ## 构建前端生产产物到 frontend/dist
 build-preview: build ## 构建并在本地预览生产产物
 	cd $(FRONTEND) && npm run preview
 
-docker-up: ## 启动全部容器（需先在 backend/.env 配好生产配置）
+docker-config: ## 校验 compose 配置（缺必填变量/写错上下文会在这里就报出来）
+	docker compose config > /dev/null && echo "docker compose 配置有效"
+
+docker-up: ## 启动全部容器（需先在**项目根目录**的 .env 配好生产配置，见 .env.example）
 	docker compose up -d --build
 
 docker-down: ## 停止并移除全部容器
@@ -143,7 +146,7 @@ docker-down: ## 停止并移除全部容器
 docker-logs: ## 跟随查看容器日志
 	docker compose logs -f --tail=100
 
-docker-migrate: ## 在容器内执行数据库迁移
+docker-migrate: ## 手动补跑数据库迁移（正常由容器入口自动执行，这里是应急/重跑用）
 	docker compose exec backend alembic upgrade head
 
 # ---------------------------------------------------------------- 清理

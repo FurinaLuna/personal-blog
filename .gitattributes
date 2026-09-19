@@ -19,6 +19,9 @@
 *.yaml      text eol=lf
 *.mako      text eol=lf
 *.example   text eol=lf
+# shell 脚本一律 LF：带 CRLF 的脚本 COPY 进 Linux 容器后，执行时会以
+# 「no such file or directory」失败（其实是行尾的 \r），报错方向完全是错的
+*.sh        text eol=lf
 *.svg       text eol=lf
 Makefile    text eol=lf
 .gitignore  text eol=lf
