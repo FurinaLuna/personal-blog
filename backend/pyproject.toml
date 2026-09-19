@@ -6,33 +6,44 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 
+# 依赖一律写成「下界 + 兼容上界」。
+#
+# 只写 `>=` 的后果不是理论风险，本项目**已经发生过**：装出来的环境里
+# bcrypt 5.0（下界写的 4.2）、aiosmtplib 5.1（写的 3.0）、pillow 12.3（写的 11.3）、
+# pytest 9.1（写的 8.3）——都跨了一到两个主版本，只是恰好没坏。
+# 上界的作用是让「升级」变成一次显式动作，而不是某天 pip 装完突然挂了。
+#
+# 上界的取法：允许当前已验证的主版本线，挡住下一个主版本。
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "sqlalchemy[asyncio]>=2.0.36",
-    "greenlet>=3.1",
-    "aiosqlite>=0.20",
-    "alembic>=1.14",
-    "pydantic>=2.9",
-    "pydantic-settings>=2.6",
-    "email-validator>=2.2",
-    "python-multipart>=0.0.12",
-    "pyjwt>=2.10",
-    "bcrypt>=4.2",
-    "pillow>=11.3",
-    "aiosmtplib>=3.0",
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32,<1.0",
+    "sqlalchemy[asyncio]>=2.0.36,<3.0",
+    "greenlet>=3.1,<4.0",
+    "aiosqlite>=0.20,<1.0",
+    "alembic>=1.14,<2.0",
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.6,<3.0",
+    "email-validator>=2.2,<3.0",
+    "python-multipart>=0.0.12,<1.0",
+    "pyjwt>=2.10,<3.0",
+    "bcrypt>=4.2,<6.0",
+    "pillow>=11.3,<13.0",
+    "aiosmtplib>=3.0,<6.0",
 ]
 
 [project.optional-dependencies]
 # 生产环境换 PostgreSQL 时安装： pip install -e ".[postgres]"
-postgres = ["asyncpg>=0.30"]
+postgres = ["asyncpg>=0.30,<1.0"]
 dev = [
-    "httpx>=0.27",
-    "pytest>=8.3",
-    "pytest-asyncio>=0.24",
-    "pytest-cov>=6.0",
-    "ruff>=0.8",
-    "import-linter>=2.0",
+    # tests/test_dependency_lock.py 用它解析版本范围，属于直接依赖，
+    # 不该只靠传递依赖带进来（哪天上游不带了，测试会以 ImportError 失败）
+    "packaging>=24.0,<27.0",
+    "httpx>=0.27,<1.0",
+    "pytest>=8.3,<10.0",
+    "pytest-asyncio>=0.24,<2.0",
+    "pytest-cov>=6.0,<8.0",
+    "ruff>=0.8,<1.0",
+    "import-linter>=2.0,<3.0",
 ]
 
 [build-system]

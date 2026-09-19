@@ -1,0 +1,79 @@
+# 后端依赖锁定（全部传递依赖的精确版本）
+#
+# 用途：CI 与 Docker 构建用它安装，保证「同一个提交在任何时间、任何机器上
+# 装出同一套依赖」。pyproject.toml 里的范围是给人和 pip 看的意图声明，
+# 这里是给构建用的确定答案。
+#
+# ## 怎么更新
+#
+#   在**全新的** venv 里装一次 extras，再冻结：
+#
+#     python -m venv .lockvenv
+#     .lockvenv/Scripts/python -m pip install ".[postgres,dev]"
+#     .lockvenv/Scripts/python -m pip freeze --exclude-editable #       | grep -viE "^personal-blog-backend" | sort -f > requirements.lock
+#     rm -rf .lockvenv
+#
+#   用新 venv 而不是复用开发环境：开发环境里可能装着调试用的额外包，
+#   冻进去会让锁文件带上并非项目依赖的东西。
+#
+# ## 什么时候该更新
+#
+#   只有**显式升级依赖**时。改了 pyproject.toml 的范围就要同步重生成，
+#   否则 CI 用的是旧版本，本地却装新的 —— 那种不一致比不锁还难查。
+#
+# ## 注意
+#
+#   含 postgres extra（asyncpg），因为它只在生产容器里用得上，
+#   而生产镜像正是靠这份锁构建的。
+
+aiosmtplib==5.1.3
+aiosqlite==0.22.1
+alembic==1.20.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+asyncpg==0.31.0
+bcrypt==5.0.0
+certifi==2026.7.22
+click==8.5.0
+colorama==0.4.6
+coverage==7.16.1
+dnspython==2.8.0
+email-validator==2.3.0
+fastapi==0.141.1
+greenlet==3.5.6
+grimp==3.17
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+import-linter==2.15
+iniconfig==2.3.0
+Mako==1.4.1
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+packaging==26.3
+pillow==12.3.0
+pluggy==1.6.0
+pydantic-settings==2.15.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+Pygments==2.21.0
+PyJWT==2.14.0
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest==9.1.1
+python-dotenv==1.2.3
+python-multipart==0.0.32
+PyYAML==6.0.3
+rich==15.0.0
+ruff==0.16.8
+SQLAlchemy==2.0.54
+starlette==1.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.53.0
+watchfiles==1.2.0
+websockets==17.1

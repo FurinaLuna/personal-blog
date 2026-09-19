@@ -47,10 +47,15 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
 
-      - name: 安装依赖
+      # 用锁文件而不是 `pip install -e ".[dev]"`：后者只给了下界，
+      # 同一个提交在不同时间会装出不同的环境 —— 本项目实际已经漂到
+      # bcrypt 5.0 / aiosmtplib 5.1 / pytest 9.1，而 pyproject 里写的是 4.2 / 3.0 / 8.3。
+      # --no-deps 之后再单独装项目本身，避免 pip 又去解析一遍范围。
+      - name: 安装依赖（锁定版本）
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.lock
+          pip install --no-deps -e .
 
       - name: Ruff 静态检查
         run: ruff check .
@@ -120,7 +125,8 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.lock
+          pip install --no-deps -e .
 
       # 迁移不能只在"升级"那一步可用：线上出问题时要能干净回滚
       - name: 升级到 head
@@ -167,7 +173,8 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.lock
+          pip install --no-deps -e .
 
       - name: 安装前端依赖
         working-directory: frontend

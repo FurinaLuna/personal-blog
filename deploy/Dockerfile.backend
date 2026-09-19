@@ -15,12 +15,15 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.lock ./
 COPY src ./src
 
+# 依赖按锁文件装，保证镜像可复现（范围声明在 pyproject.toml，确定答案在 requirements.lock）。
+# --no-deps 再装项目本身：避免 pip 又解析一遍依赖范围，与锁文件产生分歧。
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --upgrade pip \
- && /opt/venv/bin/pip install ".[postgres]"
+ && /opt/venv/bin/pip install -r requirements.lock \
+ && /opt/venv/bin/pip install --no-deps .
 
 
 FROM python:3.12-slim AS runtime
@@ -56,5 +59,23 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-# 生产不开 --reload；worker 数按 CPU 核数调整
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# 生产不开 --reload。三个参数都是**刻意**这么定的，改动前请先读这段。
+#
+# ``--workers 1``：不是"图省事"，而是当前架构下唯一正确的取值。
+#   - 限流器是**进程内**的（``utils/ratelimit.py``），多 worker 时每个进程
+#     各记一份计数，实际放行量会乘以 worker 数——登录限流 5/分 会变成 10/分；
+#   - ``lifespan`` 里有启动期副作用（建表、灌初始数据、清理访问日志、重建全文索引），
+#     多 worker 会并发执行。实测把两个进程同时冷启动到同一个 SQLite 文件上，
+#     其中一个会以 ``sqlite3.OperationalError: disk I/O error`` 启动失败 ——
+#     并发 DDL 是 SQLite 的固有限制，不是 seed 的锅（seed 已改成原子 upsert，
+#     约束冲突不会再让它挂，但建表这一步没有等价保护）。
+#   个人博客的流量用不上多进程；真要扩，先换 PostgreSQL 并把限流换成共享存储。
+#
+# ``--no-proxy-headers``：把「是否信任代理头」的判定**只留在应用层**一处
+#   （``TRUST_PROXY_HEADERS`` + ``api/deps.py:client_ip``）。
+#   此前这里是 ``--proxy-headers --forwarded-allow-ips *``，会让 uvicorn 抢在
+#   应用之前按 ``X-Forwarded-For`` 改写 ``scope["client"]`` —— 应用层的开关
+#   就被架空了：即使 ``TRUST_PROXY_HEADERS=false``，``request.client.host``
+#   也已经是客户端可控的值。实测：伪造 5 个不同的 XFF，访客 UV 从 1 涨到 5；
+#   换回 ``--no-proxy-headers`` 后同样的伪造只算 1 个访客。
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-proxy-headers"]

@@ -11,14 +11,18 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Article, ArticleStatus, Category, SiteProfile, Tag, User, UserRole
 from app.utils.security import hash_password
 from app.utils.text import estimate_reading_time, slugify, strip_markdown
+
+logger = logging.getLogger("blog")
 
 DEMO_CATEGORIES: list[tuple[str, str, str, int]] = [
     ("技术笔记", "tech", "踩过的坑、读过的源码、验证过的方案", 1),
@@ -162,15 +166,85 @@ def _set_pragmas(dbapi_connection, _):
 ]
 
 
-async def seed_admin(session: AsyncSession) -> User:
-    """保证站长账号存在（幂等）。"""
-    from sqlalchemy import select
+def _insert_ignoring_conflicts(dialect_name: str):
+    """返回该方言的「冲突即忽略」insert 构造器；不支持的方言返回 None。
 
-    result = await session.execute(select(User).where(User.username == settings.admin_username))
-    admin = result.scalars().first()
+    SQLite ≥3.24 与 PostgreSQL ≥9.5 都支持 ``ON CONFLICT DO NOTHING``，
+    正好覆盖本项目支持的两个数据库，所以这是**一条覆盖全部部署路径**的做法，
+    不需要为方言差异准备两套逻辑。
+
+    为什么不写成 SQLAlchemy 的通用 API：它没有可移植的 upsert，
+    而 ``session.merge()`` 会先 SELECT 再决定，竞态窗口原封不动地留着。
+    """
+    if dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+
+        return insert
+    if dialect_name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+
+        return insert
+    return None
+
+
+async def seed_admin(session: AsyncSession) -> User:
+    """保证站长账号存在。
+
+    ## 为什么必须是「一条语句 upsert」
+
+    这里曾经是 check-then-insert。多进程启动（``uvicorn --workers N``）或
+    容器编排同时拉起副本时，两个进程会双双通过 SELECT、双双 INSERT，
+    后提交的撞 ``users.username`` 唯一约束；而 ``lifespan`` 里的异常会
+    **re-raise**（见 ``main.py``），于是输掉的那个进程直接启动失败。
+
+    ## 为什么不用 begin_nested + 捕获 IntegrityError
+
+    那是 SQLAlchemy 教科书上的写法，但在本项目的主力数据库上**不成立**。
+    实测（SQLite 3.53 + aiosqlite）：
+    ``async with session.begin_nested(): await session.flush()`` 在唯一约束
+    冲突后，SAVEPOINT **没有隔离这次失败** —— 整个 session 被置为
+    「待回滚」，之后任何查询都抛 ``PendingRollbackError``，等于没救回来。
+
+    改用一条 ``INSERT ... ON CONFLICT DO NOTHING``：把竞态从「查与插之间」
+    压缩成一次原子写入，没有窗口可钻，也就不需要异常处理路径。
+    """
+    admin = await _find_admin(session)
     if admin is not None:
         return admin
 
+    dialect = session.bind.dialect.name if session.bind else ""
+    insert = _insert_ignoring_conflicts(dialect)
+    if insert is None:  # pragma: no cover - 仅覆盖 SQLite / PostgreSQL
+        return await _create_admin_by_check(session)
+
+    await session.execute(
+        insert(User)
+        .values(
+            username=settings.admin_username,
+            email=settings.admin_email,
+            hashed_password=hash_password(settings.admin_password),
+            nickname="站长",
+            role=UserRole.ADMIN,
+            bio="在这里记录技术、生活，以及一切值得写下来的东西。",
+            is_active=True,
+        )
+        # 冲突目标必须与唯一索引一致，写错了会退化成"什么冲突都不忽略"
+        .on_conflict_do_nothing(index_elements=["username"])
+    )
+    await session.flush()
+
+    created = await _find_admin(session)
+    if created is None:  # pragma: no cover - 插入被忽略又查不到，属于异常
+        raise RuntimeError("站长账号既未创建也查不到")
+    return created
+
+
+async def _create_admin_by_check(session: AsyncSession) -> User:
+    """不支持 upsert 的方言上的退路：check-then-insert。
+
+    只在 SQLite / PostgreSQL 之外的数据库上会走到，那时并发启动的竞态
+    仍然存在——但那是"用一个本项目没验证过的数据库"的代价，不是默认路径。
+    """
     admin = User(
         username=settings.admin_username,
         email=settings.admin_email,
@@ -185,21 +259,52 @@ async def seed_admin(session: AsyncSession) -> User:
     return admin
 
 
-async def seed_site_profile(session: AsyncSession) -> SiteProfile:
-    """保证站点档案存在（幂等）。"""
-    from sqlalchemy import select
+async def _find_admin(session: AsyncSession) -> User | None:
+    result = await session.execute(select(User).where(User.username == settings.admin_username))
+    return result.scalars().first()
 
+
+async def seed_site_profile(session: AsyncSession) -> SiteProfile:
+    """保证站点档案存在。
+
+    并发安全同 ``seed_admin``：主键固定为 1，两个进程同时插入会撞主键约束。
+    """
     result = await session.execute(select(SiteProfile).where(SiteProfile.id == 1))
     profile = result.scalars().first()
     if profile is not None:
         return profile
 
-    profile = SiteProfile(
-        id=1,
-        owner_name="站长",
-        headline="记录技术、生活，以及一切值得写下来的东西",
-        bio_md="这里是我的数字花园。不追求体系完整，只求每篇都解决一个真实问题。",
-        about_md="""## 关于我
+    dialect = session.bind.dialect.name if session.bind else ""
+    insert = _insert_ignoring_conflicts(dialect)
+
+    if insert is not None:
+        await session.execute(
+            insert(SiteProfile)
+            .values(**_site_profile_values())
+            .on_conflict_do_nothing(index_elements=["id"])
+        )
+        await session.flush()
+        result = await session.execute(select(SiteProfile).where(SiteProfile.id == 1))
+        created = result.scalars().first()
+        if created is None:  # pragma: no cover
+            raise RuntimeError("站点档案既未创建也查不到")
+        return created
+
+    profile = SiteProfile(**_site_profile_values())  # pragma: no cover
+    session.add(profile)
+    await session.flush()
+    return profile
+
+
+def _site_profile_values() -> dict:
+    """站点档案的初始值。抽出来是为了让 ORM 路径与 upsert 路径共用同一份内容，
+    避免将来改文案时只改了一处。"""
+    return {
+        "id": 1,
+        "owner_name": "站长",
+        "headline": "记录技术、生活，以及一切值得写下来的东西",
+        "bio_md": "这里是我的数字花园。不追求体系完整，只求每篇都解决一个真实问题。",
+        "about_md": """## 关于我
 
 一个喜欢把事情做到底的开发者。
 
@@ -220,19 +325,16 @@ async def seed_site_profile(session: AsyncSession) -> SiteProfile:
 
 欢迎通过评论或邮件交流。
 """,
-        email=settings.admin_email,
-        location="中国",
-        social_links=[
+        "email": settings.admin_email,
+        "location": "中国",
+        "social_links": [
             {"label": "GitHub", "url": "https://github.com/", "icon": "github"},
             {"label": "RSS", "url": "/api/v1/articles", "icon": "rss"},
         ],
-        skills=["Python", "FastAPI", "Vue", "PostgreSQL", "Docker"],
-        comment_need_approval=True,
-        allow_guest_comment=True,
-    )
-    session.add(profile)
-    await session.flush()
-    return profile
+        "skills": ["Python", "FastAPI", "Vue", "PostgreSQL", "Docker"],
+        "comment_need_approval": True,
+        "allow_guest_comment": True,
+    }
 
 
 async def seed_demo_content(session: AsyncSession, admin: User) -> None:
@@ -240,11 +342,11 @@ async def seed_demo_content(session: AsyncSession, admin: User) -> None:
 
     分类与标签**必须复用已存在的行**，不能无脑 INSERT：它们的 name 都是
     ``unique=True``，而「文章数为 0」并不蕴含「分类标签表是空的」。
-    踩过的路径：站长把演示文章删光 → 下次启动 here 判定文章数为 0 →
+    踩过的路径：站长把演示文章删光 → 下次启动判定文章数为 0 →
     再去插一遍同名分类 → ``IntegrityError`` → lifespan 回滚并重新抛出 →
     **应用直接起不来**。而 SEED_DEMO_DATA 默认就是 true。
     """
-    from sqlalchemy import func, select
+    from sqlalchemy import func
 
     existing = await session.execute(select(func.count()).select_from(Article))
     if int(existing.scalar_one()) > 0:

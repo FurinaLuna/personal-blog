@@ -40,15 +40,27 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blog}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-blog}
       STORAGE_DIR: /app/storage
       TZ: Asia/Shanghai
+      # 后端确实部署在 nginx（frontend 容器）之后，所以**必须**打开它，
+      # 否则取到的是 nginx 容器的 IP —— 全网共用一个限流桶，
+      # 一个脚本就能把所有人的登录和评论锁死，UV 统计也恒为 1。
+      #
+      # 信任判定只在这一处：镜像里已用 --no-proxy-headers 关掉了 uvicorn
+      # 自己的代理头处理，避免两个开关打架（见 deploy/Dockerfile.backend）。
+      TRUST_PROXY_HEADERS: "true"
     volumes:
       # 媒体文件必须挂出来，否则容器重建就全丢了
       - mediadata:/app/storage
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      # 只为便于本地调试暴露；生产建议删掉这两行，只让前端容器通过内网访问
-      - "8000:8000"
+    # 刻意**不**发布 8000 端口。
+    # 后端只应通过 frontend 容器（nginx）从 compose 内网访问：
+    # 一旦映射到宿主机，任何人都能绕过 nginx 直连后端，
+    # 而 nginx 那一层的限流、CSP、安全响应头就全部失效了。
+    # 需要调试时用 `docker compose exec backend curl 127.0.0.1:8000/health`，
+    # 或临时加 `ports: ["127.0.0.1:8000:8000"]`（只绑本机回环，不要写 0.0.0.0）。
+    expose:
+      - "8000"
 
   frontend:
     build:

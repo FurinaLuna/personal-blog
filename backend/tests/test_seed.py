@@ -137,3 +137,92 @@ def test_demo_article_taxonomy_refs_are_valid() -> None:
     for item in DEMO_ARTICLES:
         assert str(item["category"]) in valid_category_slugs
         assert set(item["tags"]) <= valid_tags  # type: ignore[arg-type]
+
+
+class TestSeedConcurrency:
+    """启动期 seed 的并发安全。
+
+    多进程启动（``uvicorn --workers N``）或容器编排同时拉起副本时，
+    ``seed_admin`` / ``seed_site_profile`` 都是 check-then-insert ——
+    两个进程会双双通过 SELECT、然后双双 INSERT，后提交的撞唯一约束。
+    而 lifespan 里的异常会 re-raise，输掉的那个进程**直接启动失败**。
+
+    这里用「只让第一次查重看不到已存在的行」来精确模拟那个竞态窗口，
+    不必真的起两个进程（那样既慢又不稳定）。
+    """
+
+    async def test_admin_race_recovers_instead_of_crashing(self, db_reset: None) -> None:
+        from app.db.session import async_session_factory
+        from app.services import seed as seed_module
+
+        # 先正常建好（相当于"另一个进程已经建好了"）
+        async with async_session_factory() as session:
+            await ensure_seed(session)
+            await session.commit()
+
+        calls = {"n": 0}
+        real_find = seed_module._find_admin
+
+        async def find_once_missing(session):
+            """第一次调用假装查不到（竞态窗口），之后走真实实现。"""
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None
+            return await real_find(session)
+
+        original = seed_module._find_admin
+        seed_module._find_admin = find_once_missing
+        try:
+            async with async_session_factory() as session:
+                admin = await seed_module.seed_admin(session)
+                await session.commit()
+        finally:
+            seed_module._find_admin = original
+
+        # 修复前：这里会抛 IntegrityError（甚至把 session 打成待回滚状态）；
+        # 修复后：冲突被 ON CONFLICT DO NOTHING 吸收，回查拿到对方插的那条
+        assert admin is not None
+        assert admin.username == "admin"
+        assert calls["n"] >= 2, "应当发生了「查不到 → 插入被忽略 → 回查」的完整过程"
+
+        # 关键：必须是**复用**而不是又插了一条
+        from sqlalchemy import func, select
+
+        from app.models import User
+
+        async with async_session_factory() as session:
+            total = await session.execute(select(func.count()).select_from(User))
+            assert int(total.scalar_one()) == 1, "冲突路径不应产生第二条管理员"
+
+    async def test_site_profile_race_recovers(self, db_reset: None) -> None:
+        from app.db.session import async_session_factory
+        from app.services.seed import seed_site_profile
+
+        async with async_session_factory() as session:
+            await ensure_seed(session)
+            await session.commit()
+
+        # 直接再调一次：正常情况下幂等返回，不抛异常
+        async with async_session_factory() as session:
+            profile = await seed_site_profile(session)
+            await session.commit()
+        assert profile is not None
+        assert profile.id == 1
+
+    async def test_seed_is_idempotent_under_repeat(self, db_reset: None) -> None:
+        """重复调用不产生重复行，也不抛异常。"""
+        from sqlalchemy import func, select
+
+        from app.db.session import async_session_factory
+        from app.models import SiteProfile, User
+
+        for _ in range(3):
+            async with async_session_factory() as session:
+                await ensure_seed(session)
+                await session.commit()
+
+        async with async_session_factory() as session:
+            users = await session.execute(select(func.count()).select_from(User))
+            profiles = await session.execute(select(func.count()).select_from(SiteProfile))
+            assert int(users.scalar_one()) == 1
+            assert int(profiles.scalar_one()) == 1
