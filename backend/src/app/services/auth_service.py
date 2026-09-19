@@ -69,10 +69,14 @@ class AuthService:
         return user
 
     def issue_tokens(self, user: User) -> Token:
-        """签发 access + refresh 双 token。"""
+        """签发 access + refresh 双 token（带上当前的令牌代次）。"""
         return Token(
-            access_token=create_access_token(user.id, user.role.value),
-            refresh_token=create_refresh_token(user.id, user.role.value),
+            access_token=create_access_token(
+                user.id, user.role.value, token_version=user.token_version
+            ),
+            refresh_token=create_refresh_token(
+                user.id, user.role.value, token_version=user.token_version
+            ),
             expires_in=access_token_ttl_seconds(),
         )
 
@@ -88,12 +92,20 @@ class AuthService:
         user = await self.users.get(payload.sub)
         if user is None or not user.is_active:
             raise UnauthorizedError("用户不存在或已被停用")
+        # 代次不符 = 这个 refresh token 已被吊销（用户改过密码），
+        # 不能拿它换新的 access token —— 否则「改密码即全端下线」形同虚设。
+        if payload.token_version != user.token_version:
+            raise UnauthorizedError("登录状态已失效，请重新登录")
         return self.issue_tokens(user)
 
     async def change_password(self, user: User, old_password: str, new_password: str) -> None:
         if not verify_password(old_password, user.hashed_password):
             raise BadRequestError("原密码不正确")
         user.hashed_password = hash_password(new_password)
+        # 改密码 = 全端下线：代次 +1 让所有已签发的 access / refresh token 立刻失效。
+        # 这是「密码可能泄露」时唯一的应急手段 —— 只改哈希的话，
+        # 攻击者手上那个还没过期的 refresh token 照样能换出新令牌。
+        user.token_version += 1
         await self.session.flush()
 
     # ---------------------------------------------------------------- 用户

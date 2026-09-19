@@ -30,6 +30,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # **幂等**：`DB_AUTO_CREATE=true`（开发默认）时这张表由 create_all 建出来，
+    # 而 alembic_version 可能还停在旧版本；此时 upgrade 会因「表已存在」失败。
+    if sa.inspect(op.get_bind()).has_table("article_revisions"):
+        return
+
     op.create_table(
         "article_revisions",
         sa.Column("id", sa.Integer(), nullable=False),

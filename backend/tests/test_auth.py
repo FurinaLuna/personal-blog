@@ -302,7 +302,9 @@ class TestTokenInternals:
         )
         assert payload["type"] == "access"
         assert payload["role"] == "admin"
-        assert set(payload) == {"sub", "role", "type", "iat", "exp", "jti"}
+        # ver = 令牌代次。加它之后「改密码即全端下线」才有依据：
+        # 校验时拿它与 users.token_version 比对，不一致就吊销。
+        assert set(payload) == {"sub", "role", "type", "iat", "exp", "jti", "ver"}
 
     async def test_login_flow_helper(self, client: AsyncClient) -> None:
         token = await login(client, "admin", ADMIN_PASSWORD)

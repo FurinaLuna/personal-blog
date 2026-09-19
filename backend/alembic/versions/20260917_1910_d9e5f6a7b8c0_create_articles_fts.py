@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d9e5f6a7b8c0"
@@ -86,10 +87,23 @@ def _is_sqlite() -> bool:
     return op.get_bind().dialect.name == "sqlite"
 
 
+def _has_table(name: str) -> bool:
+    return sa.inspect(op.get_bind()).has_table(name)
+
+
 def upgrade() -> None:
     if not _is_sqlite():
         # PostgreSQL 用 tsvector + GIN 才是正解，但那需要另一套配置与中文分词器
         # （zhparser / pg_jieba）。没验证过的实现不写进来，搜索会退回 LIKE。
+        return
+
+    # **幂等**：应用启动时也会建这套索引（``db/fulltext.py`` 的
+    # ``ensure_fulltext_index``，为了让「自动建表 + 不跑迁移」的开发路径也能搜索）。
+    # 两条路径会撞在一起 —— 开发库由 create_all + 启动钩子建好后，
+    # alembic_version 还停在旧版本，此时跑 upgrade 就会因「表已存在」而失败。
+    # 两边都幂等，谁先谁后都不会出错。
+    if _has_table("articles_fts"):
+        op.execute(_REBUILD)
         return
 
     op.execute(_CREATE_FTS)

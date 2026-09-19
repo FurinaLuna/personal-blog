@@ -58,6 +58,9 @@ async def get_current_user(session: SessionDep, token: OptionalToken) -> User:
         raise UnauthorizedError("用户不存在")
     if not user.is_active:
         raise PermissionDeniedError("账号已被停用，请联系管理员")
+    # 令牌代次比对：不符即说明这个令牌签发之后用户改过密码（或被强制下线）
+    if payload.token_version != user.token_version:
+        raise UnauthorizedError("登录状态已失效，请重新登录")
     return user
 
 
@@ -75,7 +78,10 @@ async def get_optional_user(session: SessionDep, token: OptionalToken) -> User |
     except jwt.InvalidTokenError:
         return None
     user = await UserRepository(session).get(payload.sub)
-    return user if user and user.is_active else None
+    if user is None or not user.is_active:
+        return None
+    # 与 get_current_user 同一口径：代次不符的令牌等同于没有登录态
+    return user if payload.token_version == user.token_version else None
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

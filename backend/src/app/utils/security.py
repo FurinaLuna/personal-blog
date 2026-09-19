@@ -71,9 +71,19 @@ class TokenPayload:
     type: TokenType
     exp: datetime
     jti: str
+    # 令牌代次：签发时是用户的 token_version 快照。
+    # 与库里的当前值不一致 = 这个令牌已被吊销（例如用户改过密码）。
+    token_version: int
 
 
-def _create_token(subject: int, role: str, token_type: TokenType, expires_delta: timedelta) -> str:
+def _create_token(
+    subject: int,
+    role: str,
+    token_type: TokenType,
+    expires_delta: timedelta,
+    *,
+    token_version: int = 0,
+) -> str:
     now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": str(subject),  # JWT 规范要求 sub 是字符串
@@ -82,19 +92,30 @@ def _create_token(subject: int, role: str, token_type: TokenType, expires_delta:
         "iat": now,
         "exp": now + expires_delta,
         "jti": uuid.uuid4().hex,  # 便于将来做黑名单/单点登出
+        # 令牌代次。校验方拿它与库里的 users.token_version 比对，
+        # 不一致即吊销 —— 改密码时服务端 +1，所有旧令牌立刻失效。
+        "ver": token_version,
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(user_id: int, role: str) -> str:
+def create_access_token(user_id: int, role: str, *, token_version: int = 0) -> str:
     return _create_token(
-        user_id, role, "access", timedelta(minutes=settings.access_token_expire_minutes)
+        user_id,
+        role,
+        "access",
+        timedelta(minutes=settings.access_token_expire_minutes),
+        token_version=token_version,
     )
 
 
-def create_refresh_token(user_id: int, role: str) -> str:
+def create_refresh_token(user_id: int, role: str, *, token_version: int = 0) -> str:
     return _create_token(
-        user_id, role, "refresh", timedelta(days=settings.refresh_token_expire_days)
+        user_id,
+        role,
+        "refresh",
+        timedelta(days=settings.refresh_token_expire_days),
+        token_version=token_version,
     )
 
 
@@ -124,6 +145,10 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> Token
         type=token_type,
         exp=datetime.fromtimestamp(payload["exp"], tz=UTC),
         jti=payload.get("jti", ""),
+        # 缺失时按 0 处理，**这是升级兼容的关键**：本次改动之前签发的 token
+        # 里没有 ver 字段，而所有存量用户的 token_version 默认就是 0，
+        # 于是老令牌继续有效 —— 升级不会把所有人踢下线。
+        token_version=int(payload.get("ver", 0)),
     )
 
 
