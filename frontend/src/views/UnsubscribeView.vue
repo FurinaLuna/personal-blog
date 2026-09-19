@@ -5,9 +5,14 @@
  * 用户是从邮件里的链接点进来的，所以：**打开即提交**，不需要再点一次按钮——
  * 退订接口是幂等的（重复提交只是查到已有记录），邮件客户端预取链接也不会出问题。
  *
- * 链接形如 `/unsubscribe?token=xxx`，token 是后端签发的签名 JWT，
+ * 链接形如 `/unsubscribe#token=xxx`，token 是后端签发的签名 JWT，
  * 里面就是收件邮箱。页面不解析 token（前端解析等于把校验责任放到客户端），
  * 只负责把它转交给后端换取结果。
+ *
+ * **token 在 fragment（`#` 之后）而不是 query，这是刻意的**：fragment 由浏览器
+ * 保留在本地、不会随请求发给服务器，因此不会落进 nginx 访问日志或 Referer 头。
+ * 而这是一个有效期 10 年、凭它就能为任意邮箱退订的凭证，不该进日志。
+ * 代价是只能从 `location.hash` 读——Vue Router 的 `route.query` 看不到它。
  */
 import { computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
@@ -16,13 +21,13 @@ import { notificationApi } from '@/api'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
 import type { Message } from '@/types'
+import { extractUnsubscribeToken } from '@/utils/unsubscribe'
 
 const route = useRoute()
-const token = computed(() => {
-  const value = route.query.token
-  // query 里同一个 key 出现多次时拿到的是数组，这里只取第一个
-  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '')
-})
+
+// 取 token 的规则（fragment 优先、兼容 query、非法转义兜底）在 utils/unsubscribe 里，
+// 单独成模块是为了能测——这段逻辑有正则、解码与回退，不是一行能覆盖的
+const token = computed(() => extractUnsubscribeToken(route.hash, route.query.token))
 
 const result = useAsyncData<Message>(() => notificationApi.unsubscribe(token.value), {
   detail: '',

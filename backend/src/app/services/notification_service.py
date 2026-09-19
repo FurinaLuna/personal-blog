@@ -86,7 +86,19 @@ def _article_link(slug: str) -> str:
 
 
 def _unsubscribe_link(email: str) -> str:
-    return f"{settings.site_base_url}/unsubscribe?token={create_unsubscribe_token(email)}"
+    """退订链接。
+
+    token 放在 **URL fragment**（``#`` 之后）而不是 query string，是刻意的：
+
+    - fragment 由浏览器保留在本地，**不会随请求发给服务器**，因此不会出现在
+      nginx 的 access log、Referer 头、以及任何中间代理的日志里。
+      query string 则会——而这是一个有效期 10 年、凭它就能为任意邮箱退订的凭证；
+    - 顺带也不进浏览器历史记录的请求部分与 CDN 日志。
+
+    代价是前端必须从 ``location.hash`` 读，不能用 ``route.query``（见
+    ``frontend/src/views/UnsubscribeView.vue``）。
+    """
+    return f"{settings.site_base_url}/unsubscribe#token={create_unsubscribe_token(email)}"
 
 
 async def _reply_recipient(comment: Comment, session: AsyncSession) -> str | None:

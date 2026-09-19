@@ -785,7 +785,9 @@ class TestRealSmtpDelivery:
             assert f"/article/{published_article['slug']}" in reply_mail["text"]
 
             # 4) 从真实邮件正文里抠出退订链接并真的点它 → 退订生效
-            match = re.search(r"/unsubscribe\?token=([\w.\-]+)", reply_mail["text"])
+            # token 在 fragment（#）而不是 query —— 见
+            # tests/test_notifications.py::TestUnsubscribeLinkFormat 的说明
+            match = re.search(r"/unsubscribe#token=([\w.\-]+)", reply_mail["text"])
             assert match, f"正文缺少退订链接：{reply_mail['text']}"
             token = match.group(1)
             assert (await client.post(UNSUBSCRIBE_URL, json={"token": token})).status_code == 200

@@ -157,7 +157,8 @@ class TestNotificationRules:
         assert mailbox.to_list() == [PARENT_EMAIL]
         mail = mailbox.sent[0]
         assert mail["subject"] == "您的评论收到了新回复"
-        assert "/unsubscribe?token=" in mail["text"]
+        # token 在 fragment 而不是 query —— 见 TestUnsubscribeLinkFormat 的说明
+        assert "/unsubscribe#token=" in mail["text"]
 
     async def test_unsubscribed_email_gets_no_reply_mail(
         self,
@@ -318,3 +319,42 @@ class TestSendFailureIsIsolated:
         )
         assert response.status_code == 201
         await drain_notifications()  # 不抛异常即说明 _guard 生效
+
+
+class TestUnsubscribeLinkFormat:
+    """退订链接里 token 的位置。
+
+    token 必须放在 **URL fragment**（``#`` 之后）而不是 query string：
+    fragment 由浏览器保留在本地、不随请求发给服务器，因此不会落进
+    nginx 访问日志、Referer 头或中间代理日志。query string 则会 ——
+    而这是一个有效期 10 年、凭它就能为任意邮箱退订的凭证。
+    """
+
+    def test_token_is_in_fragment_not_query(self) -> None:
+        from app.services.notification_service import _unsubscribe_link
+
+        link = _unsubscribe_link("someone@example.com")
+
+        assert "#token=" in link, f"token 不在 fragment 里：{link}"
+        assert "?token=" not in link, f"token 出现在 query string 里，会进访问日志：{link}"
+
+    def test_link_points_at_frontend_route(self) -> None:
+        from app.config import settings
+        from app.services.notification_service import _unsubscribe_link
+
+        link = _unsubscribe_link("someone@example.com")
+        assert link.startswith(settings.site_base_url)
+        assert "/unsubscribe#token=" in link
+
+    def test_emitted_token_is_accepted_by_the_decoder(self) -> None:
+        """端到端：链接里那个 token 必须真的能被退订接口解出邮箱。
+
+        只断言字符串格式是不够的——格式对了但 token 本身有问题，
+        用户点进去只会看到「链接无效」。
+        """
+        from app.services.notification_service import _unsubscribe_link
+        from app.utils.security import decode_unsubscribe_token
+
+        link = _unsubscribe_link("Someone@Example.COM")
+        token = link.split("#token=", 1)[1]
+        assert decode_unsubscribe_token(token) == "someone@example.com"
