@@ -149,7 +149,7 @@ async function confirmRestore(): Promise<void> {
 
           <span
             v-if="item.reason === 'restore'"
-            class="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+            class="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
           >
             {{ reasonLabel(item.reason) }}
           </span>
@@ -171,7 +171,7 @@ async function confirmRestore(): Promise<void> {
           <template v-else-if="preview">
             <p v-if="preview.summary" class="mb-2 text-xs text-ink-soft">{{ preview.summary }}</p>
             <pre
-              class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-muted p-2 font-mono text-[11px] leading-relaxed text-ink-soft"
+              class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-muted p-2 font-mono text-[11px] leading-relaxed text-ink-soft"
             >{{ preview.content_md || '（这一版正文为空）' }}</pre>
           </template>
         </div>

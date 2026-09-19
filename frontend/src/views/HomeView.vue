@@ -128,6 +128,16 @@ const hasFilter = computed(() => Boolean(activeTag.value || activeCategory.value
 /** hero 只在「无筛选的第一页」出现：筛选/翻页后用户关注的是结果，不是站点介绍 */
 const showHero = computed(() => !hasFilter.value && page.value === 1)
 
+/** 头条：只在无筛选的第一页取第一篇（列表默认置顶优先，所以就是作者置顶的那篇）。 */
+const lead = computed(() =>
+  showHero.value ? (articles.data.value.items[0] ?? null) : null,
+)
+
+/** 其余文章。没有头条时就是全部（筛选/翻页时的行为与之前完全一致）。 */
+const rest = computed(() =>
+  lead.value ? articles.data.value.items.slice(1) : articles.data.value.items,
+)
+
 /** 首屏卡片 stagger 渐入的延迟。封顶 8 条，避免长列表尾部等太久 */
 function cardDelay(index: number): string {
   return `${Math.min(index, 8) * 40}ms`
@@ -180,22 +190,16 @@ onMounted(() => {
   <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_260px]">
     <!-- 主内容：lg 以下侧边栏隐藏，主列收窄居中，避免平板宽度「贴左空旷」 -->
     <section class="mx-auto w-full max-w-content lg:mx-0 lg:max-w-none">
-      <!-- 站点 hero：只在无筛选的第一页出现 -->
-      <header v-if="showHero" class="mb-8 border-b border-border pb-8">
-        <h1 class="font-display text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
-          {{ site.title }}
-        </h1>
-        <p v-if="site.headline" class="mt-3 text-base leading-relaxed text-ink-soft">
-          {{ site.headline }}
-        </p>
-      </header>
-
       <div class="mb-5 flex flex-wrap items-center gap-3">
         <div>
-          <!-- hero 占页时它是唯一的 h1，这里降级为 h2，保持标题层级不重复 -->
-          <component :is="showHero ? 'h2' : 'h1'" class="text-xl font-semibold text-ink">
+          <!-- 首页唯一的 h1。
+               这里曾经是一个「站名 + 标语 + 细线」的 hero（broadsheet 模板的
+               标准头部），而顶栏是 sticky 的、已经用品牌标记 + 站名承担了身份 ——
+               同一屏 100px 内把同样的字渲染两遍，hero 并没有挣到它那份空间。
+               现在把第一屏让给真正有信息量的东西：文章本身。 -->
+          <h1 class="text-xl font-semibold text-ink">
             {{ activeFilterLabel || '最新文章' }}
-          </component>
+          </h1>
           <p v-if="!hasFilter && !articles.loading.value" class="mt-1 text-sm text-ink-faint">
             共 {{ articles.data.value.total }} 篇
           </p>
@@ -249,15 +253,31 @@ onMounted(() => {
       />
 
       <template v-else>
-        <div class="space-y-6">
-          <ArticleCard
-            v-for="(item, index) in articles.data.value.items"
-            :key="item.id"
-            class="card-enter"
-            :style="{ animationDelay: cardDelay(index) }"
-            :article="item"
-            :priority="index === 0"
-          />
+        <!-- 头条：作者置顶的那一篇（列表默认置顶优先）。
+             在此之前「置顶」只表现为卡片上一个 11px 的徽标 ——
+             作者明确表达了「先看这篇」，界面却没接住。
+             只在无筛选的第一页出现：翻页或筛选后用户找的是结果，不是推荐。 -->
+        <ArticleCard
+          v-if="lead"
+          class="card-enter"
+          :article="lead"
+          featured
+          priority
+        />
+
+        <div v-if="rest.length" :class="lead ? 'mt-8' : ''">
+          <!-- 措辞刻意用「更多」而不是「更早」：排序可以切成最热/标题，
+               那时它们并不是「更早的文章」 -->
+          <h2 v-if="lead" class="mb-4 text-sm font-medium text-ink-faint">更多文章</h2>
+          <div class="space-y-6">
+            <ArticleCard
+              v-for="(item, index) in rest"
+              :key="item.id"
+              class="card-enter"
+              :style="{ animationDelay: cardDelay(index) }"
+              :article="item"
+            />
+          </div>
         </div>
 
         <div class="mt-8">

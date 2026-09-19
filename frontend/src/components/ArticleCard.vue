@@ -22,8 +22,16 @@ const props = withDefaults(
      * 让用户一眼看到「为什么这条会出现」。列表页不传，行为与之前完全一致。
      */
     highlight?: string
+    /**
+     * 头条待遇：标题更大、摘要多给一行、封面更宽。
+     *
+     * 首页用它把**作者置顶的那一篇**从一列同样的卡片里拎出来 ——
+     * 「置顶」这个信号本来就有，只是此前被渲染成一个 11px 的徽标，
+     * 等于作者明确表达了「先看这篇」而界面没接住。
+     */
+    featured?: boolean
   }>(),
-  { priority: false, highlight: '' },
+  { priority: false, highlight: '', featured: false },
 )
 
 /**
@@ -54,7 +62,7 @@ function warm(): void {
 </script>
 
 <template>
-  <article class="card card--hover group p-6">
+  <article class="card card--hover group" :class="featured ? 'p-6 sm:p-8' : 'p-6'">
     <!-- 移动端封面在上（16:9 横幅），桌面端封面在右；flex-col-reverse 保持 DOM 顺序不变 -->
     <div class="flex flex-col-reverse gap-4 sm:flex-row">
       <div class="min-w-0 flex-1">
@@ -81,7 +89,10 @@ function warm(): void {
           </RouterLink>
         </div>
 
-        <h2 class="mt-2 text-lg font-semibold leading-snug">
+        <h2
+          class="mt-2 font-semibold leading-snug"
+          :class="featured ? 'font-display text-2xl sm:text-[28px]' : 'text-lg'"
+        >
           <RouterLink
             :to="`/article/${article.slug}`"
             class="text-ink transition-colors group-hover:text-brand-600"
@@ -99,7 +110,8 @@ function warm(): void {
              不给出处用户只能靠猜"这条为什么会出现"。 -->
         <p
           v-if="snippetSegments.length"
-          class="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-soft"
+          :class="featured ? 'mt-3 line-clamp-3 text-base' : 'mt-2 line-clamp-2 text-sm'"
+          class="leading-relaxed text-ink-soft"
         >
           <template v-for="(segment, index) in snippetSegments" :key="index">
             <mark v-if="segment.match" class="hl">{{ segment.text }}</mark>
@@ -108,7 +120,8 @@ function warm(): void {
         </p>
         <p
           v-else-if="article.summary"
-          class="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-soft"
+          :class="featured ? 'mt-3 line-clamp-3 text-base' : 'mt-2 line-clamp-2 text-sm'"
+          class="leading-relaxed text-ink-soft"
         >
           <template v-for="(segment, index) in summarySegments" :key="index">
             <mark v-if="segment.match" class="hl">{{ segment.text }}</mark>
@@ -149,7 +162,8 @@ function warm(): void {
       <RouterLink
         v-if="article.cover_image"
         :to="`/article/${article.slug}`"
-        class="block shrink-0 overflow-hidden rounded-lg bg-surface-muted sm:w-40"
+        class="block shrink-0 overflow-hidden rounded-lg bg-surface-muted"
+        :class="featured ? 'sm:w-56' : 'sm:w-40'"
         @mouseenter="warm"
         @focusin="warm"
       >
@@ -165,7 +179,8 @@ function warm(): void {
           :loading="priority ? 'eager' : 'lazy'"
           :fetchpriority="priority ? 'high' : 'auto'"
           decoding="async"
-          class="aspect-video w-full object-cover transition-transform duration-[var(--duration-slow)] group-hover:scale-[1.03] sm:aspect-[10/7] sm:w-40"
+          class="aspect-video w-full object-cover transition-transform duration-[var(--duration-slow)] group-hover:scale-[1.03] sm:aspect-[10/7]"
+          :class="featured ? 'sm:w-56' : 'sm:w-40'"
         />
       </RouterLink>
     </div>

@@ -105,12 +105,12 @@ onMounted(() => {
             <span class="font-medium text-ink">{{ item.author_name }}</span>
             <span
               v-if="item.is_admin_reply"
-              class="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
+              class="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
             >
               站长
             </span>
             <span
-              class="rounded px-1.5 py-0.5 text-[11px]"
+              class="rounded-md px-1.5 py-0.5 text-[11px]"
               :class="
                 item.is_approved
                   ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200'

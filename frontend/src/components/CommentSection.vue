@@ -125,11 +125,11 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
           <span class="font-medium text-ink">{{ comment.author_name }}</span>
           <span
             v-if="comment.is_admin_reply"
-            class="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
+            class="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
           >
             站长
           </span>
-          <span v-if="!comment.is_approved" class="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
+          <span v-if="!comment.is_approved" class="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
             待审核
           </span>
           <time class="ml-auto text-xs text-ink-faint" :datetime="comment.created_at">
@@ -167,7 +167,7 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
               <span class="font-medium text-ink">{{ reply.author_name }}</span>
               <span
                 v-if="reply.is_admin_reply"
-                class="rounded bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
+                class="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
               >
                 站长
               </span>

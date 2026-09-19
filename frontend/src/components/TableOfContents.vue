@@ -108,7 +108,7 @@ onBeforeUnmount(() => observer?.disconnect())
 
 <template>
   <nav v-if="visible.length > 1" aria-label="文章目录">
-    <p class="mb-3 text-xs font-medium uppercase tracking-wide text-ink-faint">目录</p>
+    <p class="mb-3 text-xs font-medium text-ink-faint">目录</p>
     <ul class="space-y-1 border-l border-border">
       <li v-for="item in visible" :key="item.id">
         <a

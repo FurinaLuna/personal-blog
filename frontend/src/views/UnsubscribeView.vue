@@ -49,7 +49,7 @@ onMounted(() => {
     <!-- 链接不完整：邮件被截断，或用户手敲了路径 -->
     <template v-if="missingToken">
       <div
-        class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-muted text-ink-faint"
+        class="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-surface-muted text-ink-faint"
       >
         <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
           <path d="M12 8v5M12 16.5h.01" stroke-linecap="round" />
@@ -65,7 +65,7 @@ onMounted(() => {
 
     <!-- 提交中 -->
     <template v-else-if="result.loading.value && !result.ready.value">
-      <div class="skeleton mx-auto h-14 w-14 rounded-2xl"></div>
+      <div class="skeleton mx-auto h-14 w-14 rounded-xl"></div>
       <h1 class="mt-5 text-xl font-semibold text-ink">正在处理…</h1>
       <p class="mt-2 text-sm text-ink-soft">马上就好。</p>
     </template>
@@ -73,7 +73,7 @@ onMounted(() => {
     <!-- 成功 -->
     <template v-else-if="succeeded">
       <div
-        class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-muted text-brand-600"
+        class="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-surface-muted text-brand-600"
       >
         <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" />
@@ -89,7 +89,7 @@ onMounted(() => {
     <!-- 失败：token 过期 / 伪造 / 网络异常 -->
     <template v-else>
       <div
-        class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-muted text-ink-faint"
+        class="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-surface-muted text-ink-faint"
       >
         <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
           <path d="M15 9l-6 6M9 9l6 6" stroke-linecap="round" />

@@ -87,6 +87,23 @@
   --duration-slow: 0.3s;
   --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* ---------- 圆角阶梯 ----------
+     四档，各有职责，不要再引入第五档：
+
+       rounded-full  圆形：头像、计数胶囊
+       rounded-md    标记：11px 徽标、状态标签（这类元素很小，圆角再大就成胶囊了）
+       rounded-lg    控件：按钮、输入框、代码块、封面缩略图
+       rounded-xl    容器：卡片（.card）、模态、图标底
+
+     例外只有一个：原生 checkbox 用 rounded（4px）—— 它是个约 16px 的方块，
+     按「标记」档的 6px 会圆得过头，与浏览器原生控件的观感不一致。
+
+     之所以写下来：此前全站有 6 档圆角（4/6/8/12/16/full）且无规则可循，
+     同一个层级的元素在不同页面用了不同的值。阶梯本身不难，难的是「不改回去」。 */
+  --radius-mark: 0.375rem; /* rounded-md */
+  --radius-control: 0.5rem; /* rounded-lg */
+  --radius-container: 0.75rem; /* rounded-xl */
+
   /* ---------- 代码块角标参数 ----------
      集中在此，避免「改个字号要翻三处」 */
   --badge-font-size: 11px;

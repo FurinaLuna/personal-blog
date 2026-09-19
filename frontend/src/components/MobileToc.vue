@@ -105,7 +105,7 @@ watch(
           tabindex="-1"
         >
           <div class="mb-2 flex items-center justify-between">
-            <p class="text-xs font-medium uppercase tracking-wide text-ink-faint">目录</p>
+            <p class="text-xs font-medium text-ink-faint">目录</p>
             <button
               type="button"
               class="text-xs text-ink-faint hover:text-ink"

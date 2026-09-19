@@ -15,7 +15,7 @@ withDefaults(defineProps<{ heading?: string; hint?: string }>(), {
 <template>
   <div class="mx-auto max-w-content py-16 text-center">
     <div
-      class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-muted text-ink-faint"
+      class="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-surface-muted text-ink-faint"
     >
       <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
         <path d="M12 3v18M3 12h18" stroke-linecap="round" />
