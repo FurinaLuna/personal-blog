@@ -17,6 +17,18 @@
   }
 
   /* 键盘 Tab 聚焦必须可见——这是可访问性的底线，不能因为"不好看"就去掉 */
+  /* 移动端 300ms 点击延迟：浏览器在等"这是不是双击缩放"。
+     声明 manipulation 表示"这里没有双击手势"，点击立即响应。
+     只加在交互元素上，不加到 body —— 正文里可能真有需要双击缩放的场景。 */
+  button,
+  a,
+  [role='button'],
+  input[type='checkbox'],
+  input[type='radio'],
+  select {
+    touch-action: manipulation;
+  }
+
   :focus-visible {
     @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-bg;
   }

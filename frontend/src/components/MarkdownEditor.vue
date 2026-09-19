@@ -201,7 +201,7 @@ function onPaste(event: ClipboardEvent): void {
       <textarea
         v-show="mode !== 'preview'"
         ref="textarea"
-        class="w-full resize-y border-0 bg-transparent p-4 font-mono text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none"
+        class="w-full resize-y border-0 bg-transparent p-4 font-mono text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
         :class="mode === 'split' ? 'w-1/2' : ''"
         :style="{ minHeight: `${minHeight}px` }"
         :value="modelValue"

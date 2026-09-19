@@ -98,7 +98,7 @@ watch(
         <div
           v-if="open"
           ref="panel"
-          class="card fixed inset-x-4 bottom-24 z-50 max-h-[60vh] overflow-auto p-4 shadow-xl"
+          class="card fixed inset-x-4 bottom-24 z-50 max-h-[60vh] overflow-auto overscroll-contain p-4 shadow-xl"
           role="dialog"
           aria-modal="true"
           aria-label="文章目录"

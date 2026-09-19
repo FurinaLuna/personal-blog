@@ -100,7 +100,7 @@ function tooltip(point: (typeof points.value)[number]): string {
 
     <!-- x 轴刻度 -->
     <g v-for="tick in ticks" :key="tick.x" class="fill-ink-faint">
-      <text :x="tick.x" :y="HEIGHT - 6" font-size="11" text-anchor="middle">{{ tick.label }}</text>
+      <text :x="tick.x" :y="HEIGHT - 6" font-size="11" text-anchor="middle" style="font-variant-numeric: tabular-nums">{{ tick.label }}</text>
     </g>
   </svg>
 </template>

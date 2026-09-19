@@ -553,11 +553,13 @@ watch(
 
         <div class="card p-4">
           <h3 class="mb-3 text-sm font-medium text-ink">封面图</h3>
+          <!-- aspect-video 与列表卡片（ArticleCard）的封面比例一致：
+               既预留了高度（图片到达时不跳），也让作者看到的就是读者看到的 -->
           <img
             v-if="form.cover_image"
             :src="form.cover_image"
             alt="封面预览"
-            class="mb-2 w-full rounded-lg object-cover"
+            class="mb-2 aspect-video w-full rounded-lg object-cover"
           />
           <div class="flex gap-2">
             <button

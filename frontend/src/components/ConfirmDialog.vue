@@ -142,7 +142,7 @@ watch(
     >
       <div
         v-if="open"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-4 backdrop-blur-sm"
+        class="fixed inset-0 z-50 flex items-center justify-center overscroll-contain bg-ink/40 px-4 backdrop-blur-sm"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="titleId"

@@ -44,13 +44,13 @@ onMounted(() => {
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div class="card p-5">
           <p class="text-xs text-ink-faint">已发布</p>
-          <p class="mt-2 text-2xl font-semibold text-ink">{{ site.stats.published_total }}</p>
+          <p class="mt-2 text-2xl font-semibold tabular-nums text-ink">{{ site.stats.published_total }}</p>
           <p class="mt-1 text-xs text-ink-faint">共 {{ site.stats.article_total }} 篇</p>
         </div>
 
         <div class="card p-5">
           <p class="text-xs text-ink-faint">草稿</p>
-          <p class="mt-2 text-2xl font-semibold text-ink">{{ site.stats.draft_total }}</p>
+          <p class="mt-2 text-2xl font-semibold tabular-nums text-ink">{{ site.stats.draft_total }}</p>
           <RouterLink to="/admin/articles" class="mt-1 inline-block text-xs text-brand-600 hover:text-brand-700">
             去处理 →
           </RouterLink>
@@ -58,7 +58,7 @@ onMounted(() => {
 
         <div class="card p-5">
           <p class="text-xs text-ink-faint">总阅读量</p>
-          <p class="mt-2 text-2xl font-semibold text-ink">
+          <p class="mt-2 text-2xl font-semibold tabular-nums text-ink">
             {{ formatCount(site.stats.total_views) }}
           </p>
           <p class="mt-1 text-xs text-ink-faint">
@@ -69,7 +69,7 @@ onMounted(() => {
         <div class="card p-5">
           <p class="text-xs text-ink-faint">待审评论</p>
           <p
-            class="mt-2 text-2xl font-semibold"
+            class="mt-2 text-2xl font-semibold tabular-nums"
             :class="site.stats.pending_comment_total > 0 ? 'text-amber-600' : 'text-ink'"
           >
             {{ site.stats.pending_comment_total }}

@@ -21,9 +21,28 @@ onMounted(() => {
 
 <template>
   <div class="flex min-h-screen flex-col">
+    <!-- 跳到主内容。
+         键盘用户每进一个页面都要 Tab 穿过 7 个导航项 + 主题按钮 + 搜索框才能
+         摸到正文；读屏用户更要在每个页面听一遍同样的导航。
+         这个是全站第一个可聚焦元素，聚焦前视觉上不可见（sr-only），
+         聚焦后浮出——用 focus:not-sr-only 而不是 display:none，
+         后者会让它无法被聚焦。 -->
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:text-ink focus:shadow-lg focus:ring-2 focus:ring-brand-500"
+    >
+      跳到主内容
+    </a>
+
     <SiteHeader />
 
-    <main class="mx-auto w-full max-w-shell flex-1 px-4 py-8 sm:px-6 sm:py-10">
+    <!-- tabindex="-1" 是必要的：<main> 默认不可聚焦，跳转后焦点不会转移过去，
+         键盘用户按 Tab 会从页面开头重新开始 -->
+    <main
+      id="main"
+      tabindex="-1"
+      class="mx-auto w-full max-w-shell flex-1 px-4 py-8 focus:outline-none sm:px-6 sm:py-10"
+    >
       <slot />
     </main>
 
