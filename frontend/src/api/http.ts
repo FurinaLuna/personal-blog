@@ -179,8 +179,14 @@ function shouldSkipRefresh(config?: AxiosRequestConfig): boolean {
  * 抽成函数是因为有两条路径需要它：续期失败，以及**续期成功但重放请求仍然 401**。
  * 后者以前走不到这里，会出现「token 还在、user 还在、路由守卫继续放行，
  * 但每个请求都 401、页面永远是空的」这种没有出口的状态。
+ *
+ * 幂等很重要：第二条路径会被走进两次——内层拦截器先判定凭证已死调用一次，
+ * 异常冒泡到外层的 catch 又会调用一次。重复 `replace` 肉眼看不出差别，
+ * 但同一副作用触发两遍终归不稳（且在测试/离线场景下会放大），所以用
+ * 「凭证是不是已经清过」做闸门：没有凭证说明刚刚已经执行过，直接返回。
  */
 function forceLogout(): void {
+  if (!tokenStore.access && !tokenStore.refresh) return
   tokenStore.clear()
   // 用 replace 而不是 push：登出后不该还能按返回键回到需要登录的页面
   if (!window.location.pathname.startsWith('/login')) {
