@@ -138,7 +138,8 @@ class CommentService:
 
         Raises:
             NotFoundError: 文章不存在或尚未发布。
-            BadRequestError: 文章关闭了评论 / 站点禁止游客评论 / 回复目标不属于本文。
+            BadRequestError: 文章关闭了评论 / 站点禁止游客评论 / 回复目标不属于本文 /
+                回复的是一条二级回复（本项目只支持两级）。
         """
         article = await self.articles.get(article_id)
         # 用与读路径同一个口径：草稿和未到发布时间的定时文章都不接受评论，
@@ -157,6 +158,11 @@ class CommentService:
             if parent is None or parent.article_id != article_id:
                 # 关键校验：不检查的话，可以把评论挂到任意文章下面，污染别人的评论区
                 raise BadRequestError("被回复的评论不属于这篇文章")
+            # 两级封顶：评论树的查询只取 parent_id IS NULL 的根 + 一层 replies，
+            # 放过三级评论的结果是接口返回 201「成功」而前台永远查不到它 ——
+            # 用户以为回复成功，内容其实丢了。宁可在这里明确拒绝。
+            if parent.parent_id is not None:
+                raise BadRequestError("仅支持两级评论，请直接回复根评论")
 
         is_staff = viewer is not None and (
             viewer.role is UserRole.ADMIN or article.author_id == viewer.id

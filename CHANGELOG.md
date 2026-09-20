@@ -52,6 +52,23 @@
 
 ### 已修复
 
+- **`ADMIN_EMAIL` 不校验导致运行时静默半残**：seed 写入时不校验邮箱，
+  读取时才被 `SiteProfileRead` / `UserRead` 的 `EmailStr` 拦下 →
+  `/site/profile` 与 `/auth/me` 一律 500，而服务照常启动且无任何告警
+  （`ADMIN_EMAIL` 填 `admin@e2e.test` 这类 RFC 保留域即触发）；
+  现 `admin_email` 本身就是 `EmailStr`，非法值在**解析配置时**就拒绝启动，
+  与生产安全门禁同一取舍（默认值 `admin@example.com` 仍可正常启动）
+- **缺少兜底 500 处理器**：任何未捕获异常此前会落到 Starlette 默认处理器，
+  返回纯文本 `Internal Server Error` —— 前端无法归一化文案，运维拿不到
+  `request_id` 对日志；现统一返回 `{"detail": "服务器内部错误", "code":
+  "internal_error", "request_id": ...}`，细节只进日志
+- **三级评论被接受却永远不可见**：回复一条二级回复会返回 201，
+  但两级评论树（只查根 + 一层 replies）永远查不到它，用户以为回复成功、
+  内容实际丢失；现直接拒绝并返回 400「仅支持两级评论，请直接回复根评论」
+- **登出不吊销令牌**：`POST /auth/logout` 只回一句语义消息、服务端不做任何事，
+  旧 access token（120 分钟）与 refresh token（7 天）仍可访问受保护资源；
+  现复用令牌代次机制（`token_version += 1`）真正吊销，代价是**所有设备**
+  同时登出——个人博客规模下这是可接受的取舍
 - **登录成功后不跳转**：`auth` store 的 `login()` 成功时返回 `undefined`，
   被 `LoginView` 的 `ok === undefined` 误判为失败，用户卡在登录页；
   现改为成功返回 user 对象，并新增回归测试

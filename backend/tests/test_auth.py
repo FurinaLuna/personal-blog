@@ -11,6 +11,15 @@ from tests.conftest import login
 from tests.factories import ADMIN_PASSWORD, AUTHOR_PASSWORD, make_user_payload
 
 
+async def _login(client: AsyncClient, username: str, password: str) -> dict[str, str]:
+    """登录并返回完整的 token 对（登出用例需要同时拿到 refresh token）。"""
+    response = await client.post(
+        "/api/v1/auth/login", json={"username": username, "password": password}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 class TestLogin:
     async def test_login_with_username(self, client: AsyncClient) -> None:
         response = await client.post(
@@ -282,6 +291,56 @@ class TestUserAdministration:
         self, client: AsyncClient, admin_headers: dict[str, str]
     ) -> None:
         response = await client.post("/api/v1/auth/logout", headers=admin_headers)
+        assert response.status_code == 200
+
+
+class TestLogout:
+    """登出必须真的吊销凭证。
+
+    此前 ``POST /auth/logout`` 只返回一句「请在客户端清除本地凭证」，服务端
+    什么都不做：用户以为已登出，而旧 access token（120 分钟）与 refresh token
+    （7 天）仍能访问所有受保护资源。
+    """
+
+    async def test_logout_invalidates_access_token(
+        self, client: AsyncClient, author: dict[str, object]
+    ) -> None:
+        tokens = await _login(client, "writer", AUTHOR_PASSWORD)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        assert (await client.get("/api/v1/auth/me", headers=headers)).status_code == 200
+
+        out = await client.post("/api/v1/auth/logout", headers=headers)
+        assert out.status_code == 200, out.text
+
+        after = await client.get("/api/v1/auth/me", headers=headers)
+        assert after.status_code == 401, "登出后旧 access token 仍然可用 = 登出没有止损能力"
+        assert after.json()["code"] == "unauthorized"
+
+    async def test_logout_invalidates_refresh_token(
+        self, client: AsyncClient, author: dict[str, object]
+    ) -> None:
+        """只吊销 access token 不够：refresh token 能立刻换出一对新的。"""
+        tokens = await _login(client, "writer", AUTHOR_PASSWORD)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        await client.post("/api/v1/auth/logout", headers=headers)
+
+        refreshed = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
+        assert refreshed.status_code == 401, "登出后旧 refresh token 仍能换发新令牌"
+
+    async def test_can_login_again_after_logout(
+        self, client: AsyncClient, author: dict[str, object]
+    ) -> None:
+        """吊销不能把用户锁在门外：重新登录必须照常可用。"""
+        tokens = await _login(client, "writer", AUTHOR_PASSWORD)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        await client.post("/api/v1/auth/logout", headers=headers)
+
+        fresh = await _login(client, "writer", AUTHOR_PASSWORD)
+        response = await client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {fresh['access_token']}"}
+        )
         assert response.status_code == 200
 
 

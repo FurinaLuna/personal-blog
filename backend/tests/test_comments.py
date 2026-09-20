@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from httpx import AsyncClient
+from sqlalchemy import func, select
 
+from app.db.session import async_session_factory
+from app.models import Comment
 from app.utils.ratelimit import limiter
 from tests.factories import make_article_payload
 
@@ -283,6 +286,45 @@ class TestReplies:
             json=_comment(parent_id=999999),
         )
         assert response.status_code == 400
+
+    async def test_reply_to_reply_rejected_and_not_persisted(
+        self,
+        client: AsyncClient,
+        published_article: dict,
+    ) -> None:
+        """三级评论必须被拒绝，而不是「接受后永远不可见」。
+
+        评论树只查 ``parent_id IS NULL`` 的根 + 一层 replies。此前缺这条校验时，
+        回复一条二级回复会返回 201——用户看到「回复成功」，但这条内容在前台
+        永远查不到，等于被静默丢弃。所以这里除了断言 400，还要直连数据库确认
+        没有留下孤儿行。
+        """
+        root = (
+            await client.post(
+                f"/api/v1/comments/article/{published_article['id']}", json=_comment()
+            )
+        ).json()
+        reply = (
+            await client.post(
+                f"/api/v1/comments/article/{published_article['id']}",
+                json=_comment(parent_id=root["id"], content="二级回复"),
+            )
+        ).json()
+
+        response = await client.post(
+            f"/api/v1/comments/article/{published_article['id']}",
+            json=_comment(parent_id=reply["id"], content="三级回复"),
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "bad_request"
+
+        async with async_session_factory() as session:
+            total = await session.scalar(select(func.count()).select_from(Comment))
+            deepest = await session.scalar(
+                select(func.count()).select_from(Comment).where(Comment.parent_id == reply["id"])
+            )
+        assert total == 2, f"被拒绝的三级评论仍写入了数据库，当前共 {total} 条"
+        assert deepest == 0, "存在挂在二级回复下的孤儿评论"
 
 
 class TestVisibility:

@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import field_validator
+from pydantic import EmailStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # backend/ 目录（config.py -> app/ -> src/ -> backend/）
@@ -136,7 +136,15 @@ class Settings(BaseSettings):
 
     # ---------- 初始化管理员 / 演示数据 ----------
     admin_username: str = "admin"
-    admin_email: str = "admin@example.com"
+    # 必须是 EmailStr 而不是 str：这个值会被 seed 直接写进 users / site_profile，
+    # 而写入路径不做校验（Pydantic 只管 schema 层），要等到读取时被
+    # UserRead / SiteProfileRead 校验才炸。后果是——服务能正常启动、
+    # 启动日志无任何告警，而 GET /site/profile 与 /auth/me 一律 500
+    # （例如 ADMIN_EMAIL 填 RFC 保留域 admin@e2e.test 时）。
+    # 这类「配置错了却静默降级成半残状态」的故障最难排查，所以宁可在
+    # 解析配置时就失败：与 check_production_safety() 同一策略——
+    # 启动失败一定会被处理，运行时 500 只会变成一条没人看的日志。
+    admin_email: EmailStr = "admin@example.com"
     admin_password: str = _DEFAULT_ADMIN_PASSWORD
     seed_demo_data: bool = True
 

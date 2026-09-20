@@ -108,6 +108,24 @@ class AuthService:
         user.token_version += 1
         await self.session.flush()
 
+    async def logout(self, user: User) -> None:
+        """登出：让该用户已签发的令牌全部失效。
+
+        实现就是复用了改密码那套令牌代次机制——``token_version += 1`` 之后，
+        所有旧 token 的 ``ver`` 与库里的值不匹配，认证依赖与 ``refresh()``
+        都会拒掉它们。
+
+        **代价**：这会让该用户在**所有设备**上的令牌同时失效（手机上登出，
+        电脑上也得重新登录）。要做「只吊销当前设备」就得给每个会话记 jti
+        并引入黑名单存储，个人博客的规模不值得——而登出的语义本来就是
+        「我不再信任这些凭证」，全端失效正是它唯一能真正止损的手段。
+        什么都不做（只回一句「请在客户端清除凭证」）是最差的选项：
+        用户以为已登出，凭证在有效期内（access 120 分钟、refresh 7 天）
+        仍能访问所有受保护资源。
+        """
+        user.token_version += 1
+        await self.session.flush()
+
     # ---------------------------------------------------------------- 用户
 
     async def update_self(self, user: User, payload: UserSelfUpdate) -> User:

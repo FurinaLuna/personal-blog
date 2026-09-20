@@ -183,6 +183,32 @@ def _register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+        """兜底 500：把**任何**未捕获异常翻译成统一信封。
+
+        没有它的时候，未捕获异常会落到 Starlette 自带的 ServerErrorMiddleware，
+        返回纯文本 ``Internal Server Error``：
+        前端拿到的是一段 HTML/纯文本，没法归一化成「服务器开小差了」的提示，
+        运维也拿不到 ``request_id`` 去把用户报错对应到日志——
+        线上排障时这等于只有一半信息（用户说 500，日志里找不到是哪一条）。
+
+        FastAPI 会优先匹配更具体的处理器，所以上面三个
+        （DomainError / IntegrityError / RequestValidationError）不受影响。
+
+        文案刻意不回显异常细节：数据库错误、路径、乃至表结构都是信息泄露。
+        细节只进日志（带堆栈），排查走 request_id。
+        """
+        logger.exception("未捕获异常（request_id=%s）：%s", get_request_id(), exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "服务器内部错误",
+                "code": "internal_error",
+                "request_id": get_request_id(),
+            },
+        )
+
 
 def _enforce_production_safety() -> None:
     """生产启动门禁：带着开发默认值上生产就直接拒绝启动。

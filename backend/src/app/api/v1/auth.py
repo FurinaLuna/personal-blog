@@ -59,14 +59,17 @@ async def refresh(payload: RefreshRequest, session: SessionDep) -> Token:
 
 
 @router.post("/logout", response_model=Message, summary="登出")
-async def logout(user: CurrentUser) -> Message:
-    """登出。
+async def logout(user: CurrentUser, session: SessionDep) -> Message:
+    """登出：服务端真的吊销令牌，而不是只给前端一句语义消息。
 
-    当前是无状态 JWT，服务端不保存会话，因此这里只是给前端一个语义明确的接口：
-    前端收到 200 后就清掉本地 token。真要做「立即失效」，需要引入 token 黑名单
-    （Redis + jti），本项目的规模不值得——token 有效期本身就短。
+    实现走 ``AuthService.logout`` 递增 ``token_version``（与改密码同一套机制），
+    该用户所有设备上已签发的 access / refresh token 立即失效。
+    前端收到 200 后仍要清掉本地凭证——那是客户端侧的事，两者不冲突。
     """
-    return Message(detail="已登出，请在客户端清除本地凭证")
+    await AuthService(session).logout(user)
+    # 写路由显式提交（原因见 db/session.py get_session 说明）
+    await session.commit()
+    return Message(detail="已登出，所有设备的登录状态已失效")
 
 
 @router.get("/me", response_model=UserRead, summary="当前登录用户")

@@ -93,7 +93,7 @@ def _create_token(
         "exp": now + expires_delta,
         "jti": uuid.uuid4().hex,  # 便于将来做黑名单/单点登出
         # 令牌代次。校验方拿它与库里的 users.token_version 比对，
-        # 不一致即吊销 —— 改密码时服务端 +1，所有旧令牌立刻失效。
+        # 不一致即吊销 —— 改密码 / 登出时服务端 +1，所有旧令牌立刻失效。
         "ver": token_version,
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
