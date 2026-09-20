@@ -81,3 +81,8 @@ playwright-report/
 test-results/
 # 样式基线的采集体（本地比对用，比对完即弃）
 style-baseline*.json
+# tools/e2e_live/ 每次运行的输出：按时间戳生成，且内含本机临时目录的绝对路径
+# （工作目录 / 测试库的真实路径），既会 churn 也不该把本机路径带进仓库。
+# 保留的是 e2e_run.py / probe.py 与人工整理的两份最终报告。
+tools/e2e_live/reports/e2e-report-*.md
+tools/e2e_live/reports/e2e-results-*.json
