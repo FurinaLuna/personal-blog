@@ -83,6 +83,26 @@ if (!chromePath) {
   process.exit(2)
 }
 
+/**
+ * 重新登录并刷新模块级 token。
+ *
+ * 存在的原因：服务端登出是**真吊销**（`token_version += 1`），登出用例（B1）一跑，
+ * 之前取到的这枚 token 立刻失效，后续所有带它的 PATCH / DELETE 一律 401。
+ * 后果不只是用例失败——清理阶段全 401 会把整轮造的数据留在真实库里，
+ * 而残留的临时账号还会让下一个用例（B4）读到错的 role。
+ * 所以凡是「登出之后」或「收尾清理之前」，都必须重新取一枚令牌。
+ */
+async function relogin() {
+  const resp = await fetch(`${BASE}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ADMIN),
+  })
+  const body = await resp.json().catch(() => ({}))
+  if (body?.access_token) token = body.access_token
+  return { status: resp.status, ok: Boolean(body?.access_token) }
+}
+
 async function api(path, options = {}) {
   const resp = await fetch(`${BASE}${path}`, {
     ...options,
@@ -158,7 +178,11 @@ async function sweepResidual() {
   }
   const atts = await api('/api/v1/attachments?page_size=50')
   for (const a of atts.body?.items ?? []) {
-    if (a.original_name?.includes('e2e_')) {
+    // 判定规则必须和 cleanup 的兜底清扫一致（/^e2e[_-]/i）。
+    // 之前这里写的是 includes('e2e_')，而 RUN 形如 `e2e-muavvqw1`（连字符），
+    // 于是上一轮被强杀留下的附件在开局扫不掉 —— 它们会混进媒体库，
+    // 让 A10 的「删除」按钮查找点错卡片（已改成按对话框定位，但残留本身要先清掉）。
+    if (/^e2e[_-]/i.test(a.original_name ?? '')) {
       if ((await api(`/api/v1/attachments/${a.id}`, { method: 'DELETE' })).status === 204) removed++
     }
   }
@@ -542,9 +566,20 @@ try {
       const del = card && [...card.querySelectorAll('button')].find(b => b.textContent.trim() === '删除')
       if (!del) return { ok: false, reason: '删除按钮未找到' }
       del.click()
-      await new Promise(r => setTimeout(r, 900))
-      // 确认弹窗的确认按钮文案是「删除」
-      const confirm = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '删除' && b !== del)
+      // 确认按钮必须在**对话框内**找。
+      // 原先写的是「页面上第一个文案为『删除』且不是刚点的那个按钮」——媒体库里
+      // 只要还有别的卡片（例如上一轮残留没清干净），这个查找就会命中另一张卡片的
+      // 删除按钮：又弹一次确认、真正要删的那个纹丝不动，用例表现为
+      // 「点了却没删掉」，排查时很容易误判成删除接口坏了。
+      // 顺便轮询等对话框出现，别靠固定 sleep 赌它已经挂载。
+      let dialog = null
+      for (let i = 0; i < 20 && !dialog; i += 1) {
+        dialog = document.querySelector('[role="dialog"][aria-modal="true"]')
+        if (!dialog) await new Promise(r => setTimeout(r, 150))
+      }
+      const confirm = dialog
+        ? [...dialog.querySelectorAll('button')].find(b => b.textContent.trim() === '删除')
+        : null
       confirm?.click()
       await new Promise(r => setTimeout(r, 2400))
       return { ok: true, toast: /已删除/.test(document.body.innerText), clicked: Boolean(confirm) }
@@ -958,14 +993,28 @@ try {
     `path=${b1?.path} access=${b1?.access ?? 'null'}`,
   )
 
+  // B1 刚做过登出：服务端已吊销令牌，这里必须换一枚新的，
+  // 否则下面重置 role 的 PATCH 与收尾清理都会 401（表现为 B4 失败 + 满地残留）。
+  const afterLogout = await relogin()
+  if (!afterLogout.ok) {
+    uncovered.push(`登出后重新登录失败（HTTP ${afterLogout.status}）：后续用例与清理可能受影响`)
+  }
+
   // B4 非站长访问受限后台页被弹回首页
   // 前置条件显式化：把 role 与 is_active **一起**设成"作者且启用"。
   // 只设 role 会让这条用例依赖前序用例留下的状态（A8c 的停用/启用），
   // 一旦那个状态有偏差，失败信息会指向"权限守卫有问题"——误导排查方向。
-  await api(`/api/v1/auth/users/${userId}`, {
+  const roleReset = await api(`/api/v1/auth/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify({ role: 'author', is_active: true }),
   })
+  // 这一步失败时如果继续跑，B4 的失败信息会是「没被弹回首页」，
+  // 看起来像权限守卫坏了，实际是前置条件没设上——显式说出来，别误导排查方向。
+  if (roleReset.status !== 200) {
+    uncovered.push(
+      `B4 前置条件未设上：重置临时账号为 author 失败（HTTP ${roleReset.status} ${JSON.stringify(roleReset.body).slice(0, 80)}）`,
+    )
+  }
   /** 用临时 author 账号换取 token（失败时打印真实响应，便于定位而不是静默跳过） */
   const authorLoginOnce = async () => {
     const resp = await fetch(`${BASE}/api/v1/auth/login`, {
@@ -1053,6 +1102,10 @@ try {
 } finally {
   let cleanupLog = []
   try {
+    // 收尾前再取一次令牌：整轮里可能又发生过登出（或令牌过期），
+    // 用失效的令牌清理等于什么都没删，会把造出来的数据全留在库里。
+    const beforeCleanup = await relogin()
+    if (!beforeCleanup.ok) cleanupLog.push(`重新登录失败(HTTP ${beforeCleanup.status})`)
     cleanupLog = await cleanup()
   } catch (error) {
     cleanupLog = [`cleanup failed: ${error.message}`]
