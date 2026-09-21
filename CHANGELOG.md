@@ -48,7 +48,14 @@
 - 新增 `backend/scripts/backup_db.py`（`VACUUM INTO` 一致性备份 + 轮转）
   与 `backend/scripts/lint_imports.py`（跨平台分层契约检查）
 - `visit_logs` 增加留存清理（180 天，启动时自动执行，另有站长端可按需触发）
-- 测试基线更新：后端 **370** 例、前端 **138** 例
+- 新增 `tools/e2e_live/e2e_run.py`：真实环境端到端（62 条用例）。临时空库走
+  `alembic upgrade head` 建表（与生产同路径，而非 ORM 的 `create_all`）、
+  独立 uvicorn 进程与独立 storage 目录，断言一律 HTTP + 直连 sqlite 二次校验，
+  首尾比对 `backend/blog.db` 指纹确保零污染；`probe.py` 用于定点复现单个 500
+- 前端补齐两处此前完全无测试的收口：`api/http.ts`（错误归一化 / 401 静默续期的
+  单飞锁与重放 / 强制登出，12 例）与 `router/index.ts` 的后台守卫
+  （redirect 保留 query、角色不足回首页、网络抖动不缓存成未登录，9 例）
+- 测试基线更新：后端 **442** 例、前端 **168** 例
 
 ### 已修复
 
@@ -122,6 +129,26 @@
 - `articles_fts` 是虚拟表，`Base.metadata.create_all` 不会创建它，
   而 autogenerate 会生成 `DROP TABLE articles_fts` —— 现补建 + 探测兜底 +
   `include_object` 护栏
+- **上传白名单是死配置**：`settings.allowed_image_types` / `allowed_file_types`
+  全仓零引用，真实白名单硬编码在 `attachment_service.py`，配了环境变量也不生效。
+  现服务层每次调用重读配置（在 import 期固化成常量的话，环境变量就再也改不动）。
+  同时修掉**单位不一致**：非图片附件实际按**扩展名**判定（没有可靠的内容嗅探，
+  `Content-Type` 由客户端提供、可伪造），而默认值写的是 MIME，
+  `application/pdf` 这类永远匹配不上；默认值统一改成扩展名并补 `image/bmp`
+  （服务层本就允许、配置里却漏了）。常量表更名 `IMAGE_FORMAT_TABLE` 并补
+  TIFF / ICO 两档，运维才有得可配
+- **限流在并发下丢计数**：限流依赖是同步的、会被 FastAPI 放进线程池并发执行，
+  而 `bucket.count += 1` 是读-改-写三步，GIL 只保证单条字节码原子，
+  两个线程读到同一个旧值各自写回就会吞掉计数，配额形同放大；
+  现整个「取桶 → 可能重置窗口 → 自增 → 判定」放进 `threading.Lock`
+- **强制登出被执行两次**：`http.ts` 中「续期成功但重放仍 401」这条路径，
+  内层拦截器判定凭证已死先调用一次 `forceLogout()`，异常冒泡到外层 `catch`
+  又调用一次，`tokenStore.clear()` 与 `location.replace()` 重复触发；
+  现以「凭证是否已清空」做幂等闸门
+- **`articles.series_order` 缺 `server_default`**：只有 ORM 的 `default=0`，
+  导致 `create_all` 建出的列没有默认值，与 Alembic 建库结构不一致，
+  不含该列的裸 INSERT 会 NOT NULL 失败。SQLite 的 ALTER COLUMN 改不了默认值，
+  故不新增迁移、只在模型侧对齐（迁移漂移至此清零）
 
 ### 计划中
 

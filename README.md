@@ -117,7 +117,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 275 例、前端 86 例 |
+| 测试 | pytest / Vitest | 后端 442 例、前端 168 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -198,7 +198,7 @@ personal-blog/
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 275 个 pytest 用例
+│   ├── tests/                      # 442 个 pytest 用例
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -228,6 +228,10 @@ personal-blog/
 │   ├── test-reports/               # full-check 各环境的运行报告（JSON）
 │   └── screenshots/                # 界面截图
 ├── tools/
+│   ├── e2e_live/
+│   │   ├── e2e_run.py              # 真实环境端到端：临时空库 + alembic 建表 + 独立
+│   │   │                           # uvicorn 进程，62 条用例（HTTP 断言 + 直连 sqlite 复核）
+│   │   └── probe.py                # 定点复现某个 500 并抓取服务端堆栈
 │   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互（34 项，只读）
 │   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径（22 项，对称还原）
 │   ├── full-check.mjs              # CDP 全功能回归：写操作生命周期 + 数据基线核对（41 项，自清理）
@@ -329,14 +333,15 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest` | **275 passed** |
+| `pytest` | **442 passed** |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **86 passed** |
+| `vitest run` | **168 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 11 张表，干净回滚 |
+| `alembic upgrade head` / `downgrade base` | 8 条迁移升至 head = 12 张业务表（另有 FTS5 虚拟表及其 4 张影子表）；降回 base 只剩 `alembic_version`，复升结构一致 |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 | `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
+| `tools/e2e_live/e2e_run.py` | **62/62**：真实进程 + 真实数据库的全链路端到端（6 条主流程 + 异常边界），运行前后比对 `blog.db` 指纹确保零污染 |
 
 **为什么要浏览器脚本**：单测与类型检查都是绿的情况下，
 项目里仍然出现过「登录后被弹回登录页」「后台侧边栏渲染两遍」和
