@@ -117,7 +117,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 442 例、前端 168 例 |
+| 测试 | pytest / Vitest | 后端 442 例、前端 200 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -335,7 +335,7 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
 | `pytest` | **442 passed** |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **168 passed** |
+| `vitest run` | **200 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 8 条迁移升至 head = 12 张业务表（另有 FTS5 虚拟表及其 4 张影子表）；降回 base 只剩 `alembic_version`，复升结构一致 |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
