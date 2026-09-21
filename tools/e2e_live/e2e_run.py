@@ -232,7 +232,17 @@ _PG_ROWCOUNT_RE = re.compile(r"^\(\d+ rows?\)$")
 # 用 -P null= 换成哨兵串，解析器才能把 NULL 还原成 None —— 否则
 # `is None` 这类断言（例如「删除系列后 series_id 应置空」）会全部误报，
 # 看上去像数据库没设 ON DELETE SET NULL，其实约束是正常的。
-_PG_NULL = "@@PGNULL@@"
+# 三个哨兵都随每次运行随机生成：PG 的 text 列允许 chr(30)/chr(31)
+# 这类控制字符，固定分隔符一旦与正文撞车，一条记录会被撕成两条
+# （配 rows() 里的 zip 还会静默丢掉尾部列）。随机化把撞车概率降到可忽略。
+_PG_FS = "__fs_" + secrets.token_hex(6) + "__"
+_PG_RS = "__rs_" + secrets.token_hex(6) + "__"
+_PG_NULL = "__null_" + secrets.token_hex(6) + "__"
+
+# 只还原「不会被改写」的数字：非 ASCII 数字（'١'）、前导零（'007'）、
+# 下划线（'1_000'）、nan / inf 一律保持字符串。
+_PG_INT_RE = re.compile(r"-?(?:0|[1-9]\d*)")
+_PG_FLOAT_RE = re.compile(r"-?(?:0|[1-9]\d*)\.\d+")
 
 
 def _pg_raw(sql: str, with_header: bool) -> list[list[str]]:
@@ -243,7 +253,7 @@ def _pg_raw(sql: str, with_header: bool) -> list[list[str]]:
     极具误导性的失败。字段用 \\x1f、记录用 \\x1e，两者都不会出现在正文里。
     """
     cmd = ["docker", "exec", PG_DB_CONTAINER, "psql", "-U", PG_DB_USER, "-d", PG_DB_NAME,
-           "-A", "-F", "\x1f", "-R", "\x1e", "-P", f"null={_PG_NULL}"]
+           "-A", "-F", _PG_FS, "-R", _PG_RS, "-P", f"null={_PG_NULL}"]
     if not with_header:
         cmd.append("-t")
     cmd += ["-c", sql]
@@ -259,13 +269,13 @@ def _pg_raw(sql: str, with_header: bool) -> list[list[str]]:
     if text.endswith("\n"):
         text = text[:-1]
     out = []
-    for record in text.split("\x1e"):
+    for record in text.split(_PG_RS):
         # psql 在带表头模式下末尾会补一行 "(N rows)" 行数脚注；换了记录分隔符
         # 之后它就变成一条「假记录」。不剔掉的话 COUNT 类的断言会凭空多一行，
         # 表现为「站长账号命中 2 行」这种完全指错方向的失败。
         if _PG_ROWCOUNT_RE.match(record.strip()):
             continue
-        out.append(record.split("\x1f"))
+        out.append(record.split(_PG_FS))
     return out
 
 
@@ -288,12 +298,16 @@ def _coerce(value):
         return True
     if low in ("f", "false"):
         return False
-    if value.lstrip("-").isdigit():
-        return int(value)
-    try:
-        return float(value)
-    except ValueError:
-        return value
+    # `value.lstrip("-").isdigit()` 看着简洁，实测会踩两个坑：'²' 的 isdigit()
+    # 为 True 但 int() 抛 ValueError（非 AssertionError，整个套件硬崩）；
+    # '١'（阿拉伯数字）静默变 1。改成 ASCII 严格匹配，并把 nan/inf/前导零
+    # 排除在外——它们会被 float() 接受，等于把 varchar 里的文本悄悄改写成数字。
+    if value.isascii():
+        if _PG_INT_RE.fullmatch(value):
+            return int(value)
+        if _PG_FLOAT_RE.fullmatch(value):
+            return float(value)
+    return value
 
 
 def scalar(sql, params=()):
@@ -816,7 +830,9 @@ def c_a06():
 @case("A07", "冲突处理", "P1", "重复 slug 创建：不产生两条同 slug 记录（409 或自动退让）")
 def c_a07():
     token = STATE["admin_token"]
-    existing_slug = rows("SELECT slug FROM articles LIMIT 1")[0]["slug"]
+    # 显式转回 str：slug 是 varchar，若某条 slug 恰好是纯数字，_coerce 会把它
+    # 还原成 int，随后拼进 SQL 就不再加引号（PG 报 operator does not exist）。
+    existing_slug = str(rows("SELECT slug FROM articles LIMIT 1")[0]["slug"])
     r = api("POST", "/articles", headers=auth_hdr(token),
             json={"title": "重名文章", "slug": existing_slug, "content_md": "x", "status": "draft"})
     check(r.status_code in (200, 201, 409),
@@ -1199,7 +1215,8 @@ def c_b07():
 @case("B08", "冲突处理", "P1", "重复创建同名分类返回 409")
 def c_b08():
     token = STATE["admin_token"]
-    existing = rows("SELECT name FROM categories LIMIT 1")[0]["name"]
+    # 同上：分类名是 varchar，纯数字的名字被还原成 int 后塞进 JSON 请求体会变类型
+    existing = str(rows("SELECT name FROM categories LIMIT 1")[0]["name"])
     r = api("POST", "/categories", json={"name": existing}, headers=auth_hdr(token))
     check(r.status_code == 409, f"重复分类应 409，实际 {r.status_code}：{r.text[:160]}")
 
