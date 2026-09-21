@@ -9,6 +9,7 @@
    从根上消除路径穿越（``../../etc/passwd``）与重名覆盖。
 4. **扩展名白名单**。普通附件只允许 pdf/zip/txt/md 这类，禁掉 html/js/svg——
    这些文件一旦被浏览器当同源脚本执行，就是存储型 XSS。
+   白名单读 ``settings.allowed_file_types``（可用环境变量覆盖），不写死在代码里。
 5. **像素炸弹防护**。拒绝超大像素图，避免 Pillow 解码时把内存吃光。
 """
 
@@ -37,19 +38,24 @@ from app.utils.exceptions import (
 from app.utils.storage import storage
 from app.utils.text import short_uuid, truncate
 
-# Pillow 能识别并且我们允许的图片格式 -> 落盘扩展名
-ALLOWED_IMAGE_FORMATS: dict[str, str] = {
-    "JPEG": ".jpg",
-    "PNG": ".png",
-    "GIF": ".gif",
-    "WEBP": ".webp",
-    "AVIF": ".avif",
-    "BMP": ".bmp",
+# Pillow 格式名 -> (MIME, 落盘扩展名)。
+#
+# 这是**命名表**而不是白名单：真正允许哪些格式由 ``settings.allowed_image_types``
+# 决定（见 ``AttachmentService._allowed_image_formats``）。之所以还要留一张表，
+# 是因为落盘必须知道扩展名，而 Pillow 只给格式名（JPEG -> .jpg）。
+# 表刻意比默认白名单大一圈，运维才能通过环境变量放行 TIFF / ICO 等格式；
+# 表里没有的 MIME（例如 image/svg+xml）配了也不会生效——Pillow 解不出那种格式，
+# 它本来就不会出现在判定路径上。
+IMAGE_FORMAT_TABLE: dict[str, tuple[str, str]] = {
+    "JPEG": ("image/jpeg", ".jpg"),
+    "PNG": ("image/png", ".png"),
+    "GIF": ("image/gif", ".gif"),
+    "WEBP": ("image/webp", ".webp"),
+    "AVIF": ("image/avif", ".avif"),
+    "BMP": ("image/bmp", ".bmp"),
+    "TIFF": ("image/tiff", ".tif"),
+    "ICO": ("image/x-icon", ".ico"),
 }
-# 普通附件允许的扩展名白名单（可执行/可被浏览器执行的一律不放进来）
-ALLOWED_FILE_EXTENSIONS: frozenset[str] = frozenset(
-    {".pdf", ".zip", ".txt", ".md", ".csv", ".json", ".docx", ".xlsx", ".pptx", ".epub"}
-)
 # 单张图片最大像素数（约 5000 万），超过直接拒绝
 MAX_IMAGE_PIXELS = 50_000_000
 READ_CHUNK = 512 * 1024
@@ -158,15 +164,38 @@ class AttachmentService:
                 image_format = (image.format or "").upper()
                 width, height = image.size
                 # 先读尺寸再校验，避免 verify() 之后对象不可用
-                if image_format not in ALLOWED_IMAGE_FORMATS:
+                formats = AttachmentService._allowed_image_formats()
+                if image_format not in formats:
                     raise UnsupportedMediaTypeError(f"不支持的图片格式：{image_format or '未知'}")
                 if width * height > MAX_IMAGE_PIXELS:
                     raise UnsupportedMediaTypeError("图片分辨率过大，请压缩后再上传")
-                return ALLOWED_IMAGE_FORMATS[image_format], width, height
+                return formats[image_format], width, height
         except UnidentifiedImageError:
             return None
         except OSError as exc:  # 损坏的图片文件
             raise UnsupportedMediaTypeError("图片文件已损坏，无法解析") from exc
+
+    @staticmethod
+    def _allowed_image_formats() -> dict[str, str]:
+        """当前允许的图片格式 -> 落盘扩展名。
+
+        白名单来自 ``settings.allowed_image_types``（MIME），每次调用都重读：
+        服务层一旦在 import 期把白名单固化成常量，环境变量就再也改不动它了
+        ——这正是这批白名单曾经沦为死配置的原因。
+        """
+        allowed = {str(mime).strip().lower() for mime in settings.allowed_image_types}
+        return {
+            fmt: extension
+            for fmt, (mime, extension) in IMAGE_FORMAT_TABLE.items()
+            if mime in allowed
+        }
+
+    @staticmethod
+    def _allowed_file_extensions() -> frozenset[str]:
+        """当前允许的非图片附件扩展名（同样每次都重读配置）。"""
+        return frozenset(
+            str(ext).strip().lower() for ext in settings.allowed_file_types if str(ext).strip()
+        )
 
     @staticmethod
     def _validate_file(original_name: str) -> str:
@@ -175,10 +204,11 @@ class AttachmentService:
         Raises:
             UnsupportedMediaTypeError: 扩展名缺失、格式非法或不在白名单内。
         """
+        allowed = AttachmentService._allowed_file_extensions()
         extension = Path(original_name).suffix.lower()
-        if not _EXT_PATTERN.match(extension) or extension not in ALLOWED_FILE_EXTENSIONS:
-            allowed = "、".join(sorted(ALLOWED_FILE_EXTENSIONS))
-            raise UnsupportedMediaTypeError(f"该类型不允许上传，仅支持：{allowed}")
+        if not _EXT_PATTERN.match(extension) or extension not in allowed:
+            hint = "、".join(sorted(allowed))
+            raise UnsupportedMediaTypeError(f"该类型不允许上传，仅支持：{hint}")
         return extension
 
     @staticmethod

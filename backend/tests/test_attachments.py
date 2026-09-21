@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import struct
+import zlib
+
+import pytest
 from httpx import AsyncClient
 
 from app.db.session import async_session_factory
 from app.models import Attachment
+from app.services.attachment_service import MAX_IMAGE_PIXELS, AttachmentService
+from app.utils.exceptions import UnsupportedMediaTypeError
 from tests.factories import make_jpeg_bytes, make_png_bytes, unique_suffix
 
 
@@ -78,6 +84,88 @@ class TestUploadImage:
             headers=author_headers,
         )
         assert response.status_code == 415
+
+
+class TestImageDecompressionBomb:
+    """图片解压炸弹防护（``MAX_IMAGE_PIXELS``）的单元测试。
+
+    为什么必须补这一层：这条防护此前只有 E2E 覆盖（8000x8000 的 PNG 被 415 拒）。
+    E2E 不在常规回归里跑，等于「改坏了也没人知道」——防护逻辑一旦在重构中
+    被删掉，pytest 照样全绿。
+
+    构造手法是**只声明尺寸、不真的铺像素**：Pillow 的 ``Image.open`` 只解析
+    IHDR 头就返回尺寸，内存分配发生在 ``load()``，所以整个用例耗时毫秒级、
+    峰值内存和一张普通小图一样。
+    """
+
+    @staticmethod
+    def _png_declaring_size(width: int, height: int) -> bytes:
+        """手工拼一个「IHDR 声明超大尺寸、文件本身只有几十字节」的 PNG。
+
+        **为什么它一定命中像素上限分支**（不是碰巧 415）：
+        - Pillow 读 IHDR 得到 ``(width, height)`` 且 ``format == "PNG"``；
+        - PNG 在默认图片白名单里，所以「不支持的图片格式」那一支**不会**触发；
+        - 于是唯一可能抛 ``UnsupportedMediaTypeError`` 的就是
+          ``width * height > MAX_IMAGE_PIXELS`` 这一支。
+
+        尺寸必须卡在两者之间：大于本服务上限 ``MAX_IMAGE_PIXELS``（5000 万），
+        但低于 Pillow 自带的 ``Image.MAX_IMAGE_PIXELS``（约 8948 万，超限会在
+        ``Image.open`` 阶段直接抛 ``DecompressionBombError``）——
+        否则被 Pillow 挡在前面，测的就不是本服务的防护了。
+        """
+
+        def chunk(kind: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload))
+                + kind
+                + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+            )
+
+        # bit depth 8、颜色类型 0（灰度）、非隔行；IDAT 内容不合法无所谓，
+        # 因为判定发生在解码之前，根本不会去读它
+        header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(b"\x00"))
+            + chunk(b"IEND", b"")
+        )
+
+    def test_bomb_payload_is_tiny(self) -> None:
+        """先自证构造物确实小：这条防护的测试本身不能变成资源炸弹。"""
+        assert len(self._png_declaring_size(9000, 6000)) < 200
+
+    def test_probe_rejects_image_over_pixel_limit(self) -> None:
+        """5400 万像素（> 5000 万上限）必须被拒，且报错来自像素分支。"""
+        data = self._png_declaring_size(9000, 6000)
+        with pytest.raises(UnsupportedMediaTypeError, match="分辨率过大"):
+            AttachmentService._probe_image(data)
+
+    def test_pixel_limit_boundary_is_inclusive(self) -> None:
+        """边界：恰好等于上限的图仍应放行（判定是 ``>`` 而不是 ``>=``）。
+
+        用 5000x10000 = 50_000_000 正好等于 ``MAX_IMAGE_PIXELS``。
+        """
+        data = self._png_declaring_size(5000, MAX_IMAGE_PIXELS // 5000)
+        probed = AttachmentService._probe_image(data)
+        assert probed is not None, "恰好等于上限的图不应被拒"
+        extension, width, height = probed
+        assert (width, height) == (5000, MAX_IMAGE_PIXELS // 5000)
+        assert extension == ".png"
+
+    async def test_upload_api_rejects_pixel_bomb(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """端到端同样被 415，且 detail 指向分辨率——证明走的确实是这一支。"""
+        response = await client.post(
+            "/api/v1/attachments/upload",
+            files=_files("bomb.png", self._png_declaring_size(9000, 6000), "image/png"),
+            headers=author_headers,
+        )
+        assert response.status_code == 415
+        assert response.json()["code"] == "unsupported_media_type"
+        assert "分辨率过大" in response.json()["detail"]
 
 
 class TestUploadFile:

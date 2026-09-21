@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 from httpx import AsyncClient
 
 from app.api.deps import client_ip
 from app.config import settings
+from app.utils import ratelimit
 from app.utils.ratelimit import SlidingWindowLimiter, limiter
 
 
@@ -150,6 +154,142 @@ class TestLimiterUnit:
         limiter_under_test.reset("a")
         assert limiter_under_test.hit("a", limit=1, window_seconds=60)[0] is True
         assert limiter_under_test.hit("b", limit=1, window_seconds=60)[0] is False
+
+
+class _SlowCountBucket:
+    """``count`` 做成「读一次就让出一次 GIL」的属性，用来放大竞态窗口。
+
+    为什么需要它：CPython 的 GIL 让 ``bucket.count += 1`` 的读-改-写窗口只有
+    几条字节码——实测连续 1.6 万次并发自增都不会丢一次计数，也就是说**直接
+    并发打不加锁的实现，这个用例也会通过**，那就等于没写。把它换成带让出的
+    属性后，单线程语义完全不变（读写仍是同一个值），但窗口被拉到真实线程
+    切换的量级，去掉锁就会稳定失败。
+    """
+
+    def __init__(self, window_start: float, count: int) -> None:
+        self.window_start = window_start
+        self._count = count
+
+    @property
+    def count(self) -> int:  # type: ignore[override]
+        value = self._count
+        time.sleep(0)  # 主动放弃 GIL，让另一个线程有机会插进来
+        return value
+
+    @count.setter
+    def count(self, value: int) -> None:  # type: ignore[override]
+        self._count = value
+
+
+class TestLimiterThreadSafety:
+    """并发安全：``rate_limit`` 是**同步**依赖，FastAPI 会把它放进线程池执行。
+
+    所以 ``hit()`` 一定是被多线程并发调用的。计数若还是无保护的
+    ``bucket.count += 1``（读-改-写三步，GIL 只保证单条字节码原子），
+    两个线程会读到同一个旧值再各自写回，计数被吞掉，配额就被放大。
+    """
+
+    def test_concurrent_hits_never_exceed_quota(self) -> None:
+        """并发 50 次打 10 次配额：恰好只放行 10 次。"""
+        limiter_under_test = SlidingWindowLimiter()
+        total, quota = 50, 10
+        # Barrier 让所有线程尽量同时起步，把竞争窗口压到最短、冲突概率拉到最高
+        barrier = threading.Barrier(total)
+        results: list[bool] = []
+        results_lock = threading.Lock()
+
+        def worker() -> None:
+            barrier.wait()
+            allowed, _ = limiter_under_test.hit("concurrent", limit=quota, window_seconds=60)
+            with results_lock:
+                results.append(allowed)
+
+        threads = [threading.Thread(target=worker) for _ in range(total)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len(results) == total
+        assert sum(results) == quota, f"并发下放行了 {sum(results)} 次，配额是 {quota}"
+
+    def test_concurrent_hits_are_counted_exactly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """放大竞态窗口后，并发 50 次打 10 次配额仍然只放行 10 次。
+
+        这条才是真正能抓住「丢了锁」的用例（见 ``_SlowCountBucket`` 的说明）：
+        把锁去掉它就会失败，而上面那条简单并发用例在同样情况下仍会通过。
+        """
+        monkeypatch.setattr(ratelimit, "_Bucket", _SlowCountBucket)
+        limiter_under_test = SlidingWindowLimiter()
+        total, quota = 50, 10
+        barrier = threading.Barrier(total)
+        results: list[bool] = []
+        results_lock = threading.Lock()
+
+        def worker() -> None:
+            barrier.wait()
+            allowed, _ = limiter_under_test.hit("race", limit=quota, window_seconds=60)
+            with results_lock:
+                results.append(allowed)
+
+        threads = [threading.Thread(target=worker) for _ in range(total)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert sum(results) == quota, f"并发下放行了 {sum(results)} 次，配额是 {quota}"
+
+    def test_concurrent_hits_on_distinct_keys_stay_isolated(self) -> None:
+        """并发不串桶：两个 key 各自按自己的配额放行，互不吃掉对方的计数。"""
+        limiter_under_test = SlidingWindowLimiter()
+        total, quota = 30, 5
+        barrier = threading.Barrier(total)
+        results: dict[str, int] = {"a": 0, "b": 0}
+        results_lock = threading.Lock()
+
+        def worker(key: str) -> None:
+            barrier.wait()
+            allowed, _ = limiter_under_test.hit(key, limit=quota, window_seconds=60)
+            with results_lock:
+                results[key] += int(allowed)
+
+        threads = [
+            threading.Thread(target=worker, args=("a" if index % 2 == 0 else "b",))
+            for index in range(total)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert results == {"a": quota, "b": quota}
+
+    def test_reset_is_safe_while_hitting(self) -> None:
+        """``reset`` 与 ``hit`` 并发时不炸，之后也还能拿到一个干净的空桶。
+
+        锁必须同时覆盖这两条路径：``reset`` 若在 ``hit`` 的读-改-写中间把字典
+        清掉，那次自增会写进一个刚被丢弃的桶里（计数凭空消失）。
+        """
+        limiter_under_test = SlidingWindowLimiter()
+        stop = threading.Event()
+
+        def hammer() -> None:
+            while not stop.is_set():
+                limiter_under_test.hit("churn", limit=1_000_000, window_seconds=60)
+
+        thread = threading.Thread(target=hammer)
+        thread.start()
+        try:
+            for _ in range(200):
+                limiter_under_test.reset()
+        finally:
+            stop.set()
+            thread.join()
+
+        # 收尾后再 reset 一次：并发搅动停下来以后，桶必须是干净可复用的
+        limiter_under_test.reset()
+        assert limiter_under_test.hit("churn", limit=1, window_seconds=60)[0] is True
 
 
 class TestDisabledSwitch:

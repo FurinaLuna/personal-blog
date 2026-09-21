@@ -102,22 +102,43 @@ class Settings(BaseSettings):
     # 上传图片时顺带生成的多尺寸变体宽度档位；宽度不足的档位自动跳过（不放大）。
     # 编码格式优先 AVIF（Pillow 无编码器时运行时降级 WEBP）。
     image_variant_widths: Annotated[list[int], NoDecode] = [480, 800, 1600]
+    # 允许上传的图片 MIME。
+    #
+    # 判定链是「Pillow 真解一遍 -> 拿到格式名（JPEG/PNG/...）-> 映射成 MIME -> 与
+    # 这张表比对」，**不看客户端声明的 Content-Type**（那个头可以随便伪造）。
+    # 所以这张表是真实生效的白名单，改它就会改变上传行为。
+    #
+    # 比表里多一个 image/bmp 是刻意的：服务层此前硬编码允许 BMP，而这张表漏了它，
+    # 属于「文档与实际行为不一致」。统一以实际行为为准。
     allowed_image_types: Annotated[list[str], NoDecode] = [
         "image/jpeg",
         "image/png",
         "image/gif",
         "image/webp",
         "image/avif",
+        "image/bmp",
     ]
-    # 说明：SVG 刻意不在默认白名单里。SVG 是 XML，可以内嵌 <script>，
-    # 若从本站同源直出，攻击者上传一个 SVG 就等于拿到了存储型 XSS，
-    # 可以盗取所有访客的登录态。真要用 SVG，请单独放到独立域名下托管。
+    # 说明：SVG 刻意不在默认白名单里，而且**加了也没用**：Pillow 默认不解 SVG，
+    # 这类文件会掉到「非图片附件」路径按扩展名判定，而 .svg 不在下面的扩展名表里。
+    # SVG 是 XML，可以内嵌 <script>，若从本站同源直出，攻击者上传一个 SVG 就等于
+    # 拿到了存储型 XSS，可以盗取所有访客的登录态。真要用 SVG，请单独放到独立域名下托管。
+    #
+    # 允许上传的非图片附件，单位是**扩展名（含前导点）**而不是 MIME：
+    # 非图片附件没有可靠的嗅探手段（不解码内容就没法判型，而 Content-Type
+    # 是客户端给的、可伪造），真实判定就是「扩展名在不在白名单里」——
+    # 配置的单位必须与真实判定一致，否则又会变成配了却不生效的死配置。
+    # 可执行 / 可被浏览器当同源脚本执行的一律不放进来（html/js/exe/svg...）。
     allowed_file_types: Annotated[list[str], NoDecode] = [
-        "application/pdf",
-        "application/zip",
-        "text/plain",
-        "text/markdown",
-        "application/octet-stream",
+        ".pdf",
+        ".zip",
+        ".txt",
+        ".md",
+        ".csv",
+        ".json",
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".epub",
     ]
 
     # ---------- 邮件通知（SMTP）----------

@@ -8,10 +8,14 @@
 
 **已知边界（必须知道）**：计数在进程内存里，多 worker 时每个 worker 各算一份，
 实际放行量会乘以 worker 数。真要精确限流再换 Redis 实现，接口保持不变即可。
+
+**并发**：调用方是同步依赖（FastAPI 会放进线程池），所以计数更新用
+``threading.Lock`` 保护——``count += 1`` 是读-改-写三步，并发下会丢计数。
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -36,9 +40,18 @@ class SlidingWindowLimiter:
 
     def __init__(self) -> None:
         self._buckets: dict[str, _Bucket] = defaultdict(lambda: _Bucket(0.0, 0))
+        # 计数必须加锁。``bucket.count += 1`` 是「读-改-写」三步，而调用方
+        # （``api/deps.rate_limit``）是**同步**依赖——FastAPI 会把它丢进线程池并发执行，
+        # 于是两个线程可以同时读到同一个旧值再各自写回，计数被吞掉，
+        # 配额就形同放大（并发 50 次打 10 次配额，实际能放行远多于 10 次）。
+        # GIL 只保证单条字节码指令原子，不保证这三步整体原子。
+        self._lock = threading.Lock()
 
     def hit(self, key: str, *, limit: int, window_seconds: int) -> tuple[bool, int]:
         """记一次访问。
+
+        并发安全：整个「取桶 -> 可能重置窗口 -> 自增 -> 判定」都在锁内完成，
+        语义与单线程时完全一致（固定窗口计数），只是不会被并发吃掉计数。
 
         Args:
             key: 限流维度，通常 ``"<规则名>:<客户端标识>"``。
@@ -50,26 +63,28 @@ class SlidingWindowLimiter:
         """
         now = time.monotonic()
 
-        if len(self._buckets) > _MAX_KEYS:
-            self._evict_oldest()
+        with self._lock:
+            if len(self._buckets) > _MAX_KEYS:
+                self._evict_oldest()
 
-        bucket = self._buckets[key]
-        if bucket.window_start == 0.0 or now - bucket.window_start >= window_seconds:
-            bucket.window_start = now
-            bucket.count = 0
+            bucket = self._buckets[key]
+            if bucket.window_start == 0.0 or now - bucket.window_start >= window_seconds:
+                bucket.window_start = now
+                bucket.count = 0
 
-        bucket.count += 1
-        if bucket.count > limit:
-            remaining = window_seconds - (now - bucket.window_start)
-            return False, max(1, int(remaining + 0.999))
-        return True, 0
+            bucket.count += 1
+            if bucket.count > limit:
+                remaining = window_seconds - (now - bucket.window_start)
+                return False, max(1, int(remaining + 0.999))
+            return True, 0
 
     def reset(self, key: str | None = None) -> None:
         """清空计数。测试与运维手工解封用。"""
-        if key is None:
-            self._buckets.clear()
-        else:
-            self._buckets.pop(key, None)
+        with self._lock:
+            if key is None:
+                self._buckets.clear()
+            else:
+                self._buckets.pop(key, None)
 
     def _evict_oldest(self) -> None:
         """丢掉窗口最旧的一批 key，把内存拉回上限以内。"""

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy import (
     Enum as SQLEnum,
@@ -78,7 +79,14 @@ class Article(Base, TimestampMixin):
     series_id: Mapped[int | None] = mapped_column(
         ForeignKey("series.id", ondelete="SET NULL"), index=True
     )
-    series_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # server_default 不能省：Alembic 迁移（add_series_collection_to_articles）建出来
+    # 的这一列带 DEFAULT 0，而只写 ORM 的 ``default=0`` 时 create_all 建出的列没有
+    # 默认值——同一份模型两条建表路径结构不一致，任何直接往表里 INSERT 的脚本
+    # （不含该列的 INSERT）在 create_all 库上都会 NOT NULL 失败。
+    # SQLite 的 ALTER COLUMN 改不了默认值，所以不为此新增迁移，只在模型侧对齐。
+    series_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
 
     author: Mapped[User] = relationship(back_populates="articles", lazy="joined")
     category: Mapped[Category | None] = relationship(back_populates="articles", lazy="joined")
