@@ -10,8 +10,9 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 275 个后端测试、86 个前端单测，
-外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）。
+**写出来能跑、改起来可验证** —— 442 个后端测试、200 个前端单测，
+外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
+与两套数据库方言的真实链路端到端（SQLite 62 条 / PostgreSQL 61 条）。
 
 ---
 
@@ -212,8 +213,8 @@ personal-blog/
 │   │   ├── stores/                 # Pinia：auth / site / theme
 │   │   ├── styles/                 # ★ 样式：tokens / base / components / prose / vendor
 │   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 状态元数据
-│   │   └── views/                  # 前台 9 页 + 后台 8 页
-│   └── src/**/*.spec.ts            # 86 个 Vitest 用例
+│   │   └── views/                  # 前台 9 页 + 后台 8 页（★ views 层暂无单测）
+│   └── src/**/*.spec.ts            # 200 个 Vitest 用例（20 个 spec 文件）
 ├── deploy/                         # Dockerfile × 2 + nginx.conf
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
@@ -230,7 +231,8 @@ personal-blog/
 ├── tools/
 │   ├── e2e_live/
 │   │   ├── e2e_run.py              # 真实环境端到端：临时空库 + alembic 建表 + 独立
-│   │   │                           # uvicorn 进程，62 条用例（HTTP 断言 + 直连 sqlite 复核）
+│   │   │                           # uvicorn 进程，62/61 条用例（HTTP 断言 + 直连库复核）；
+│   │   │                           # E2E_DB=postgres 切 PostgreSQL 方言（默认是 SQLite）
 │   │   └── probe.py                # 定点复现某个 500 并抓取服务端堆栈
 │   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互（34 项，只读）
 │   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径（22 项，对称还原）
