@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -49,6 +50,62 @@ PORT = int(os.environ.get("E2E_PORT", "8099"))
 BASE = f"http://127.0.0.1:{PORT}"
 API = BASE + "/api/v1"
 REAL_DB = BACKEND / "blog.db"
+
+# ---------------------------------------------------------------- 数据库方言
+#
+# 默认 SQLite：宿主虚拟环境里就有 alembic/uvicorn/httpx，跑起来零依赖。
+# ``E2E_DB=postgres`` 时跑**生产真实路径**——这很重要，因为有几处代码只有换
+# 方言才会走到（FTS5 是 SQLite 专有的虚拟表，PG 上必须走 ilike 降级分支；
+# 布尔/枚举/默认值/JSON 列的建表与读写在两种库上也不是一回事），
+# 而这些分支在 SQLite 上永远覆盖不到。
+#
+# PG 模式下：
+# - 服务跑在容器里（生产镜像自带 asyncpg，宿主没有 PG 驱动）；
+# - 直连校验宿主装不了驱动，改用 `docker exec <db> psql`；
+# - 测试库是**独立建出来的** blog_e2e，绝不连应用正在用的那个库。
+PG = os.environ.get("E2E_DB", "sqlite").lower().startswith(("postgres", "pg"))
+
+PG_DB_CONTAINER = os.environ.get("E2E_PG_CONTAINER", "personal-blog-db-1")
+PG_DB_NAME = os.environ.get("E2E_PG_DB", "blog_e2e")
+PG_DB_USER = os.environ.get("E2E_PG_USER", "blog")
+PG_DB_HOST = os.environ.get("E2E_PG_HOST", "db")
+PG_DB_PORT = os.environ.get("E2E_PG_PORT", "5432")
+PG_DB_PASSWORD = os.environ.get("E2E_PG_PASSWORD", "")
+PG_IMAGE = os.environ.get("E2E_IMAGE", "personal-blog-backend")
+PG_NETWORK = os.environ.get("E2E_NET", "personal-blog_default")
+# 容器内的工作目录：compose 就是这么配的（镜像 WORKDIR 是 /app）
+PG_STORAGE_DIR = os.environ.get("E2E_PG_STORAGE_DIR", "/app/storage")
+
+
+def _dotenv_get(key: str) -> str:
+    """从项目根 .env 取值，避免把口令写在命令行上（进程列表里会泄露）。"""
+    path = ROOT / ".env"
+    if not path.exists():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k.strip() == key:
+            return v.strip().strip('"').strip("'")
+    return ""
+
+
+if PG and not PG_DB_PASSWORD:
+    PG_DB_PASSWORD = _dotenv_get("POSTGRES_PASSWORD")
+
+if PG:
+    DATABASE_URL = (
+        f"postgresql+asyncpg://{PG_DB_USER}:{PG_DB_PASSWORD}"
+        f"@{PG_DB_HOST}:{PG_DB_PORT}/{PG_DB_NAME}"
+    )
+    # psql -A 输出里布尔是 t/f，SQLite 是 1/0；SQL 里要写成 false 而不是 0
+    FALSE_LIT = "false"
+    TRUE_LIT = "true"
+else:
+    DATABASE_URL = ""  # 由 server_env() 按 DB_PATH 拼
+    FALSE_LIT = "0"
+    TRUE_LIT = "1"
 
 WORKDIR: Path
 DB_PATH: Path
@@ -87,9 +144,9 @@ class Results:
         print(f"  [{status:5}] {cid} {name}" + (f"  <- {reason[:120]}" if reason else ""))
 
     def summary(self):
-        counts = {"PASS": 0, "FAIL": 0, "ERROR": 0}
+        counts = {"PASS": 0, "FAIL": 0, "ERROR": 0, "SKIP": 0}
         for row in self.rows:
-            counts[row["status"]] += 1
+            counts[row["status"]] = counts.get(row["status"], 0) + 1
         return counts
 
 
@@ -142,18 +199,153 @@ def db():
     return conn
 
 
+def _pg_literal(value) -> str:
+    """把 Python 值拼成 psql 能吃的字面量（宿主没有 PG 驱动，只能走 CLI）。"""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _pg_sql(sql: str, params=()) -> str:
+    """把 '?' 占位符按序替换成字面量。用例里的 SQL 都是简单标量条件，够用。"""
+    out = []
+    idx = 0
+    for ch in sql:
+        if ch == "?" and idx < len(params):
+            out.append(_pg_literal(params[idx]))
+            idx += 1
+        else:
+            out.append(ch)
+    if idx != len(params):
+        raise AssertionError(f"SQL 参数数量不匹配：{sql} / {params}")
+    return "".join(out)
+
+
+# psql 的行数脚注，形如 "(1 row)" / "(12 rows)"
+_PG_ROWCOUNT_RE = re.compile(r"^\(\d+ rows?\)$")
+
+# psql 默认把 NULL 打成空字符串，跟「空文本」在字节层面完全一样。
+# 用 -P null= 换成哨兵串，解析器才能把 NULL 还原成 None —— 否则
+# `is None` 这类断言（例如「删除系列后 series_id 应置空」）会全部误报，
+# 看上去像数据库没设 ON DELETE SET NULL，其实约束是正常的。
+_PG_NULL = "@@PGNULL@@"
+
+
+def _pg_raw(sql: str, with_header: bool) -> list[list[str]]:
+    """经 psql 执行，返回二维字符串数组。
+
+    关键是用 `-R` 把**记录分隔符**也换掉：文章正文这类字段自带换行，
+    只按 `\\n` 切会把一条记录撕成好几行，表现为「接口正文与库内不一致」这种
+    极具误导性的失败。字段用 \\x1f、记录用 \\x1e，两者都不会出现在正文里。
+    """
+    cmd = ["docker", "exec", PG_DB_CONTAINER, "psql", "-U", PG_DB_USER, "-d", PG_DB_NAME,
+           "-A", "-F", "\x1f", "-R", "\x1e", "-P", f"null={_PG_NULL}"]
+    if not with_header:
+        cmd.append("-t")
+    cmd += ["-c", sql]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise AssertionError(f"psql 执行失败：{sql}\n{proc.stderr[-400:]}")
+    text = proc.stdout or ""
+    if not text:
+        return []
+    # psql 在整个结果集末尾会多打一个换行。删且只删这一个——多删就会把字段值
+    # 自带的尾部换行一起吃掉，表现为「接口正文与库内不一致（库内少 1 个字）」
+    # 这种极难定位的失败，看起来像业务 bug，其实是解析把数据削短了。
+    if text.endswith("\n"):
+        text = text[:-1]
+    out = []
+    for record in text.split("\x1e"):
+        # psql 在带表头模式下末尾会补一行 "(N rows)" 行数脚注；换了记录分隔符
+        # 之后它就变成一条「假记录」。不剔掉的话 COUNT 类的断言会凭空多一行，
+        # 表现为「站长账号命中 2 行」这种完全指错方向的失败。
+        if _PG_ROWCOUNT_RE.match(record.strip()):
+            continue
+        out.append(record.split("\x1f"))
+    return out
+
+
+def _pg_query(sql: str):
+    return _pg_raw(sql, with_header=False)
+
+
+def _coerce(value):
+    """psql 一切皆字符串，这里把明显的数字与布尔还原成 Python 类型。
+
+    不还原的话 `count == 1` 会变成 `"1" == 1` 恒假，而布尔 'f' 直接 `bool()` 还是 True
+    ——两处都会伪装成「业务错误」，排查方向全错。
+    """
+    if value is None or not isinstance(value, str):
+        return value
+    if value == _PG_NULL:
+        return None
+    low = value.lower()
+    if low in ("t", "true"):
+        return True
+    if low in ("f", "false"):
+        return False
+    if value.lstrip("-").isdigit():
+        return int(value)
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
 def scalar(sql, params=()):
+    if PG:
+        result = _pg_query(_pg_sql(sql, params))
+        return None if not result else _coerce(result[0][0])
     with db() as conn:
         row = conn.execute(sql, params).fetchone()
     return None if row is None else row[0]
 
 
+def _pg_query_named(sql: str) -> list[dict]:
+    """带列名的查询。
+
+    不加 `-t` 时 psql 会输出一行表头，正好拿来当字段名——这样 `rows()` 在两种
+    方言下行为一致，调用方（大量 `SELECT *`）一行都不用改。
+    """
+    table = _pg_raw(sql, with_header=True)
+    if len(table) <= 1:  # 只有表头，没有数据行
+        return []
+    header = table[0]
+    return [{key: _coerce(value) for key, value in zip(header, row)} for row in table[1:]]
+
+
 def rows(sql, params=()):
+    if PG:
+        return _pg_query_named(_pg_sql(sql, params))
     with db() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
+def rows_named(columns: list[str], sql: str, params=()) -> list[dict]:
+    """兼容旧调用：列序由 columns 指定的场景。现在 rows() 已自带列名。"""
+    return rows(sql, params)
+
+
+def truthy(value) -> bool:
+    """布尔字段的跨方言判定：SQLite 给 1/0，psql 给 't'/'f'。"""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.lower() in ("t", "true", "1", "y", "yes")
+    return bool(value)
+
+
 def table_exists(name: str) -> bool:
+    if PG:
+        sql = (
+            "SELECT 1 FROM information_schema.tables "
+            f"WHERE table_schema='public' AND table_name='{name}'"
+        )
+        return bool(_pg_query(sql))
     return scalar("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)) is not None
 
 
@@ -166,8 +358,11 @@ def server_env(**overrides) -> dict:
         {
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
-            "DATABASE_URL": f"sqlite+aiosqlite:///{DB_PATH.as_posix()}",
-            "STORAGE_DIR": str(STORAGE_DIR),
+            "DATABASE_URL": DATABASE_URL or f"sqlite+aiosqlite:///{DB_PATH.as_posix()}",
+            # 容器里必须用 /app/storage：镜像把 app 装进了 site-packages，
+            # 默认存储根目录会解析到 /opt/venv/.../storage，而容器以非 root 运行，
+            # 一 mkdir 就 PermissionError（compose 也是靠显式注入这个变量绕开的）。
+            "STORAGE_DIR": PG_STORAGE_DIR if PG else str(STORAGE_DIR),
             "APP_ENV": "testing",
             "DEBUG": "false",
             "DB_AUTO_CREATE": "false",  # 强制走迁移，禁止自动建表
@@ -213,29 +408,80 @@ def start_server(tag: str, **overrides):
     logf = SERVER_LOG.open("a", encoding="utf-8")
     logf.write(f"\n===== 服务实例 {tag} 启动 {datetime.now().isoformat(timespec='seconds')} =====\n")
     logf.flush()
-    proc = subprocess.Popen(
-        [str(PY), "-m", "uvicorn", "app.main:app", "--app-dir", "src",
-         "--host", "127.0.0.1", "--port", str(PORT)],
-        cwd=str(BACKEND), env=server_env(**overrides), stdout=logf, stderr=subprocess.STDOUT,
-    )
+    if PG:
+        name = f"blog-e2e-api-{tag}"
+        STATE["container"] = name
+        proc = _start_container(name, **overrides)
+    else:
+        proc = subprocess.Popen(
+            [str(PY), "-m", "uvicorn", "app.main:app", "--app-dir", "src",
+             "--host", "127.0.0.1", "--port", str(PORT)],
+            cwd=str(BACKEND), env=server_env(**overrides), stdout=logf, stderr=subprocess.STDOUT,
+        )
     if not wait_ready():
-        tail = server_tail(3000)
+        tail = server_tail(3000) + (container_logs(3000) if PG else "")
         stop_server(proc, logf)
         raise RuntimeError(f"服务（{tag}）启动失败：\n{tail}")
     return proc, logf
 
 
+def _start_container(name: str, **overrides):
+    """PG 模式：用生产镜像起一个一次性容器，端口映射到宿主。
+
+    走镜像自带的 entrypoint（先 alembic upgrade head 再 exec uvicorn），
+    这样连「迁移在 PG 上能不能跑通」也一并验证了——正是这条路径此前从没被跑过。
+    """
+    env = server_env(**overrides)
+    cmd = [
+        "docker", "run", "-d", "--name", name, "--rm",
+        "--network", PG_NETWORK, "-p", f"{PORT}:8000",
+    ]
+    # 只把 E2E 需要的变量传进去；其余沿用镜像默认值，更贴近真实部署
+    for key in ("DATABASE_URL", "STORAGE_DIR", "APP_ENV", "DEBUG", "DB_AUTO_CREATE", "JWT_SECRET_KEY",
+                "ADMIN_USERNAME", "ADMIN_PASSWORD", "ADMIN_EMAIL", "SEED_DEMO_DATA",
+                "RATE_LIMIT_ENABLED", "LOG_JSON", "SMTP_ENABLED", "SMTP_HOST", "SMTP_PORT",
+                "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM", "SMTP_USE_TLS"):
+        if env.get(key) is not None:
+            cmd += ["-e", f"{key}={env[key]}"]
+    cmd.append(PG_IMAGE)
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError(f"容器启动失败：{proc.stderr[-500:]}")
+    return name
+
+
+def container_logs(n=3000) -> str:
+    if not PG:
+        return ""
+    names = subprocess.run(
+        ["docker", "ps", "--filter", "name=blog-e2e-api", "--format", "{{.Names}}"],
+        capture_output=True, text=True,
+    ).stdout.split()
+    out = []
+    for name in names:
+        logs = subprocess.run(
+            ["docker", "logs", "--tail", "80", name],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        out.append(f"--- {name} ---\n{(logs.stdout or '')[-n:]}{(logs.stderr or '')[-500:]}")
+    return "\n".join(out)
+
+
 def stop_server(proc, logf):
-    try:
-        proc.terminate()
-        proc.wait(timeout=20)
-    except Exception:
-        proc.kill()
-    finally:
+    if PG:
+        subprocess.run(["docker", "rm", "-f", str(proc)], capture_output=True)
+    else:
         try:
-            logf.close()
+            proc.terminate()
+            proc.wait(timeout=20)
         except Exception:
-            pass
+            proc.kill()
+        finally:
+            try:
+                logf.close()
+            except Exception:
+                pass
 
 
 def server_tail(n=2500) -> str:
@@ -246,10 +492,48 @@ def server_tail(n=2500) -> str:
 
 
 def db_fingerprint(path: Path) -> str:
+    if PG:
+        # 指纹取「业务行数」而不是库大小：访客浏览会改 view_count，
+        # 库大小随时在变，用它做指纹会自己吓自己。
+        parts = []
+        for table in ("users", "articles", "comments", "categories", "tags"):
+            try:
+                parts.append(f"{table}={_pg_query_in('blog', f'SELECT COUNT(*) FROM {table}')[0][0]}")
+            except Exception as exc:
+                parts.append(f"{table}=ERR({type(exc).__name__})")
+        return " ".join(parts)
     if not path.exists():
         return "missing"
     st = path.stat()
     return f"{st.st_size}:{int(st.st_mtime)}"
+
+
+def _pg_query_in(database: str, sql: str):
+    proc = subprocess.run(
+        ["docker", "exec", PG_DB_CONTAINER, "psql", "-U", PG_DB_USER, "-d", database,
+         "-tA", "-F", "\x1f", "-c", sql],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"psql 执行失败：{sql}\n{proc.stderr[-300:]}")
+    text = (proc.stdout or "").strip("\n")
+    return [] if not text else [line.split("\x1f") for line in text.split("\n")]
+
+
+def _pg_recreate_db() -> None:
+    """删掉并重建测试库，保证每轮都从空库开始（绝不碰应用正在用的那个库）。"""
+    subprocess.run(
+        ["docker", "exec", PG_DB_CONTAINER, "psql", "-U", PG_DB_USER, "-d", "postgres",
+         "-c", f"DROP DATABASE IF EXISTS {PG_DB_NAME}"],
+        capture_output=True, text=True,
+    )
+    proc = subprocess.run(
+        ["docker", "exec", PG_DB_CONTAINER, "psql", "-U", PG_DB_USER, "-d", "postgres",
+         "-c", f"CREATE DATABASE {PG_DB_NAME} OWNER {PG_DB_USER}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"重建测试库失败：{proc.stderr[-400:]}")
 
 
 CLIENT = httpx.Client(timeout=60)
@@ -290,14 +574,22 @@ def c_e03():
                 "notification_opt_outs", "series"]
     missing = [t for t in expected if not table_exists(t)]
     check(not missing, f"缺少表：{missing}")
-    total = scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
+    if PG:
+        total = scalar(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'"
+        )
+    else:
+        total = scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
     note(f"库内共 {total} 张表，核心表齐全；FTS 虚拟表={'有' if table_exists('articles_fts') else '无'}")
 
 
 @case("E04", "启动种子", "P0", "启动种子真实入库：站长账号 + 4 篇演示文章")
 def c_e04():
     admin = rows("SELECT * FROM users WHERE username=?", (ADMIN_USER,))
-    check(len(admin) == 1, f"站长账号未入库，命中 {len(admin)} 行")
+    if len(admin) != 1:
+        # 只报「命中 N 行」没法定位，把实际行一起打出来
+        dump = [(r.get("id"), r.get("username"), r.get("email")) for r in admin]
+        check(False, f"站长账号未入库，命中 {len(admin)} 行：{dump}")
     hp = str(admin[0]["hashed_password"])
     check(hp.startswith("$2") and ADMIN_PASS not in hp, "密码未以 bcrypt 哈希存储")
     check(str(admin[0]["role"]).lower().endswith("admin"), f"角色异常：{admin[0]['role']}")
@@ -331,7 +623,14 @@ def c_r02():
     check(r.status_code == 200, f"详情失败：{r.status_code} {r.text[:200]}")
     body = r.json()
     db_content = scalar("SELECT content_md FROM articles WHERE id=?", (art["id"],))
-    check(body["content_md"] == db_content, "接口正文与库内不一致")
+    if body["content_md"] != db_content:
+        # 直接说「不一致」没法查；给出长度、首个差异位置与两侧片段
+        a, b = body["content_md"] or "", db_content or ""
+        pos = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        check(False, "接口正文与库内不一致："
+                     f"接口 {len(a)} 字 / 库内 {len(b)} 字，首个差异 @{pos}；"
+                     f"接口片段={a[max(0, pos - 30):pos + 30]!r}；"
+                     f"库内片段={b[max(0, pos - 30):pos + 30]!r}")
     after_views = scalar("SELECT view_count FROM articles WHERE id=?", (art["id"],))
     after_logs = scalar("SELECT COUNT(*) FROM visit_logs WHERE article_id=?", (art["id"],))
     check(after_views == before_views + 1, f"浏览量未递增：{before_views} -> {after_views}")
@@ -452,11 +751,21 @@ def c_a03():
     row = rows("SELECT * FROM attachments WHERE id=?", (attach_id,))[0]
     url = row["url"]
     rel = url.split("/media/", 1)[-1] if "/media/" in url else url.lstrip("/")
-    disk = STORAGE_DIR / rel
-    check(disk.exists() and disk.stat().st_size > 0, f"磁盘文件缺失或为空：{disk}")
+    if PG:
+        # 文件写在容器里（STORAGE_DIR=/app/storage），宿主路径上当然找不到；
+        # 用容器内的 test -s 校验，否则会把「路径不在同一台机器上」误报成「没落盘」。
+        path = f"{PG_STORAGE_DIR}/{rel}"
+        probe = subprocess.run(
+            ["docker", "exec", STATE["container"], "sh", "-c", f"test -s '{path}' && echo yes"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        check("yes" in (probe.stdout or ""), f"容器内文件缺失或为空：{path}")
+    else:
+        disk = STORAGE_DIR / rel
+        check(disk.exists() and disk.stat().st_size > 0, f"磁盘文件缺失或为空：{disk}")
     media = CLIENT.get(f"{BASE}{url if url.startswith('/') else '/media/' + rel}", timeout=20)
     check(media.status_code == 200, f"静态媒体路由不可访问：{media.status_code}")
-    note(f"附件 id={attach_id}，落盘 {disk.name}，类型 {row['mime_type']}，HTTP 200")
+    note(f"附件 id={attach_id}，落盘 {rel}，类型 {row['mime_type']}，HTTP 200")
 
 
 @case("A04", "文章发布", "P0", "发布文章：状态与发布时间落库，且前台可见")
@@ -683,7 +992,8 @@ def c_c03():
     r = api("PATCH", f"/comments/{cid}", json={"is_approved": True}, headers=auth_hdr(token))
     check(r.status_code == 200, f"审核失败：{r.status_code} {r.text[:300]}")
     check(bool(r.json()["is_approved"]), "响应未反映已通过")
-    check(bool(scalar("SELECT is_approved FROM comments WHERE id=?", (cid,))), "库内未标记审核通过")
+    # 布尔在 SQLite 是 1/0、psql 是 t/f，必须走跨方言判定
+    check(truthy(scalar("SELECT is_approved FROM comments WHERE id=?", (cid,))), "库内未标记审核通过")
     check(str(cid) in api("GET", f"/comments/article/{STATE['article_id']}").text,
           "审核通过后评论树中仍看不到该评论")
 
@@ -786,7 +1096,7 @@ def c_c10():
             headers=auth_hdr(STATE["admin_token"]))
     check(r.status_code == 200, f"后台评论列表失败：{r.status_code} {r.text[:200]}")
     items = r.json().get("items", [])
-    pending = scalar("SELECT COUNT(*) FROM comments WHERE is_approved=0")
+    pending = scalar(f"SELECT COUNT(*) FROM comments WHERE is_approved = {FALSE_LIT}")
     check(len(items) == pending, f"待审核条数不一致：接口 {len(items)} vs 库内 {pending}")
 
 
@@ -1195,7 +1505,8 @@ def write_reports(elapsed, real_before, real_after):
                 "generated_at": datetime.now(UTC).isoformat(),
                 "elapsed_seconds": elapsed,
                 "workdir": str(WORKDIR),
-                "database": str(DB_PATH),
+                "database": f"postgresql:{PG_DB_NAME}@{PG_DB_CONTAINER}" if PG
+                else str(DB_PATH),
                 "storage": str(STORAGE_DIR),
                 "real_db_untouched": real_before == real_after,
                 "summary": counts,
@@ -1214,8 +1525,9 @@ def write_reports(elapsed, real_before, real_after):
         "# personal-blog 端到端测试报告",
         "",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（耗时 {elapsed}s）",
-        "- 被测环境：独立临时 SQLite（**alembic upgrade head 建表**）+ 独立 uvicorn 进程 + 独立 storage 目录",
-        f"- 测试数据库：`{DB_PATH}`",
+        f"- 被测环境：{'PostgreSQL 容器（blog_e2e）+ 后端镜像 personal-blog-backend' if PG else '独立临时 SQLite'}（**alembic upgrade head 建表**）+ 独立 uvicorn 进程 + 独立 storage 目录",
+        f"- 测试数据库：`{PG_DB_NAME}`（PostgreSQL 容器 {PG_DB_CONTAINER}）" if PG
+        else f"- 测试数据库：`{DB_PATH}`",
         f"- 项目真实库（backend/blog.db）是否被污染：**{'否' if real_before == real_after else '是'}**",
         "",
         "## 一、总体结果",
@@ -1226,17 +1538,19 @@ def write_reports(elapsed, real_before, real_after):
         f"| PASS | {counts['PASS']} |",
         f"| FAIL | {counts['FAIL']} |",
         f"| ERROR | {counts['ERROR']} |",
+        f"| SKIP | {counts['SKIP']} |",
         "",
         "## 二、按流程分布",
         "",
-        "| 流程 | 用例数 | PASS | FAIL | ERROR |",
-        "|---|---|---|---|---|",
+        "| 流程 | 用例数 | PASS | FAIL | ERROR | SKIP |",
+        "|---|---|---|---|---|---|",
     ]
     for flow, items in flows.items():
-        c = {"PASS": 0, "FAIL": 0, "ERROR": 0}
+        c = {"PASS": 0, "FAIL": 0, "ERROR": 0, "SKIP": 0}
         for it in items:
             c[it["status"]] += 1
-        lines.append(f"| {flow} | {len(items)} | {c['PASS']} | {c['FAIL']} | {c['ERROR']} |")
+        lines.append(f"| {flow} | {len(items)} | {c['PASS']} | {c['FAIL']} | "
+                     f"{c['ERROR']} | {c['SKIP']} |")
 
     lines += ["", "## 三、逐用例明细", "",
               "| 编号 | 流程 | 优先级 | 用例 | 状态 | 说明 / 失败原因 |",
@@ -1290,16 +1604,22 @@ def main() -> int:
     print("=" * 78)
 
     try:
-        print("\n[阶段 0] 在空库上执行 alembic upgrade head")
-        mig = subprocess.run(
-            [str(PY), "-m", "alembic", "upgrade", "head"],
-            cwd=str(BACKEND), env=server_env(),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        print((mig.stdout or "")[-1500:])
-        if mig.returncode != 0:
-            print(f"[致命] 迁移失败：\n{mig.stdout}\n{mig.stderr}")
-            return 2
+        if PG:
+            # 迁移交给容器 entrypoint（生产镜像就是这么起的）：先重建测试库保证空库，
+            # 再让 entrypoint 跑 alembic upgrade head —— 顺带验证迁移在 PG 上真能跑通。
+            print(f"\n[阶段 0] 重建 PG 测试库 {PG_DB_NAME}（迁移由容器 entrypoint 执行）")
+            _pg_recreate_db()
+        else:
+            print("\n[阶段 0] 在空库上执行 alembic upgrade head")
+            mig = subprocess.run(
+                [str(PY), "-m", "alembic", "upgrade", "head"],
+                cwd=str(BACKEND), env=server_env(),
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            print((mig.stdout or "")[-1500:])
+            if mig.returncode != 0:
+                print(f"[致命] 迁移失败：\n{mig.stdout}\n{mig.stderr}")
+                return 2
 
         proc, logf = start_server("main", RATE_LIMIT_ENABLED="false")
         try:
@@ -1317,62 +1637,73 @@ def main() -> int:
         finally:
             stop_server(proc2, logf2)
 
-        print("\n[阶段 6] 配置健壮性：独立空库 + ADMIN_EMAIL 使用保留域名")
-        cfg_db = WORKDIR / "e2e-badcfg.db"
-        mig2 = subprocess.run(
-            [str(PY), "-m", "alembic", "upgrade", "head"],
-            cwd=str(BACKEND),
-            env=server_env(**{"DATABASE_URL": f"sqlite+aiosqlite:///{cfg_db.as_posix()}"}),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        if mig2.returncode != 0:
-            print(f"[警告] 阶段 6 迁移失败，跳过：{mig2.stdout[-300:]}")
+        if PG:
+            # X01/X02 验的是**配置层**校验（admin_email 是 EmailStr）与兜底 500 处理器，
+            # 两者都与数据库方言无关，已由 SQLite 那一轮覆盖；PG 模式下另起两个
+            # 故障容器代价大且验证的是同一段代码，这里显式记为未覆盖而不是假装跑过。
+            print("\n[阶段 6] 配置健壮性：PG 模式跳过（与方言无关，见 SQLite 轮次）")
+            RES.record(
+                "X01", "配置健壮性", "P1", "非法/保留域邮箱配置（PG 模式未覆盖）",
+                "SKIP", "配置层校验与数据库方言无关，由 SQLite 轮次覆盖",
+                repro="以 E2E_DB=sqlite 运行本套件查看 X01/X02",
+            )
         else:
-            # 6a：配置层校验。修复后 ``admin_email`` 是 EmailStr，带保留域邮箱的
-            # 实例会在**解析配置时**就失败——于是「服务起不来」成了**期望结果**。
-            # 启动失败原本会被 start_server 抛成 RuntimeError 并把整个套件打成
-            # E00 ERROR，这里必须把它接住，否则「校验生效」反而表现为执行器故障。
-            rejected = False
-            proc3 = None
-            logf3 = None
-            try:
-                proc3, logf3 = start_server(
-                    "config-robust-startup",
-                    DATABASE_URL=f"sqlite+aiosqlite:///{cfg_db.as_posix()}",
-                    ADMIN_EMAIL="admin@e2e.test",
-                )
-            except RuntimeError as exc:
-                rejected = True
-                STATE["cfg_startup_log"] = f"{exc}\n{server_tail(6000)}"
-            finally:
-                if proc3 is not None:
-                    stop_server(proc3, logf3)
-            STATE["cfg_startup_rejected"] = rejected
-            print(f"  6a 启动期是否被拒绝：{'是（配置校验生效）' if rejected else '否（服务起来了）'}")
-
-            # 6b：运行时兜底。配置层已经拦不住的脏数据（手工改库 / 历史遗留 /
-            # 老版本写入）仍会在读取期触发 ValidationError，所以兜底 500 处理器
-            # 必须单独验证：用合法邮箱启动，再把库里的邮箱改坏，看响应是否结构化。
-            proc4 = None
-            logf4 = None
-            try:
-                proc4, logf4 = start_server(
-                    "config-robust-runtime",
-                    DATABASE_URL=f"sqlite+aiosqlite:///{cfg_db.as_posix()}",
-                )
-                conn = sqlite3.connect(str(cfg_db), timeout=20)
+            print("\n[阶段 6] 配置健壮性：独立空库 + ADMIN_EMAIL 使用保留域名")
+            cfg_db = WORKDIR / "e2e-badcfg.db"
+            mig2 = subprocess.run(
+                [str(PY), "-m", "alembic", "upgrade", "head"],
+                cwd=str(BACKEND),
+                env=server_env(**{"DATABASE_URL": f"sqlite+aiosqlite:///{cfg_db.as_posix()}"}),
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            if mig2.returncode != 0:
+                print(f"[警告] 阶段 6 迁移失败，跳过：{mig2.stdout[-300:]}")
+            else:
+                # 6a：配置层校验。修复后 ``admin_email`` 是 EmailStr，带保留域邮箱的
+                # 实例会在**解析配置时**就失败——于是「服务起不来」成了**期望结果**。
+                # 启动失败原本会被 start_server 抛成 RuntimeError 并把整个套件打成
+                # E00 ERROR，这里必须把它接住，否则「校验生效」反而表现为执行器故障。
+                rejected = False
+                proc3 = None
+                logf3 = None
                 try:
-                    conn.execute("UPDATE site_profile SET email = 'broken@e2e.test'")
-                    conn.commit()
+                    proc3, logf3 = start_server(
+                        "config-robust-startup",
+                        DATABASE_URL=f"sqlite+aiosqlite:///{cfg_db.as_posix()}",
+                        ADMIN_EMAIL="admin@e2e.test",
+                    )
+                except RuntimeError as exc:
+                    rejected = True
+                    STATE["cfg_startup_log"] = f"{exc}\n{server_tail(6000)}"
                 finally:
-                    conn.close()
-            except Exception as exc:
-                print(f"  [警告] 6b 未能构造运行时故障场景：{exc}")
-            try:
-                run_phase("阶段 6 · 配置健壮性", PHASE_ROBUST)
-            finally:
-                if proc4 is not None:
-                    stop_server(proc4, logf4)
+                    if proc3 is not None:
+                        stop_server(proc3, logf3)
+                STATE["cfg_startup_rejected"] = rejected
+                print(f"  6a 启动期是否被拒绝：{'是（配置校验生效）' if rejected else '否（服务起来了）'}")
+
+                # 6b：运行时兜底。配置层已经拦不住的脏数据（手工改库 / 历史遗留 /
+                # 老版本写入）仍会在读取期触发 ValidationError，所以兜底 500 处理器
+                # 必须单独验证：用合法邮箱启动，再把库里的邮箱改坏，看响应是否结构化。
+                proc4 = None
+                logf4 = None
+                try:
+                    proc4, logf4 = start_server(
+                        "config-robust-runtime",
+                        DATABASE_URL=f"sqlite+aiosqlite:///{cfg_db.as_posix()}",
+                    )
+                    conn = sqlite3.connect(str(cfg_db), timeout=20)
+                    try:
+                        conn.execute("UPDATE site_profile SET email = 'broken@e2e.test'")
+                        conn.commit()
+                    finally:
+                        conn.close()
+                except Exception as exc:
+                    print(f"  [警告] 6b 未能构造运行时故障场景：{exc}")
+                try:
+                    run_phase("阶段 6 · 配置健壮性", PHASE_ROBUST)
+                finally:
+                    if proc4 is not None:
+                        stop_server(proc4, logf4)
 
     except Exception as exc:
         traceback.print_exc()
