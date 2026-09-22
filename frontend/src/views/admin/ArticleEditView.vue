@@ -146,15 +146,40 @@ function discardDraft(): void {
 
 /* -------------------------------------------------- 载入 */
 
+/**
+ * 加载代次。
+ *
+ * 存在的理由是一个**静默数据丢失**的竞态：在两个编辑页之间快速切换
+ * （改地址栏 id、或在两篇的编辑页之间前进/后退——路由记录相同，组件实例被复用）
+ * 会同时存在两个在飞的 `articleApi.detail`。先发的那个后到，就会把表单覆盖成
+ * **上一篇**的内容，而表单下方的保存按钮 PATCH 的是**当前 id** ——
+ * 用户以为在改 B，实际把 A 的内容写进了 B。
+ *
+ * 每次进入 `loadArticle` 取一个号，异步返回后发现号变了就整个丢弃（连错误态一起丢，
+ * 否则一篇 404 会把另一篇也标成加载失败）。
+ */
+let loadGeneration = 0
+
 async function loadArticle(): Promise<void> {
+  const generation = ++loadGeneration
+
   if (articleId.value === null) {
     // 新建页：没有服务端内容可比对，直接看本地有没有草稿
+    formError.value = ''
     pendingDraft.value = draft.checkExisting()
     formReady.value = true
     return
   }
+
+  // 重新加载时先清掉上一次的错误：从「加载失败的 A」切到「正常的 B」时，
+  // 旧的红色提示条没有理由继续挂着
+  formError.value = ''
+
   try {
     const detail: ArticleDetail = await articleApi.detail(articleId.value)
+    // 迟到的响应：当前表单已经属于另一篇文章了，直接丢弃
+    if (generation !== loadGeneration) return
+
     form.value = {
       title: detail.title,
       slug: detail.slug,
@@ -179,9 +204,12 @@ async function loadArticle(): Promise<void> {
       draft.clear()
     }
   } catch (error) {
+    if (generation !== loadGeneration) return
     formError.value = toErrorMessage(error, '文章加载失败')
   } finally {
-    formReady.value = true
+    // formReady 也只在仍是最新一次加载时才翻：否则迟到的失败会把
+    // 正在编辑的表单打回"还没准备好"
+    if (generation === loadGeneration) formReady.value = true
   }
 }
 

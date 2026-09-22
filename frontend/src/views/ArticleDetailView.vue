@@ -116,11 +116,18 @@ async function removeArticle(): Promise<void> {
   const item = article.data.value
   if (!item) return
   if (!window.confirm(`确定要删除《${item.title}》吗？该操作不可撤销。`)) return
-  const done = await action.run(() => articleApi.remove(item.id), {
-    success: '文章已删除',
-    errorMessage: '删除失败',
-  })
-  if (done === undefined) return
+  // 不能让任务直接返回 `articleApi.remove(...)`：它是 Promise<void>，而 useAction
+  // 用 `undefined` 表示失败 —— 这条判定会退化成"依赖 204 空响应体被 axios 转成 ''"
+  // 这种实现细节，哪天接口改成返回对象就静默失效。
+  // 显式返回 true 作为成功标志，失败仍由 useAction 统一翻译成 undefined。
+  const deleted = await action.run(
+    async () => {
+      await articleApi.remove(item.id)
+      return true
+    },
+    { success: '文章已删除', errorMessage: '删除失败' },
+  )
+  if (!deleted) return
   await router.push('/')
 }
 
