@@ -73,6 +73,21 @@
 
 ### 已修复
 
+- **正文可以伪造全站浮层（覆盖式钓鱼）**：消毒器禁了 `style`（注释里写明理由是
+  "内联 style 可以做覆盖式钓鱼"），却把 `class` 整体放行 —— 而
+  `fixed inset-0 z-50 bg-white` 正是本站 `ConfirmDialog` 在用的工具类，
+  作者在正文里写这几个词就能盖住整个页面，配一个 `<input type="password">`
+  就是站内钓鱼页。现改为：`class` 只保留 marked 生成的 `language-*`
+  （代码高亮需要），`id` 直接不放行，`<input>` 只保留任务列表的复选框
+  （`type="password"` / `type="text"` 整段删除）
+- **协议相对外链漏了 `rel`**：外链判定用的是 `/^https?:\/\//` 正则，
+  `<a href="//evil.com">` 不匹配 → 拿不到 `noopener`，但它照样开新窗口、
+  照样能通过 `window.opener` 反向操作本页。现改用 `new URL(href, origin)`
+  判同源；顺带把站内链接上作者手写的 `target="_blank"` 去掉（目录/相关文章
+  不该开新标签页）
+
+### 已变更
+
 - **CI 里的端到端作业从来不可能通过**：`tools/interaction-check.mjs` 把
   Chrome 路径写死成 `C:/Program Files/Google/Chrome/Application/chrome.exe`，
   而该作业跑在 `ubuntu-latest` 上 —— 于是「交互验证」这一步必然失败，
@@ -124,6 +139,9 @@
   事件循环（同步实现必然失败：实测事件循环调度 0 次）
 - `tests/test_search_indexes.py`：方言分流 + 索引定义 + `ILIKE` 可用性
   （`enable_seqscan = off` 下验证计划里出现 trgm 索引）
+- `frontend/src/utils/markdown.spec.ts` 补 13 例：覆盖式钓鱼（工具类 / `id` /
+  密码框）、协议相对外链的 `rel`、站内链接不带 `target`、任务列表复选框仍在
+  （安全加固最容易顺手把正常功能一起修坏，这条是护栏）
 
 - **CI 新增 `e2e-live` 作业**：在 `ubuntu-latest` 上跑 `tools/e2e_live/e2e_run.py`
   的 SQLite 方言全套 62 条用例（自起 uvicorn、自建临时库、自清理，

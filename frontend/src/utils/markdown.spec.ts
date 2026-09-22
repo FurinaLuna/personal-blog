@@ -81,3 +81,92 @@ describe('renderMarkdown 代码块增强', () => {
     expect(html).toContain('hljs')
   })
 })
+
+/**
+ * 覆盖式钓鱼：`style` 早就被禁了，但 `class` 曾被**整体放行**——
+ * 而 `fixed inset-0 z-50 bg-white` 正是本站 ConfirmDialog 在用的工具类，
+ * 作者在正文里写这几个词就能伪造一个盖住全站的浮层，配个密码框就是站内钓鱼页。
+ * 这一组用例锁住的是"只放行 language-*"这条白名单。
+ */
+describe('renderMarkdown 覆盖式钓鱼防护', () => {
+  it('剥掉伪造浮层的工具类', () => {
+    const { html } = renderMarkdown(
+      '<div class="fixed inset-0 z-50 bg-white flex items-center justify-center">假的登录框</div>',
+    )
+    expect(html).not.toContain('fixed')
+    expect(html).not.toContain('inset-0')
+    expect(html).not.toContain('z-50')
+    // 文案留着（它只是文本），但没有任何定位能力
+    expect(html).toContain('假的登录框')
+  })
+
+  it('只放行 language-*，其它 class 一律丢弃', () => {
+    const { html } = renderMarkdown(
+      '<pre><code class="language-js evil-class fixed inset-0">const a = 1</code></pre>',
+    )
+    expect(html).toContain('language-js')
+    expect(html).not.toContain('evil-class')
+    expect(html).not.toContain('inset-0')
+  })
+
+  it('剥掉 id（正文不需要，锚点由渲染器自己生成）', () => {
+    const { html } = renderMarkdown('<div id="login-dialog">看起来像系统弹窗</div>')
+    expect(html).not.toContain('login-dialog')
+  })
+
+  it('密码输入框被整段删除', () => {
+    const { html } = renderMarkdown('<input type="password" placeholder="请输入密码">')
+    expect(html).not.toContain('<input')
+    expect(html).not.toContain('password')
+  })
+
+  it('任务列表的复选框保留（别把正常功能一起修坏）', () => {
+    const { html } = renderMarkdown('- [x] 已完成\n- [ ] 未完成')
+    expect(html).toContain('type="checkbox"')
+    expect(html.match(/<input/g)?.length).toBe(2)
+  })
+})
+
+describe('renderMarkdown 外链处理', () => {
+  it('外链加 target=_blank 与 noopener', () => {
+    const { html } = renderMarkdown('[外站](https://example.com/a)')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('noopener')
+  })
+
+  it('协议相对地址（//evil.com）也拿到 rel —— 正则版本漏掉的那一类', () => {
+    const { html } = renderMarkdown('[协议相对](//evil.example.com/x)')
+    expect(html).toContain('//evil.example.com/x')
+    expect(html).toContain('noopener')
+  })
+
+  it('站内链接不加 target（目录/相关文章不该开新标签页）', () => {
+    const { html } = renderMarkdown('[归档](/archive)')
+    expect(html).toContain('href="/archive"')
+    expect(html).not.toContain('target="_blank"')
+  })
+
+  it('作者手写的 target=_blank 在站内链接上被移除', () => {
+    const { html } = renderMarkdown('<a href="/about" target="_blank">关于</a>')
+    expect(html).not.toContain('target="_blank"')
+  })
+})
+
+describe('renderMarkdown 其它行为', () => {
+  it('图片补懒加载与异步解码', () => {
+    const { html } = renderMarkdown('![图](/media/a.png)')
+    expect(html).toContain('loading="lazy"')
+    expect(html).toContain('decoding="async"')
+  })
+
+  it('GFM 表格与删除线可用', () => {
+    const { html } = renderMarkdown('| a | b |\n| - | - |\n| 1 | 2 |\n\n~~删掉~~')
+    expect(html).toContain('<table>')
+    expect(html).toContain('<del>删掉</del>')
+  })
+
+  it('相同输入命中缓存（渲染是纯函数）', () => {
+    const source = '# 缓存命中测试\n\n正文'
+    expect(renderMarkdown(source)).toBe(renderMarkdown(source))
+  })
+})

@@ -91,8 +91,19 @@ const PURIFY_CONFIG: SanitizeConfig = {
     'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
     'div', 'span', 'input',
   ],
+  // `class` 在这里、但**值**由下面的钩子按白名单裁剪（只留 marked 生成的
+  // `language-*`，代码块的高亮与语言角标要用）。
+  //
+  // 为什么不是把 class 从允许列表里删掉：那样连 `language-*` 一起没了，
+  // 代码高亮与角标全部失效（既有的"代码高亮"用例会当场抓住）。
+  // 为什么不能什么都不做地放行：作者在正文里写
+  // `class="fixed inset-0 z-50 bg-white"` 就能伪造一个全屏浮层
+  // （配一个密码输入框就是站内钓鱼页），而这些工具类**在本站确实存在**
+  // （ConfirmDialog 的遮罩就是 `fixed inset-0 z-50`）。
+  //
+  // `id` 则完全没有必要：正文不需要它，标题锚点由渲染后自己生成（见下方第 1 步）。
   ALLOWED_ATTR: [
-    'href', 'title', 'alt', 'src', 'class', 'id', 'target', 'rel',
+    'href', 'title', 'alt', 'src', 'class', 'target', 'rel',
     'colspan', 'rowspan', 'align', 'start', 'type', 'checked', 'disabled', 'loading',
   ],
   // 允许 data-* （代码高亮、任务列表都在用），但不允许 style ——
@@ -102,6 +113,47 @@ const PURIFY_CONFIG: SanitizeConfig = {
   // 禁止协议：阻断 javascript: / data: 这类伪协议的链接与图片
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
 }
+
+/** 唯一的合法 class 形状：`language-<名字>`（marked 为 ```lang 生成的声明）。 */
+const SAFE_CLASS_NAME = /^language-[a-z0-9+#._-]{1,20}$/i
+
+// 钩子注册在模块级（DOMPurify 是单例）：整个应用只注册一次。
+DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+  if (data.attrName !== 'class') return
+  const kept = String(data.attrValue)
+    .split(/\s+/)
+    .filter((name) => SAFE_CLASS_NAME.test(name))
+  if (kept.length === 0) {
+    data.keepAttr = false
+    return
+  }
+  data.attrValue = kept.join(' ')
+  // 这里**不能**用 `forceKeepAttr`。它在 DOMPurify 内部是 `continue`
+  // （"属性已获批，跳过后续检查"），而"把裁剪后的值写回 DOM"恰恰在它之后 ——
+  // 用它等于原样保留整个 class 值，`evil-class fixed inset-0` 全都会被留下。
+  // 正确姿势：让 class 留在 ALLOWED_ATTR 里（属性本身合法），只改值，
+  // 由 DOMPurify 的 `value !== initValue` 分支完成写回。
+})
+
+DOMPurify.addHook('afterSanitizeElements', (node) => {
+  if (node.nodeName !== 'INPUT') return
+  // 钩子的签名给的是 Node，而 remove() 只在 Element 上（TS 会当场报错，
+  // 这类"类型说不通"的地方往往正是运行时也会炸的地方，别用 as any 糊过去）
+  if (!(node instanceof Element)) return
+  const element = node
+  // 只保留任务列表的复选框。`<input type="password">` 是钓鱼页的关键零件：
+  // 即使 class 被剥掉，一个原生密码框配几句 HTML 文案也足以骗到输入。
+  if ((element.getAttribute('type') ?? '').toLowerCase() !== 'checkbox') {
+    element.remove()
+    return
+  }
+  // 复选框只需要这三个属性；name/form/autofocus 之类没有理由保留
+  for (const attr of Array.from(element.attributes)) {
+    if (!['type', 'checked', 'disabled'].includes(attr.name)) {
+      element.removeAttribute(attr.name)
+    }
+  }
+})
 
 /**
  * 变量名必须加 `ReturnType`，因为这是模块级缓存，不是每个请求都用得到。
@@ -198,12 +250,28 @@ export function renderMarkdown(source: string): RenderResult {
     wrapper.append(button)
   })
 
-  // 3) 外链新开窗口并补 rel：没有 noopener 时，新页面能通过 window.opener 反向操作本页
+  // 3) 外链新开窗口并补 rel：没有 noopener 时，新页面能通过 window.opener 反向操作本页。
+  //
+  // 用 `new URL(href, origin)` 判同源，而不是 `/^https?:\/\//` 正则：
+  // 后者漏掉了**协议相对地址** —— `<a href="//evil.com" target="_blank">`
+  // 是合法外链（浏览器会补上当前协议），正则不匹配于是拿不到 rel，
+  // 而它照样会开新窗口、照样能通过 window.opener 反向操作本页。
   container.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((link) => {
     const href = link.getAttribute('href') ?? ''
-    if (/^https?:\/\//i.test(href) && !href.startsWith(window.location.origin)) {
+    let target: URL
+    try {
+      target = new URL(href, window.location.origin)
+    } catch {
+      return // 连 URL 都解析不了：交给 DOMPurify 的白名单，不动它
+    }
+    if (target.origin !== window.location.origin) {
       link.setAttribute('target', '_blank')
       link.setAttribute('rel', 'noopener noreferrer')
+    } else {
+      // 站内链接明确去掉 target/rel：作者手写的 target="_blank" 会让站内跳转
+      // 也开新标签页，与「目录锚点/相关文章」的预期导航行为冲突
+      link.removeAttribute('target')
+      link.removeAttribute('rel')
     }
   })
 
