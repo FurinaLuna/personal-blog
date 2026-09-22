@@ -18,6 +18,17 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 _DEFAULT_JWT_SECRET = "dev-only-secret-key-change-me-in-production-0123456789"
 _DEFAULT_ADMIN_PASSWORD = "admin123456"
 
+# 允许的运行环境白名单。
+#
+# 为什么必须是白名单，而不是"不等于 production 就当开发"：
+# 整个生产安全门禁（拒绝默认密钥 / 默认口令 / DEBUG / DB_AUTO_CREATE /
+# SEED_DEMO_DATA）都挂在 ``is_production`` 上。写成 ``APP_ENV=prod``、
+# ``APP_ENV=prd``、``APP_ENV="production "``（末尾多一个空格）这类笔误，
+# 会让 ``is_production`` 为假 ⇒ **门禁整体静默失效**，而服务照常启动、
+# 日志里一句警告都没有。这是"配置写错却表现为一切正常"的典型形态，
+# 所以宁可解析配置时就拒绝启动（与 admin_email 用 EmailStr 同一取舍）。
+KNOWN_APP_ENVS = ("development", "testing", "production")
+
 
 class Settings(BaseSettings):
     """全局配置对象。
@@ -168,6 +179,31 @@ class Settings(BaseSettings):
     admin_email: EmailStr = "admin@example.com"
     admin_password: str = _DEFAULT_ADMIN_PASSWORD
     seed_demo_data: bool = True
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _validate_app_env(cls, value: Any) -> Any:
+        """把 APP_ENV 收敛成白名单里的规范值，未知值直接拒绝启动。
+
+        - 归一化：去首尾空白 + 转小写（``"Production "`` → ``production``），
+          这样"大小写/空格写错"不再悄悄降级成开发环境；
+        - 白名单：不在 ``KNOWN_APP_ENVS`` 里就抛错，让进程**起不来**。
+
+        为什么值得为它写一个校验器：门禁的价值完全取决于
+        ``is_production`` 判得准不准，而它的判据是用户手打的一个字符串。
+        一次笔误的代价是"带着仓库公开的默认密钥对外服务"，且没有任何告警。
+        """
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if normalized not in KNOWN_APP_ENVS:
+            raise ValueError(
+                f"APP_ENV 只能是 {' / '.join(KNOWN_APP_ENVS)} 之一，当前为 {value!r}。"
+                "写成 prod / prd 这类简写会让生产安全门禁静默失效（默认密钥、"
+                "默认管理员口令、DEBUG、DB_AUTO_CREATE 都不会被拦下），"
+                "所以这里选择直接拒绝启动。"
+            )
+        return normalized
 
     @field_validator(
         "cors_origins",

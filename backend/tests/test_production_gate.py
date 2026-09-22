@@ -8,6 +8,7 @@ JWT 密钥和管理员口令**正常启动并对外服务。这里把那条路�
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from app.config import (
     _DEFAULT_ADMIN_PASSWORD,
@@ -37,8 +38,13 @@ class TestProductionGate:
         assert _settings().check_production_safety() == []
 
     def test_non_production_is_never_blocked(self) -> None:
-        """开发/测试环境用默认值是常态，不能被门禁误伤。"""
-        for env in ("development", "testing", "local"):
+        """开发/测试环境用默认值是常态，不能被门禁误伤。
+
+        注意这里只剩 development / testing：``local`` 这类自造值现在会被
+        **拒绝启动**（见 TestAppEnvWhitelist）——因为"未知环境名"正是让
+        整个门禁静默失效的那条路。
+        """
+        for env in ("development", "testing"):
             problems = _settings(
                 app_env=env,
                 jwt_secret_key=_DEFAULT_JWT_SECRET,
@@ -85,6 +91,38 @@ class TestProductionGate:
             debug=True,
         ).check_production_safety()
         assert len(problems) == 5
+
+
+class TestAppEnvWhitelist:
+    """APP_ENV 必须是白名单里的值 —— 这是整个门禁的判据本身。
+
+    存在意义：`is_production` 的实现是 ``app_env == "production"``，
+    判据是一个用户手打的字符串。写成 ``prod`` / ``prd`` / 末尾带空格，
+    门禁就**整体静默失效**：默认 JWT 密钥、默认管理员口令、DEBUG、
+    DB_AUTO_CREATE 全都不会被拦下，而服务照常启动、日志里一句警告都没有。
+    """
+
+    @pytest.mark.parametrize("raw", ["prod", "prd", "staging", "local", "PRODUCTION2", ""])
+    def test_unknown_env_is_rejected_at_startup(self, raw: str) -> None:
+        with pytest.raises(ValidationError):
+            _settings(app_env=raw)
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [("Production", "production"), (" production ", "production"), ("TESTING", "testing")],
+    )
+    def test_case_and_whitespace_are_normalized(self, raw: str, expected: str) -> None:
+        """大小写与空格写错不该降级成"开发环境"，而应归一化后照常生效。"""
+        assert _settings(app_env=raw).app_env == expected
+
+    def test_normalized_production_still_triggers_the_gate(self) -> None:
+        """归一化之后必须真的走门禁（这是这条修复的全部意义）。"""
+        problems = _settings(
+            app_env=" Production ",
+            jwt_secret_key=_DEFAULT_JWT_SECRET,
+            admin_password=_DEFAULT_ADMIN_PASSWORD,
+        ).check_production_safety()
+        assert problems, "带空格/大写的 production 绕过了门禁"
 
 
 class TestStartupEnforcement:

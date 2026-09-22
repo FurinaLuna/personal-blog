@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app import __version__
+from app.api.cache import PublicCacheMiddleware
 from app.api.feed import router as feed_router
 from app.api.middleware import RequestContextMiddleware
 from app.api.v1 import api_router
@@ -260,10 +261,20 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # 请求 ID 与访问日志。放在 CORS 之前注册：中间件是「后注册先执行」，
-    # 这样即使请求被 CORS 拒绝，也能在日志里留下带 request_id 的记录。
-    app.add_middleware(RequestContextMiddleware)
-
+    # ── 中间件注册顺序：**后注册的在外层** ───────────────────────────────
+    #
+    # 这条规则是实测出来的，不是推测：按「RequestContext → CORS」注册时，
+    # 发一个来自非白名单 Origin 的预检请求，返回的 400 响应里**没有**
+    # X-Request-ID —— 说明 CORS 在外面把请求截住了，RequestContext 没跑到。
+    # 也就是说原先的注释（"放在 CORS 之前注册…即使被 CORS 拒绝也能留下记录"）
+    # 与代码效果**恰好相反**：被 CORS 拒掉的请求在日志里完全消失。
+    #
+    # 因此这里刻意按「内 → 外」注册，最外层是 RequestContext：
+    #
+    #   RequestContext（最外：所有请求都要留痕，包括被 CORS 拒的）
+    #     └── PublicCache（把 200 折叠成 304，日志里记的才是真实状态码）
+    #           └── CORS
+    #                 └── 路由
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -274,6 +285,12 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID"],
         max_age=600,
     )
+
+    # 公开读接口的 ETag / Cache-Control（详见 api/cache.py）
+    app.add_middleware(PublicCacheMiddleware)
+
+    # 请求 ID 与访问日志（最外层）
+    app.add_middleware(RequestContextMiddleware)
 
     _register_exception_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)

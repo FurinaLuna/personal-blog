@@ -283,3 +283,47 @@ class TestEntrypointScript:
             ".gitattributes 缺少 `*.sh text eol=lf`：Windows 上检出会带 CRLF，"
             "而容器里的 CRLF 脚本执行必失败"
         )
+
+    def test_hsts_is_conditional_on_forwarded_proto(self) -> None:
+        """HSTS 必须是条件式的：只有外层真的在用 HTTPS 时才发。
+
+        为什么值得钉住：无条件发 `Strict-Transport-Security` 的后果**不可逆**——
+        浏览器会把"这个站点只能用 HTTPS"记住 max-age 那么久，而本仓库的 nginx
+        只监听 80（TLS 由外层终止）。一个纯 HTTP 部署会因此把自己锁死，
+        且服务端撤不掉这个记忆，只能等它过期。
+
+        实现方式是 `map $http_x_forwarded_proto $hsts_header`：
+        `https` → 有值，其余 → 空串（nginx 对空值的 add_header 不会发出该头）。
+        这里同时钉住 map 的两个分支与 add_header 用的是变量而不是字面量。
+        """
+        conf = (REPO_ROOT / "deploy" / "nginx.conf").read_text(encoding="utf-8")
+
+        map_block = re.search(
+            r"map\s+\$http_x_forwarded_proto\s+\$hsts_header\s*\{(?P<body>[^}]*)\}",
+            conf,
+        )
+        assert map_block, "缺少条件式 HSTS 的 map（直接写字面量会把纯 HTTP 部署锁死）"
+        body = map_block.group("body")
+        assert re.search(r'default\s+""\s*;', body), "default 必须是空串（非 HTTPS 不发 HSTS）"
+        assert re.search(r"https\s+\"max-age=\d+", body), "https 分支缺少 max-age"
+
+        assert re.search(
+            r"add_header\s+Strict-Transport-Security\s+\$hsts_header\s+always\s*;", conf
+        ), "add_header 必须用 $hsts_header 变量，而不是写死的字面量"
+
+    def test_nginx_conf_is_included_into_http_context(self) -> None:
+        """`map` / `upstream` 都是 http 级指令，这个文件必须被 include 进 http{}。
+
+        如果哪天有人把它挪成 nginx 主体配置（带 `events{}` 的那一层），
+        `map` 会直接让 nginx 起不来（`"map" directive is not allowed here`）。
+        落到 `conf.d/` 才是被 http{} include 的关键，所以这里把目标路径钉住。
+        注意来源是构建阶段（构建上下文是 frontend/，配置来自 deploy/ 上下文），
+        直接 `COPY deploy/nginx.conf` 会因跨上下文而构建失败。
+        """
+        dockerfile = (REPO_ROOT / "deploy" / "Dockerfile.frontend").read_text(encoding="utf-8")
+        assert re.search(
+            r"COPY\s+(?:--from=\S+\s+)?nginx\.conf\s+/etc/nginx/conf\.d/", dockerfile
+        ), (
+            "nginx.conf 必须落到 /etc/nginx/conf.d/（那里被 include 进 http{}）；"
+            "落成 /etc/nginx/nginx.conf 会让 map/upstream 变成非法指令"
+        )
