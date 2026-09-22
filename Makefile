@@ -119,12 +119,17 @@ migration: ## 生成迁移，用法：make migration m="add xxx field"
 migrate-down: ## 回滚一步迁移
 	cd $(BACKEND) && $(abspath $(VENV_PY)) -m alembic downgrade -1
 
-seed: ## 重新写入演示数据（清空数据库后执行）
+seed: ## 重新写入演示数据（会清空 backend/blog.db，先自动备份一份）
+	@if [ -f $(BACKEND)/blog.db ]; then \
+		echo "⚠️  即将删除 $(BACKEND)/blog.db 并重建演示数据"; \
+		$(MAKE) --no-print-directory backup >/dev/null && echo "   （已先备份到 $(BACKEND)/backups/）"; \
+	fi
 	cd $(BACKEND) && rm -f blog.db && $(abspath $(VENV_PY)) -m uvicorn app.main:app --app-dir src --port 8000 &
 	@sleep 4 && curl -fsS http://127.0.0.1:8000/health && echo " ← 演示数据已写入（可 Ctrl+C 停掉服务）"
 
-backup: ## 备份数据库到 backend/backups/（VACUUM INTO，只保留最近 14 份）
+backup: ## 备份数据库到 backend/backups/（SQLite 用 VACUUM INTO；PG 用 pg_dump -Fc，保留最近 14 份）
 	cd $(BACKEND) && $(abspath $(VENV_PY)) scripts/backup_db.py --keep 14
+	@echo "   恢复方式见 README「备份与恢复」"
 
 backup-list: ## 列出已有的备份
 	@ls -lht $(BACKEND)/backups/ 2>/dev/null || echo "还没有备份（先跑 make backup）"

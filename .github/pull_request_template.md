@@ -18,7 +18,7 @@ $ make smoke
 - [ ] `make check` 全绿（ruff + 后端测试 + 前端类型 + 前端单测）
 - [ ] `make build` 通过
 - [ ] 动到路由 / 布局 / 样式层 / 上传链路时跑过 `make smoke`（34 项）
-- [ ] 动到写操作（表单、审核、删除）时跑过 `node tools/interaction-check.mjs`（16 项）
+- [ ] 动到写操作（表单、审核、删除）时跑过 `node tools/interaction-check.mjs`（22 项）
 - [ ] 新增逻辑带了测试；修 bug 时先加了能复现的用例
 - [ ] 没有提交 `.env`、数据库文件、媒体文件或构建产物
 - [ ] 引入新依赖时说明了理由与替代方案

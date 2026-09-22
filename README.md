@@ -10,8 +10,8 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 457 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
-200 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
+**写出来能跑、改起来可验证** —— 466 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
+219 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
 与两套数据库方言的真实链路端到端（SQLite 62 条 / PostgreSQL 61 条）。
 
 ---
@@ -119,7 +119,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 457 例（SQLite + PostgreSQL 双方言）、前端 200 例 |
+| 测试 | pytest / Vitest | 后端 466 例（SQLite + PostgreSQL 双方言）、前端 219 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -200,7 +200,7 @@ personal-blog/
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 457 个 pytest 用例（SQLite / PostgreSQL 双方言）
+│   ├── tests/                      # 466 个 pytest 用例（SQLite / PostgreSQL 双方言）
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -336,10 +336,10 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **452 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.4%（门槛 80%） |
-| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **456 passed, 1 skipped** |
+| `pytest`（默认 SQLite） | **461 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.42%（门槛 80%） |
+| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **465 passed, 1 skipped**（实测于 postgres:16） |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **200 passed** |
+| `vitest run` | **219 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 9 条迁移升至 head = 11 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
@@ -377,8 +377,54 @@ docker compose up -d --build
 映射到宿主机就等于绕开了 Nginx 那层的限流、CSP 与安全响应头。
 需要调试时：`docker compose exec backend curl -s 127.0.0.1:8000/health`。
 
-生产上线前的完整检查清单、备份方案与回滚条件见
+生产上线前的完整检查清单、回滚条件见
 [`docs/DESIGN.md`](docs/DESIGN.md) 第 5 章，部署注意事项见 [SECURITY.md](SECURITY.md)。
+
+### 备份与恢复
+
+`make backup` 一条命令覆盖两种方言（`backend/scripts/backup_db.py`）：
+
+| 方言 | 做法 | 产物 |
+|---|---|---|
+| SQLite | `VACUUM INTO`（**不是**复制文件：开了 WAL 直接 `cp` 会得到不一致的快照） | `backend/backups/blog-<时间戳>.db` |
+| PostgreSQL | `pg_dump -Fc`；宿主没有 `pg_dump` 时自动改用 `docker exec <容器> pg_dump` | `backend/backups/blog-<时间戳>.dump` |
+
+两者都只保留最近 14 份（`--keep N` 可调），两种后缀一起参与轮转。
+
+**恢复**（生产是 PG，所以重点写 PG）：
+
+```bash
+# 1) 停掉写入方，避免恢复期间还有新数据进来
+docker compose stop backend
+
+# 2) 恢复到一个空库（--clean --if-exists 会先删同名对象）
+docker compose exec -T db pg_restore --clean --if-exists -U blog -d blog < backend/backups/blog-<时间戳>.dump
+
+# 3) 起回来并确认
+docker compose start backend && curl -fsS http://localhost:8080/api/v1/articles >/dev/null && echo OK
+```
+
+SQLite 的恢复更简单：停服务，把 `.db` 文件放回 `DATABASE_URL` 指向的位置即可
+（`-wal` / `-shm` 一起删掉，否则会与新文件不匹配）。
+
+> **备份没验证过等于没有备份**。本项目对这条的落实方式是：每次改动备份脚本，
+> 都真的做一次 `pg_dump` → `pg_restore` 到空库 → 核对表数量、索引与
+> `alembic_version`（见 `docs/devlog/2026-09-22.md` 批次 5）。
+
+### HTTPS
+
+仓库里的 Nginx 只监听 80，**默认不带 TLS** —— 证书与续期属于部署环境的事，
+硬塞进仓库只会让人以为已经配好了。两种接法：
+
+- **推荐**：前面再放一层（Cloudflare / 宿主机上的 Caddy / 云负载均衡）终止 TLS，
+  回源到 `127.0.0.1:8080`，并把 `TRUST_PROXY_HEADERS` 保持开启；
+- 自管证书：在 `deploy/nginx.conf` 里加一个 443 server 块
+  （`ssl_certificate` / `ssl_certificate_key` + HTTP→HTTPS 跳转），
+  并把 compose 的 `8080:80` 改成 `443:443` 与 `80:80`。
+
+上了 HTTPS 之后记得同步改 `.env` 的 `SITE_BASE_URL`（它决定 RSS、
+sitemap 与 Open Graph 里的绝对地址）与 `CORS_ORIGINS`。
+
 
 ## 贡献指南
 

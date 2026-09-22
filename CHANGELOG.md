@@ -14,6 +14,17 @@
 
 ### 新增
 
+- **PostgreSQL 备份与恢复路径**：`scripts/backup_db.py` 此前对 PG 明确拒绝，
+  而 compose 里生产库就是 postgres:16 —— 也就是说**生产部署的两个数据卷
+  完全没有备份**，精心打磨的 `VACUUM INTO` 只服务于开发用的 SQLite。
+  现支持 `pg_dump -Fc`（宿主有 pg_dump 时直接用，否则
+  `docker exec <容器> pg_dump`），轮转同时认 `.db` 与 `.dump`，
+  备份失败时删除半成品文件；README 补「备份与恢复」一节
+  （含**真实恢复演练**：dump → 空库 pg_restore → 核对 13 张表 / 3 条 trgm 索引 /
+  alembic head），以及「HTTPS」一节（两种接 TLS 的方式与必须同步改的配置）
+- `tests/test_backup_script.py` 补 9 例：PG URL 解析（百分号编码密码、
+  默认端口、无库名拒绝）、`pg_dump` 参数构造（custom 格式、密码不进命令行、
+  容器内不传 -h/-p）、跨后缀轮转
 - **CI 新增 `e2e-live` 作业**：在 `ubuntu-latest` 上跑 `tools/e2e_live/e2e_run.py`
   的 SQLite 方言全套 62 条用例（自起 uvicorn、自建临时库、自清理，
   不需要任何 service），失败时上传逐用例报告；此前这套脚本从未进过流水线
@@ -47,13 +58,17 @@
 ### 已变更
 
 - `useAction` 的 `success` 支持传函数（成功那一刻才求值）。原因是一个真实缺陷：
-  `success: \`欢迎回来，${auth.displayName}\`` 是**调用前**求值的，
+  `success: `欢迎回来，${auth.displayName}`` 是**调用前**求值的，
   而 `displayName` 要等登录成功才有值 —— 登录成功却提示"欢迎回来，访客"
 - 路由守卫不再对公开页面 `await auth.restore()`：身份恢复只影响顶栏显示，
   不该阻塞内容渲染；需要登录的页面仍会等待，但**加上限**（6s）
 - `forceLogout()` 只在**当前路由需要登录**时才整页跳转（探针由 router 注入，
   避免 `router → stores/auth → api/http` 的循环依赖）；公开页面只清凭证，
   并通过 `onCredentialsCleared` 通知 store 清掉内存里的 `user`
+- `make seed` 不再无声删库：先自动备份一份再重建演示数据
+- 文档基线收敛：`docs/CODE-REVIEW.md` 与 `docs/TEST-REPORT.md` 加上
+  「历史快照」横幅（它们分别是 2026-09-12 的旧结论，此前读起来像现状）；
+  PR 模板 interaction 项数 16 → 22；`docs/ROADMAP.md` 第 0 节快照刷新到实测值
 - 上传单独使用 120s 超时（全局 20s 是给 JSON 接口定的：5MB 封面图在 2Mbps
   上行需要约 20 秒，必然超时）
 - 后端引入 import-linter 分层契约（`backend/.importlinter`），

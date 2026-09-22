@@ -37,11 +37,11 @@
 |---|---|
 | 规模 | 45 个 Vue 组件 + 67 个 TS 文件（前端 src 约 12.4k 行）；后端 83 个 Python 源文件（8.8k 行）+ 32 个测试文件（8.1k 行） |
 | 前端产物 | vendor 111KB、markdown 90KB + 60KB、主包 82KB、CSS 60KB（gzip 后 43/31/18/31/11 KB），dist 合计 644KB |
-| 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；8 条迁移 / 13 张表；**442 个 pytest**，ruff 全绿 |
-| 前端 | **200 个 vitest 用例 / 20 个 spec**；vue-tsc 0 error、eslint 干净 |
-| 端到端 | `tools/e2e_live` 两套方言：SQLite **62/62**、PostgreSQL **60 pass + 1 skip**；另有 smoke 34 / interaction 22 / full-check 41 三项浏览器脚本 |
+| 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；**9 条迁移 / 11 张业务表**（+ FTS5 影子表；PG 上另有 pg_trgm 与 3 条 GIN 索引）；**457 个 pytest**（SQLite 452 passed/5 skipped、PostgreSQL 456 passed/1 skipped，覆盖率门槛 80%），ruff 全绿 |
+| 前端 | **219 个 vitest 用例 / 20 个 spec**；vue-tsc 0 error、eslint 干净 |
+| 端到端 | `tools/e2e_live` 两套方言：SQLite **62/62**（已进 CI）、PostgreSQL **60 pass + 1 skip**；另有 smoke 34 / interaction 22 / full-check 41 三项浏览器脚本（**首个浏览器脚本此前写死 Windows 路径导致 CI 必挂，已修**） |
 | 已有能力 | 分页排序全入 URL、JWT 双 Token 静默续期 + 登出真吊销、RSS/sitemap/OG meta、主题三态、移动端目录、代码块复制、阅读进度条、系列文章、图片多尺寸 srcset、访问趋势 PV/UV、评论邮件通知 |
-| 缺口 | **views 层仍是零测试**（尤以 600+ 行的 ArticleEditView 最危险）；远程 CI 因账号账单锁从未真正执行；无 ETag / 缓存，`LIKE` 检索过百篇后会退化 |
+| 缺口 | **views 层仍是零测试**（尤以 600+ 行的 ArticleEditView 最危险）；远程 CI 因账号账单锁从未真正执行（**本地等价验证已全部跑通，且 CI 里三个浏览器脚本已跨平台化**，见 2026-09-22 日志）；无 ETag / 缓存；PG 上的检索在 3 字以内关键词仍走顺序扫描（三元组索引的固有粒度） |
 
 ---
 

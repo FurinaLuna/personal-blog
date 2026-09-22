@@ -15,7 +15,14 @@ import pytest
 # scripts/ 不是包，按文件路径导入
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from backup_db import prune_old_backups, sqlite_path_from_url
+from backup_db import (
+    PostgresTarget,
+    parse_postgres_url,
+    pg_dump_docker_argv,
+    pg_dump_local_argv,
+    prune_old_backups,
+    sqlite_path_from_url,
+)
 
 
 class TestSqlitePathFromUrl:
@@ -93,3 +100,89 @@ class TestPruneOldBackups:
         self._make(tmp_path, names)
         prune_old_backups(tmp_path, keep=keep)
         assert len(list(tmp_path.glob("blog-*.db"))) == keep
+
+    def test_counts_both_sqlite_and_postgres_backups(self, tmp_path: Path) -> None:
+        """两种后缀一起参与轮转。
+
+        只认一种后缀的话，另一种会无限堆积——而这正是"从 SQLite 切到 PG"
+        之后最容易发生的事（旧备份没人管，新备份又在加）。
+        """
+        self._make(
+            tmp_path,
+            [
+                "blog-20260101-000000.db",
+                "blog-20260102-000000.dump",
+                "blog-20260103-000000.dump",
+            ],
+        )
+        removed = prune_old_backups(tmp_path, keep=2)
+        assert [p.name for p in removed] == ["blog-20260101-000000.db"]
+
+
+class TestPostgresUrlParsing:
+    """PG 备份的连接信息解析。
+
+    这里错一个字符，症状是"认证失败"或"库不存在"——两个都容易让人往
+    错误的方向排查（去查密码、去查库名），所以逐个字段钉住。
+    """
+
+    def test_asyncpg_url(self) -> None:
+        target = parse_postgres_url("postgresql+asyncpg://blog:secret@db:5432/blog")
+        assert target is not None
+        assert (target.user, target.password, target.host, target.port, target.dbname) == (
+            "blog",
+            "secret",
+            "db",
+            "5432",
+            "blog",
+        )
+
+    def test_defaults_port_and_host(self) -> None:
+        target = parse_postgres_url("postgresql://blog@localhost/blog")
+        assert target is not None
+        assert target.port == "5432"
+        assert target.host == "localhost"
+
+    def test_percent_encoded_password_is_decoded(self) -> None:
+        """URL 里的 p%40ss%20word 必须还原成 p@ss word 再交给 pg_dump。"""
+        target = parse_postgres_url("postgresql+asyncpg://blog:p%40ss%20word@db:5432/blog")
+        assert target is not None
+        assert target.password == "p@ss word"
+
+    def test_dsn_hides_password(self) -> None:
+        """给错误提示用的连接串不能带密码（它会进日志）。"""
+        target = parse_postgres_url("postgresql+asyncpg://blog:topsecret@db:5432/blog")
+        assert target is not None
+        assert "topsecret" not in target.dsn
+        assert target.dsn == "postgresql://blog@db:5432/blog"
+
+    def test_sqlite_url_is_not_postgres(self) -> None:
+        assert parse_postgres_url("sqlite+aiosqlite:///./blog.db") is None
+
+    def test_missing_database_name_is_rejected(self) -> None:
+        """没有库名的 URL 无法备份，必须返回 None 而不是猜一个默认库。"""
+        assert parse_postgres_url("postgresql+asyncpg://blog:pw@db:5432") is None
+
+
+class TestPgDumpArgv:
+    def _target(self) -> PostgresTarget:
+        return PostgresTarget(
+            user="blog", password="pw", host="127.0.0.1", port="5432", dbname="blog"
+        )
+
+    def test_local_argv_uses_custom_format(self) -> None:
+        argv = pg_dump_local_argv(self._target())
+        assert argv[0] == "pg_dump"
+        # -Fc 是刻意的：custom 格式支持并行恢复与按表恢复，纯文本做不到
+        assert "-Fc" in argv
+        assert argv[-2:] == ["-d", "blog"]
+        # 密码**不能**出现在命令行里（ps 能看到）
+        assert "pw" not in argv
+
+    def test_docker_argv_does_not_pass_host_or_port(self) -> None:
+        """容器内连的是它自己的 5432，带上宿主端口反而连不上。"""
+        argv = pg_dump_docker_argv("personal-blog-db-1", self._target())
+        assert argv[:3] == ["docker", "exec", "personal-blog-db-1"]
+        assert "-h" not in argv
+        assert "-p" not in argv
+        assert "-Fc" in argv
