@@ -14,6 +14,25 @@
 
 ### 新增
 
+- **公开读接口的 HTTP 缓存**（`api/cache.py`）：前台所有只读接口此前没有任何缓存头，
+  浏览器每次二次访问、每次前进后退都要重新全量查库，中间任何一层缓存也无从判断
+  内容有没有变。现补 `ETag`（对响应体取 sha256，弱验证器）+ `Cache-Control: public,
+  max-age=60`，并处理 `If-None-Match` → 304。**只对匿名 GET 生效**（带
+  `Authorization` 一律跳过：同一 URL 对不同用户可能不同，共享缓存命中即越权），
+  且排除 `/manage`、`/revisions` 与所有非 200 响应
+- **前端 views 层补单测**（此前 22 个 view / 4049 行零 spec、项目最大的覆盖空洞）：
+  `ArticleEditView.spec.ts` 40 条、`ArticleDetailView.spec.ts` 34 条、
+  `HomeView.spec.ts` 24 条，共 **98 条**，覆盖状态流转、失败路径、
+  草稿分桶、发布设置、标签输入、版本历史、URL 即唯一状态源、权限分支与竞态
+- 新增 `tests/test_public_cache.py`（41 条）：可缓存请求的判定规则、
+  ETag 生成与条件请求匹配、响应体重建后的 `content-length` 一致性、
+  以及**中间件顺序**的两条契约（被 CORS 拒绝的预检仍带 request_id；
+  访问日志记录的是折叠后的 304 而不是 200）
+- 新增 `TestAppEnvWhitelist`（8 条）：`APP_ENV` 白名单拒绝与大小写/空格归一化
+- `tests/test_deploy_config.py` 补 2 条：HSTS 必须是条件式（map 的两个分支 +
+  add_header 用变量）、nginx.conf 必须落到 `conf.d/`（`map`/`upstream` 是 http 级指令）
+- **条件式 HSTS**（`deploy/nginx.conf`）：`map $http_x_forwarded_proto $hsts_header`
+  —— 只有外层真的在用 HTTPS 才发 `Strict-Transport-Security`
 - **PostgreSQL 备份与恢复路径**：`scripts/backup_db.py` 此前对 PG 明确拒绝，
   而 compose 里生产库就是 postgres:16 —— 也就是说**生产部署的两个数据卷
   完全没有备份**，精心打磨的 `VACUUM INTO` 只服务于开发用的 SQLite。
@@ -134,6 +153,25 @@
 
 ### 已修复
 
+- **`APP_ENV` 写错就让生产门禁静默失效**：`is_production` 的判据是
+  `app_env.lower() == "production"`，于是 `APP_ENV=prod`、`prd`、`production `
+  （末尾空格）都会让整套安全门禁（默认密钥 / 默认口令 / DEBUG / DB_AUTO_CREATE /
+  SEED_DEMO_DATA）**不生效且无任何告警**。现在 `APP_ENV` 是白名单校验：
+  大小写与空格归一化，未知值直接**拒绝启动**（与 admin_email 用 EmailStr 同一取舍）
+- **中间件注册顺序与注释意图相反**：注释写的是"即使请求被 CORS 拒绝也能留下
+  record"，但 `RequestContextMiddleware` 注册在 CORS **之前**（= 更内层），
+  实测被 CORS 拒掉的预检**既没有 X-Request-ID 也没有访问日志**。
+  现按「内 → 外」重排为 CORS → PublicCache → RequestContext，
+  并写清规则（**后注册的在外层**）与验证方式
+- **编辑页竞态：迟到的详情响应会覆盖表单（静默数据丢失）**：
+  `loadArticle` 在 `await articleApi.detail()` 后直接写 `form.value`，没有代次守卫。
+  在两个编辑页之间快速切换（改地址栏 id、或前进/后退——路由记录相同、组件实例复用）时，
+  先发后到的响应会把表单改成**上一篇**的内容，而保存 PATCH 的是当前 id ——
+  用户以为在改 B，实际把 A 的内容写进了 B。现加加载代次，迟到的成功/失败一律丢弃
+  （失败也丢：否则一篇 404 会把另一篇标成加载失败）
+- **从加载失败的 A 切到正常的 B 时，旧的错误提示条不消失**：重新加载时先清 `formError`
+- **删除文章用 `undefined` 当失败哨兵**：`articleApi.remove` 是 `Promise<void>`，
+  判定依赖"204 空响应体被 axios 转成 `''`"这种实现细节；改为任务显式返回 `true`
 - **正文可以伪造全站浮层（覆盖式钓鱼）**：消毒器禁了 `style`（注释里写明理由是
   "内联 style 可以做覆盖式钓鱼"），却把 `class` 整体放行 —— 而
   `fixed inset-0 z-50 bg-white` 正是本站 `ConfirmDialog` 在用的工具类，
