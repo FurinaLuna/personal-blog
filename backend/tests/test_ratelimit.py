@@ -131,6 +131,44 @@ class TestRateLimitIsolation:
         assert response.status_code != 429
 
 
+class TestSearchRateLimit:
+    """搜索是读接口里**唯一**的重查询（三列 ILIKE + 同条件 COUNT）。
+
+    限流的必要性来自成本不对称：真人一分钟搜不了 30 次，而脚本可以拿它
+    当放大器——在没有 pg_trgm 索引的库上，每次请求都是一次全表扫描。
+    """
+
+    async def test_allows_up_to_limit_then_blocks(self, client: AsyncClient) -> None:
+        """第 31 次开始被挡（配额 30/分钟）。"""
+        for _ in range(30):
+            response = await client.get("/api/v1/articles/search", params={"q": "示例"})
+            assert response.status_code == 200, response.text
+
+        blocked = await client.get("/api/v1/articles/search", params={"q": "示例"})
+        assert blocked.status_code == 429
+        assert blocked.json()["code"] == "rate_limited"
+        assert "Retry-After" in blocked.headers
+
+    async def test_search_bucket_is_independent_from_login(self, client: AsyncClient) -> None:
+        """规则名参与 key：搜索刷满不该影响登录，反之亦然。"""
+        for _ in range(30):
+            await client.get("/api/v1/articles/search", params={"q": "示例"})
+        assert (
+            await client.get("/api/v1/articles/search", params={"q": "示例"})
+        ).status_code == 429
+
+        login = await client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": "admin123456"}
+        )
+        assert login.status_code == 200
+
+    async def test_list_endpoint_is_not_throttled(self, client: AsyncClient) -> None:
+        """列表接口不该被顺手限流：它是正常浏览路径，真人翻页就会超过 30 次。"""
+        for _ in range(35):
+            response = await client.get("/api/v1/articles", params={"page": 1})
+            assert response.status_code == 200, response.text
+
+
 class TestLimiterUnit:
     def test_window_reset_after_expiry(self) -> None:
         limiter_under_test = SlidingWindowLimiter()

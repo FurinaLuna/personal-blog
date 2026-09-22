@@ -14,13 +14,28 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 TEST_DB = Path(tempfile.gettempdir()) / "personal_blog_test.db"
+
+# 测试库方言：默认 SQLite（零依赖、跑得快），可用 TEST_DATABASE_URL 指定 PostgreSQL。
+#
+# 为什么需要这条：生产 compose 用的是 postgres:16，而整套测试此前**只在 SQLite 上
+# 跑过**。方言差异带来的分支（外键级联是否真的生效、枚举/布尔/JSON 列的建表与读写、
+# 大小写敏感性、`ILIKE` 与 `LIKE` 的语义、没有 FTS5 时的检索降级）在 SQLite 上
+# 永远覆盖不到——CI 里那个 `backend-postgres` 作业跑的就是这条路径。
+#
+# 用法：
+#   TEST_DATABASE_URL=postgresql+asyncpg://blog:blog@127.0.0.1:5432/blog_test pytest
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
+IS_SQLITE = not TEST_DATABASE_URL
 
 os.environ["APP_ENV"] = "testing"
 os.environ["DEBUG"] = "false"
 os.environ["JWT_SECRET_KEY"] = "testing-secret-key-not-for-production"
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
+os.environ["DATABASE_URL"] = (
+    TEST_DATABASE_URL if TEST_DATABASE_URL else f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
+)
 os.environ["SEED_DEMO_DATA"] = "false"
 os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_EMAIL"] = "admin@example.com"
@@ -30,7 +45,7 @@ os.environ["STORAGE_DIR"] = (Path(tempfile.gettempdir()) / "personal_blog_media"
 
 # 上面的环境变量必须早于下面这些 import，故有意忽略 E402
 from app.db.base import Base  # noqa: E402
-from app.db.fulltext import ensure_fulltext_index  # noqa: E402
+from app.db.fulltext import ensure_search_indexes  # noqa: E402
 from app.db.session import async_session_factory, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.seed import ensure_seed  # noqa: E402
@@ -40,8 +55,39 @@ from tests.factories import ADMIN_PASSWORD, AUTHOR_PASSWORD  # noqa: E402
 
 @pytest.fixture(scope="session", autouse=True)
 def _clean_database_file() -> None:
-    """整个测试会话开始前删掉上一次残留的库文件。"""
-    TEST_DB.unlink(missing_ok=True)
+    """整个测试会话开始前删掉上一次残留的库文件。
+
+    PG 模式没有"库文件"可删（每次 `db_reset` 都会 drop/create 全部表），
+    这里必须跳过，否则会去删一个与 PG 无关的 SQLite 路径。
+    """
+    if IS_SQLITE:
+        TEST_DB.unlink(missing_ok=True)
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """两个方言各自专有的用例自动跳过，而不是假装通过。
+
+    - ``sqlite_only``：直接断言 FTS5（虚拟表、trigram 分词、bm25 打分）的用例——
+      PG 上根本没有这张表，检索会**按设计**降级为 pg_trgm 索引加速的 ILIKE；
+    - ``pg_only``：断言 pg_trgm / GIN / PG 专有 DDL 的用例——SQLite 上不存在这些对象。
+
+    跳过时都写明原因，避免以后有人误以为"这些用例在另一条方言上验证过"。
+    """
+    if IS_SQLITE:
+        skip_pg = pytest.mark.skip(
+            reason="PostgreSQL 专有：pg_trgm / GIN 索引在 SQLite 上不存在（SQLite 走 FTS5）"
+        )
+        for item in items:
+            if "pg_only" in item.keywords:
+                item.add_marker(skip_pg)
+        return
+
+    skip_sqlite = pytest.mark.skip(
+        reason="SQLite 专有：FTS5 虚拟表在 PostgreSQL 上不存在（检索按设计降级为 ILIKE）"
+    )
+    for item in items:
+        if "sqlite_only" in item.keywords:
+            item.add_marker(skip_sqlite)
 
 
 @pytest.fixture(autouse=True)
@@ -60,22 +106,48 @@ async def db_reset() -> AsyncGenerator[None, None]:
 
     刻意不灌演示文章：用例自己造数据，断言才不会被"示例内容"干扰，
     也不会出现"A 用例删了文章导致 B 用例失败"的顺序依赖。
-    """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
 
-    # FTS5 虚拟表不在 Base.metadata 里，create_all 不会建它。
-    # 测试环境也要建，否则搜索用例测的就全是 LIKE 降级路径，
-    # 「FTS 到底有没有生效」永远验证不到。
+    两种方言走不同路径：SQLite 上 drop + create 很快，直接重建；
+    PG 上重建 11 张表的 DDL 每例要 1.6s（442 例就是十几分钟），
+    所以改成 create_all（幂等补建）+ TRUNCATE：语义同样是"空库 + 干净自增 id"，
+    但省掉了全部 DDL。
+    """
+    if IS_SQLITE:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+            # RESTART IDENTITY 让自增主键归零：有用例断言 id 或依赖"第一篇文章"，
+            # 不断言也要归零，否则失败信息里的 id 会一路涨到四位数，难以对读。
+            # CASCADE 处理外键引用，不需要自己排 truncate 顺序。
+            await conn.execute(text(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"))
+
+    # 检索索引不在 Base.metadata 里（FTS5 虚拟表 / pg_trgm 的 GIN 索引），
+    # create_all 不会建它们。测试环境也要建，否则搜索用例测的就全是
+    # 无索引的 LIKE 降级路径，「索引到底有没有生效」永远验证不到。
     async with async_session_factory() as session:
-        await ensure_fulltext_index(session)
+        await ensure_search_indexes(session)
         await session.commit()
 
     async with async_session_factory() as session:
         await ensure_seed(session)
         await session.commit()
     yield
+
+    # 归还连接池里的连接。
+    #
+    # 必须存在，而且只在 PG 上才看得出必要性：pytest-asyncio 默认每个用例一个新
+    # 事件循环（`asyncio_default_fixture_loop_scope = "function"`），而 asyncpg 的
+    # 连接把 transport **绑定在创建它的那个 loop** 上。池里留着上一个 loop 的连接时，
+    # 下一个用例拿到它就会炸在 `RuntimeError: Event loop is closed`
+    # （表现为"ERROR at setup"，且第一个用例永远是好的）。
+    #
+    # SQLite/aiosqlite 不受影响：它每次调用都取当前运行中的 loop，不持有 transport，
+    # 所以这个坑在只跑 SQLite 时完全看不见——正是引入 PG 这条测试路径的价值所在。
+    await engine.dispose()
 
 
 @pytest.fixture

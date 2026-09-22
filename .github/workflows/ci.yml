@@ -109,7 +109,7 @@ jobs:
         run: npm run build:only
 
   migration:
-    name: 迁移 · 升降级可用性
+    name: 迁移 · 升降级可用性（SQLite）
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -197,6 +197,72 @@ jobs:
           path: tools/e2e_live/reports/
           retention-days: 7
           if-no-files-found: ignore
+
+  backend-postgres:
+    # 为什么需要第二个后端作业：**生产用的是 PostgreSQL**（docker-compose.yml 里
+    # 是 postgres:16），而整套测试此前只在 SQLite 上跑过。方言差异不是理论风险，
+    # 这个作业第一次跑起来就抓到两个真实问题：
+    #   1. asyncpg 的连接把 transport 绑在创建它的事件循环上，而 pytest-asyncio
+    #      每个用例换一个 loop ⇒ 第二个用例开始全是 "Event loop is closed"
+    #      （aiosqlite 每次取当前 loop，所以只跑 SQLite 时永远看不见）；
+    #   2. 有一处测试数据写超了 varchar(64)（SQLite 不校验长度，PG 直接拒绝）。
+    #
+    # 顺带把 pg_trgm / GIN 索引这条**只有 PG 才走**的分支纳入回归
+    # （SQLite 走 FTS5，两条路径的用例用 sqlite_only / pg_only 标记互斥）。
+    name: 后端 · PostgreSQL 方言（真库）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: blog
+          POSTGRES_PASSWORD: blog
+          POSTGRES_DB: blog_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # conftest 会把它写进 DATABASE_URL（必须在 import app 之前，见其模块 docstring）
+      TEST_DATABASE_URL: postgresql+asyncpg://blog:blog@127.0.0.1:5432/blog_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+
+      - name: 安装依赖（锁定版本，含 asyncpg）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install --no-deps -e .
+
+      # 迁移必须在生产方言上也验证过：pg_trgm 扩展与三条 GIN 索引只在这个
+      # 分支里创建，SQLite 上那份 migration 是 no-op —— 也就是说
+      # "迁移可用"这件事此前从未在真正会用到它的库上验证。
+      - name: 迁移升 → 降 → 再升（PostgreSQL）
+        env:
+          APP_ENV: testing
+          JWT_SECRET_KEY: ci-only-secret-key-not-for-production
+          DATABASE_URL: postgresql+asyncpg://blog:blog@127.0.0.1:5432/blog_test
+          SEED_DEMO_DATA: 'false'
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: pytest（PostgreSQL 方言）
+        run: pytest -q
 
   audit:
     # 依赖漏洞是"上线时才发现、但上线前就能查出来"的典型。前端有 npm audit

@@ -22,7 +22,8 @@ from app.utils.security import (
     create_refresh_token,
     decode_token,
     hash_password,
-    verify_password,
+    hash_password_async,
+    verify_password_async,
 )
 
 
@@ -57,10 +58,12 @@ class AuthService:
         """
         user = await self.users.get_by_login(login)
         if user is None:
-            verify_password(password, _dummy_hash())
+            # 等时校验也走线程池：它的目的就是"耗时与真校验接近"，
+            # 若在事件循环里跑，这一条恰恰会把循环按住 180ms。
+            await verify_password_async(password, _dummy_hash())
             raise UnauthorizedError("用户名或密码错误")
 
-        if not verify_password(password, user.hashed_password):
+        if not await verify_password_async(password, user.hashed_password):
             raise UnauthorizedError("用户名或密码错误")
 
         if not user.is_active:
@@ -99,9 +102,9 @@ class AuthService:
         return self.issue_tokens(user)
 
     async def change_password(self, user: User, old_password: str, new_password: str) -> None:
-        if not verify_password(old_password, user.hashed_password):
+        if not await verify_password_async(old_password, user.hashed_password):
             raise BadRequestError("原密码不正确")
-        user.hashed_password = hash_password(new_password)
+        user.hashed_password = await hash_password_async(new_password)
         # 改密码 = 全端下线：代次 +1 让所有已签发的 access / refresh token 立刻失效。
         # 这是「密码可能泄露」时唯一的应急手段 —— 只改哈希的话，
         # 攻击者手上那个还没过期的 refresh token 照样能换出新令牌。
@@ -151,7 +154,7 @@ class AuthService:
         return await self.users.create(
             username=payload.username,
             email=str(payload.email),
-            hashed_password=hash_password(payload.password),
+            hashed_password=await hash_password_async(payload.password),
             nickname=payload.nickname or payload.username,
             avatar_url=payload.avatar_url,
             bio=payload.bio,

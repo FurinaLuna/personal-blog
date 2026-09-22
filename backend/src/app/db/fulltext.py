@@ -95,3 +95,101 @@ async def ensure_fulltext_index(session: AsyncSession) -> bool:
     # 每次启动都跑一次，顺带修复「触发器曾经缺失导致索引与正文脱节」的情况。
     await session.execute(text(REBUILD_SQL))
     return True
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL：pg_trgm + GIN
+# ---------------------------------------------------------------------------
+#
+# FTS5 是 SQLite 专有的虚拟表，PG 上没有对应物。此前 PG 分支的处理是"直接跳过"，
+# 于是生产库（compose 里就是 postgres:16）上的搜索永远是
+# ``title/summary/content_md ILIKE '%kw%'`` 三列全表扫描 —— 而且
+# ``/articles/search`` 还不在限流名单里，等于一个廉价的放大攻击面。
+#
+# 这里不去做 tsvector：那需要中文分词器（zhparser / pg_jieba），是**扩展的扩展**，
+# 且在"短查询"（1–2 字）上依然要退回 LIKE —— 而中文搜索里短查询恰恰是主流
+# （「博客」「数据」「测试」）。pg_trgm 的三元组索引对 LIKE/ILIKE 直接生效，
+# 与既有 SQL 零改动，覆盖面反而更全。
+#
+# 代价与边界：
+# - 需要 `CREATE EXTENSION pg_trgm`（PG 13+ 标记为 trusted，库 owner 就能建；
+#   没有权限时这里会失败并**安静退回全表扫描**，不影响服务可用性）；
+# - 索引会让写入变慢、体积变大（content_md 越长越明显）。对个人博客的写入量
+#   可以忽略，这是刻意的取舍。
+PG_TRGM_EXTENSION_SQL = "CREATE EXTENSION IF NOT EXISTS pg_trgm"
+
+# 三个字段各建一条：查询是 `a ILIKE x OR b ILIKE x OR c ILIKE x`，
+# PG 会用 BitmapOr 把三条索引合并，比单条表达式索引更贴合现有 SQL。
+PG_TRGM_INDEXES: dict[str, str] = {
+    "ix_articles_title_trgm": (
+        "CREATE INDEX IF NOT EXISTS ix_articles_title_trgm "
+        "ON articles USING gin (title gin_trgm_ops)"
+    ),
+    "ix_articles_summary_trgm": (
+        "CREATE INDEX IF NOT EXISTS ix_articles_summary_trgm "
+        "ON articles USING gin (summary gin_trgm_ops)"
+    ),
+    "ix_articles_content_trgm": (
+        "CREATE INDEX IF NOT EXISTS ix_articles_content_trgm "
+        "ON articles USING gin (content_md gin_trgm_ops)"
+    ),
+}
+
+
+def _dialect(session: AsyncSession) -> str:
+    """当前会话绑定的方言名（拿不到时返回空串）。"""
+    if session.bind is None:
+        return ""
+    return session.bind.dialect.name
+
+
+async def pg_trgm_available(session: AsyncSession) -> bool:
+    """pg_trgm 扩展与三条 GIN 索引是否都已就位（PG 上的"检索加速可用"）。
+
+    与 ``fulltext_available`` 的区别：那个问的是"SQLite 的 FTS5 能不能用"，
+    这个问的是"PG 的三元组索引建好没有"。两者都只影响**走哪条加速路径**，
+    不影响搜索结果本身——没有加速时 ILIKE 依然返回正确结果（只是慢）。
+    """
+    if _dialect(session) != "postgresql":
+        return False
+    result = await session.execute(
+        text(
+            "SELECT count(*) FROM pg_indexes "
+            "WHERE schemaname = current_schema() AND indexname = ANY(:names)"
+        ),
+        {"names": list(PG_TRGM_INDEXES)},
+    )
+    return int(result.scalar_one()) == len(PG_TRGM_INDEXES)
+
+
+async def ensure_pg_trgm_indexes(session: AsyncSession) -> bool:
+    """幂等地建好 pg_trgm 扩展与三条 GIN 索引。
+
+    Returns:
+        是否成功。任何一步失败（最常见的是没有 CREATE EXTENSION 权限）
+        都返回 False，让调用方记一条日志继续启动——搜索会退回全表扫描，
+        结果依然正确，只是慢。
+    """
+    if _dialect(session) != "postgresql":
+        return False
+
+    await session.execute(text(PG_TRGM_EXTENSION_SQL))
+    for statement in PG_TRGM_INDEXES.values():
+        await session.execute(text(statement))
+    return True
+
+
+async def ensure_search_indexes(session: AsyncSession) -> str:
+    """按方言补建检索索引，返回实际做了什么（供启动日志使用）。
+
+    取值：``"fts5"``（SQLite）、``"pg_trgm"``（PostgreSQL）、``""``（都没有）。
+
+    两条路径都幂等，且都**尽力而为**：索引是增强项，建不出来不该挡住启动。
+    迁移文件里有同一份 DDL 的副本（迁移是历史快照，不随应用代码演进）。
+    """
+    dialect = _dialect(session)
+    if dialect == "sqlite":
+        return "fts5" if await ensure_fulltext_index(session) else ""
+    if dialect == "postgresql":
+        return "pg_trgm" if await ensure_pg_trgm_indexes(session) else ""
+    return ""

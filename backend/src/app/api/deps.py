@@ -4,8 +4,9 @@
 - ``get_current_user`` 负责认证（你是谁）；
 - ``require_admin`` / ``require_author`` 负责授权（你能干什么），
   两者分开，路由上按需组合，避免在每个 handler 里手写 if 判断角色；
-- ``rate_limit`` 只针对「可被脚本滥用」的写入口（登录、评论、点赞），
-  不铺到全部接口——限流本身也是成本。
+- ``rate_limit`` 只针对「可被脚本滥用」的入口（登录、评论、点赞，以及搜索）。
+  刻意不铺到全部接口——限流本身也是成本，读接口里只有搜索是"一次请求 =
+  一次全表扫描 + 一次 COUNT"的重活，值得单独设一道闸。
 """
 
 from __future__ import annotations
@@ -189,3 +190,7 @@ def rate_limit(name: str, *, limit: int, window_seconds: int) -> Callable[[Reque
 LOGIN_RATE_LIMIT = Depends(rate_limit("login", limit=5, window_seconds=60))
 COMMENT_RATE_LIMIT = Depends(rate_limit("comment", limit=5, window_seconds=60))
 LIKE_RATE_LIMIT = Depends(rate_limit("like", limit=20, window_seconds=60))
+# 搜索：读接口里唯一的重查询（三列 ILIKE + 同条件 COUNT，最多三路 BitmapOr）。
+# 30 次/分 远高于真人使用频率（没人一分钟搜 30 次），但足以让脚本化的
+# 全表扫描变成不划算的事。此前的审计结论是"这个端点是可以被廉价放大的攻击面"。
+SEARCH_RATE_LIMIT = Depends(rate_limit("search", limit=30, window_seconds=60))

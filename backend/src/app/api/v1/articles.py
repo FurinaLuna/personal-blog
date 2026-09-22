@@ -14,7 +14,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, status
 
-from app.api.deps import LIKE_RATE_LIMIT, AuthorUser, OptionalUser, SessionDep, client_ip
+from app.api.deps import (
+    LIKE_RATE_LIMIT,
+    SEARCH_RATE_LIMIT,
+    AuthorUser,
+    OptionalUser,
+    SessionDep,
+    client_ip,
+)
 from app.api.pagination import PageParamsDep
 from app.models import ArticleSort, ArticleStatus
 from app.schemas.article import ArticleCreate, ArticleDetail, ArticleSummary, ArticleUpdate
@@ -53,6 +60,7 @@ async def search_articles(
     session: SessionDep,
     page_params: PageParamsDep,
     q: Annotated[str, Query(min_length=1, max_length=100, description="搜索词")],
+    _: None = SEARCH_RATE_LIMIT,
 ) -> Page[ArticleSummary]:
     """站内搜索：按相关度返回命中文章。
 

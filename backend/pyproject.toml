@@ -59,6 +59,14 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-q --strict-markers"
+markers = [
+    # 直接断言 SQLite FTS5（虚拟表 / trigram / bm25）的用例。
+    # PG 上没有这张表，检索按设计降级为 ILIKE（由 pg_trgm GIN 索引加速），
+    # 这些用例在 PG 上由 conftest 自动 skip 并写明原因。
+    "sqlite_only: 仅在 SQLite 上有意义的用例（FTS5 专有行为）",
+    # 反过来：断言 pg_trgm / GIN / 方言专有 DDL 的用例，SQLite 上自动 skip。
+    "pg_only: 仅在 PostgreSQL 上有意义的用例（pg_trgm 专有行为）",
+]
 
 [tool.coverage.run]
 source = ["src/app"]

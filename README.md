@@ -10,8 +10,8 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 442 个后端测试、200 个前端单测，
-外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
+**写出来能跑、改起来可验证** —— 457 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
+200 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
 与两套数据库方言的真实链路端到端（SQLite 62 条 / PostgreSQL 61 条）。
 
 ---
@@ -57,6 +57,7 @@
 | 代码块 | 按需注册 17 种语言（比 `lib/common` 省 60% 体积）、右上复制按钮、右下语言标签 |
 | 阅读体验 | 自动目录（桌面侧栏 + 移动端浮动抽屉）、阅读进度条、相关文章推荐 |
 | 组织方式 | 分类（一对一）、标签（多对多）、按月归档、关键词搜索 |
+| 搜索 | **两种方言各有自己的加速路径**：SQLite 走 FTS5（trigram 分词 + bm25 + 高亮片段），PostgreSQL 走 `pg_trgm` + 3 条 GIN 索引；1–2 字的短查询两边都退回 LIKE 兜底（三元组索引的固有限制），端点单独限流 30/分 |
 | 系列 / 合集 | 多篇文章编成一个系列；详情页显示系列导航（上下篇），前台有系列聚合页与系列详情页，后台可增删改；删除系列只解关联，文章保留 |
 | 互动 | 两级评论（先审后发）、点赞、阅读量统计 |
 | 列表页 | 服务端分页 + 五种排序 + 筛选，**全部状态存在 URL query**，刷新/分享/前进后退都能还原 |
@@ -81,7 +82,7 @@
 - 三级角色：访客 / 作者 / 站长；三层防护：依赖注入门禁 → 资源归属校验 → Schema 层防提权
 - 上传安全：Pillow 真实解码判型（不信任客户端声明的 `Content-Type`）、流式限流读、
   扩展名白名单（默认禁 SVG / HTML）、服务端生成文件名
-- 请求 ID 透传 + 结构化 JSON 日志 + 限流（登录 5/分、评论 5/分、点赞 20/分）
+- 请求 ID 透传 + 结构化 JSON 日志 + 限流（登录 5/分、评论 5/分、点赞 20/分、搜索 30/分）
 - 评论邮件通知：有人回复你的评论时给被回复者发信（附签名退订链接），
   非站长发的新评论提醒站长（**待审也提醒**——那正是需要审核的时刻）；
   SMTP 默认关闭（仅配 `SMTP_ENABLED=true` 才发信），发信是评论接口提交后触发的后台任务，
@@ -118,7 +119,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 442 例、前端 200 例 |
+| 测试 | pytest / Vitest | 后端 457 例（SQLite + PostgreSQL 双方言）、前端 200 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -193,13 +194,13 @@ personal-blog/
 │   │   ├── config.py               # 配置（全部来自环境变量）
 │   │   ├── api/                    # 路由、依赖注入、限流、请求上下文中间件
 │   │   │   └── v1/                 # 按资源分组的端点
-│   │   ├── models/                 # SQLAlchemy 模型（10 张表）
+│   │   ├── models/                 # SQLAlchemy 模型（11 张表）
 │   │   ├── schemas/                # Pydantic 请求/响应模型
 │   │   ├── services/               # 业务规则唯一所在地
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 442 个 pytest 用例
+│   ├── tests/                      # 457 个 pytest 用例（SQLite / PostgreSQL 双方言）
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -275,7 +276,7 @@ personal-blog/
 | `LOG_JSON` | `true` | 访问日志以单行 JSON 输出，便于日志收集器按字段过滤 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `TRUST_PROXY_HEADERS` | `false` | ⚠️ 只有部署在可信反代之后才开。`X-Forwarded-For` 可被伪造 |
-| `RATE_LIMIT_ENABLED` | `true` | 登录 / 评论 / 点赞限流开关 |
+| `RATE_LIMIT_ENABLED` | `true` | 登录 / 评论 / 点赞 / 搜索限流开关 |
 | `SMTP_ENABLED` | `false` | 评论邮件通知总开关。⚠️ 开启还需填 `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD`（授权码） |
 | `SMTP_PORT` / `SMTP_USE_TLS` | `465` / `true` | 隐式 TLS；587 STARTTLS 暂不支持 |
 | `SMTP_FROM` | 空 | 发件人地址，留空回落到 `SMTP_USERNAME` |
@@ -335,11 +336,12 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest` | **442 passed** |
+| `pytest`（默认 SQLite） | **452 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.4%（门槛 80%） |
+| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **456 passed, 1 skipped** |
 | `vue-tsc --noEmit` | 0 报错 |
 | `vitest run` | **200 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 8 条迁移升至 head = 12 张业务表（另有 FTS5 虚拟表及其 4 张影子表）；降回 base 只剩 `alembic_version`，复升结构一致 |
+| `alembic upgrade head` / `downgrade base` | 9 条迁移升至 head = 11 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 | `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |

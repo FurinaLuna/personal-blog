@@ -25,7 +25,7 @@ from app.api.middleware import RequestContextMiddleware
 from app.api.v1 import api_router
 from app.config import settings
 from app.db.base import Base
-from app.db.fulltext import ensure_fulltext_index
+from app.db.fulltext import ensure_search_indexes
 from app.db.session import async_session_factory, engine
 from app.models import User  # noqa: F401 - 触发所有模型注册到 Base.metadata
 from app.services.seed import ensure_seed
@@ -70,24 +70,31 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 async def _ensure_fulltext_index() -> None:
-    """补建/修复 FTS5 全文索引（尽力而为，失败不影响启动）。
+    """补建/修复检索索引（尽力而为，失败不影响启动）。
 
-    幂等：DDL 用 ``IF NOT EXISTS``，末尾再 rebuild 一次把索引对齐到 articles
-    的当前内容——顺带修复「触发器曾经缺失导致索引与正文脱节」的情况。
+    按方言分流，两边的 DDL 都幂等：
+
+    - **SQLite**：建 FTS5 虚拟表与三个触发器，末尾 rebuild 一次把索引对齐到
+      articles 的当前内容——顺带修复「触发器曾经缺失导致索引与正文脱节」；
+    - **PostgreSQL**：建 ``pg_trgm`` 扩展与三条 GIN 索引。此前 PG 分支是直接跳过，
+      于是生产库上的搜索永远是三列 ``ILIKE '%kw%'`` 全表扫描。
+      没有 CREATE EXTENSION 权限时会失败，此时只记日志：搜索依然正确，只是慢。
 
     同 ``_prune_visit_logs``：搜索索引是增强功能，不是服务可用性的前提。
-    建不出来就退回 LIKE，不能因为一个增强功能把站点挡在门外。
+    建不出来就退回不带索引的 LIKE，不能因为一个增强功能把站点挡在门外。
     """
     try:
         async with async_session_factory() as session:
-            ok = await ensure_fulltext_index(session)
+            kind = await ensure_search_indexes(session)
             await session.commit()
-        if ok:
-            logger.info("全文检索索引已就绪")
+        if kind == "fts5":
+            logger.info("全文检索索引已就绪（SQLite FTS5）")
+        elif kind == "pg_trgm":
+            logger.info("全文检索索引已就绪（PostgreSQL pg_trgm + GIN）")
         else:
-            logger.info("当前数据库不支持 FTS5 全文检索，搜索将退回 LIKE")
+            logger.info("当前数据库未建立检索索引，搜索将使用无索引的 LIKE")
     except Exception:  # 增强功能不能成为启动的单点故障
-        logger.warning("全文索引初始化失败（搜索将退回 LIKE，不影响启动）", exc_info=True)
+        logger.warning("检索索引初始化失败（搜索将退回无索引 LIKE，不影响启动）", exc_info=True)
 
 
 async def _prune_visit_logs() -> None:

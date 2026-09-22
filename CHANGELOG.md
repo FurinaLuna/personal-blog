@@ -90,7 +90,40 @@
   82% 这个数字没有任何机制阻止它下滑；现于 `pyproject.toml` 设
   `[tool.coverage.report] fail_under = 80`，CI 与 `make test-cov` 都带上 `--cov`
 
+- **PostgreSQL 上的搜索是「假加速」**：`articles_fts` 是 SQLite 专有虚拟表，
+  非 SQLite 方言上 `fulltext_available()` 恒为 False，于是生产库
+  （compose 用 postgres:16）的搜索永远是 `title/summary/content_md ILIKE '%kw%'`
+  三列**全表扫描** + 同条件 COUNT。现补 `pg_trgm` 扩展与 3 条 GIN
+  （`gin_trgm_ops`）索引，迁移 `a7c1e9d4b2f8`；实测 5 万篇语料下
+  7 字关键词从 181ms 降到 6.6ms，3 字以内 PG 仍选顺序扫描（三元组索引的
+  固有粒度限制，与 FTS5 trigram 同一条限制，已写进文档不夸大）
+- **搜索端点限流**：它是唯一"一次请求 = 一次全表扫描 + 一次 COUNT"的读接口，
+  此前不在限流名单里，可被脚本廉价放大；现 30 次/分（真人不可能触发）
+- **bcrypt 阻塞事件循环**：`hash_password` / `verify_password` 是同步 CPU 调用
+  （cost=12，实测 185ms/次），而部署是单 worker —— 一次登录能让所有并发请求
+  排队 185ms。现业务路径统一走 `asyncio.to_thread` 包装，
+  实测哈希期间事件循环从「0 次调度」变为「13 次调度」
+- **测试数据写超列长度**：`test_stats.py` 造 `ip_hash` 用了 65 字符而列是
+  `varchar(64)` —— SQLite 不校验长度所以长期没暴露，PG 上直接
+  `StringDataRightTruncationError`
+- **README 数字与实物不一致**：模型表数「10 张」（目录树）/「12 张业务表」
+  （基线表）实为 **11 张**；迁移 8 条实为 9 条；测试基线 442 已过时
+
 ### 新增
+
+- **CI 新增 `backend-postgres` 作业**：整套 pytest 跑在真 PostgreSQL 上
+  （service 容器），并在 PG 上执行 `upgrade head → downgrade base → upgrade head`。
+  这条路径此前**从未被执行过**——生产方言的迁移、`pg_trgm` 分支、外键级联
+  全都只有 SQLite 的验证
+- **测试用例可按方言互斥**：新增 `sqlite_only` / `pg_only` 两个 marker，
+  由 `conftest.py` 在另一条方言上自动 skip 并写明原因（不假装通过）
+- `tests/conftest.py` 支持 `TEST_DATABASE_URL` 切换测试库方言；
+  PG 上改用 `create_all + TRUNCATE ... RESTART IDENTITY`（每例重建 11 张表
+  的 DDL 要 1.6s，442 例就是十几分钟）
+- `tests/test_password_threading.py`：以**行为**而非实现断言 bcrypt 不阻塞
+  事件循环（同步实现必然失败：实测事件循环调度 0 次）
+- `tests/test_search_indexes.py`：方言分流 + 索引定义 + `ILIKE` 可用性
+  （`enable_seqscan = off` 下验证计划里出现 trgm 索引）
 
 - **CI 新增 `e2e-live` 作业**：在 `ubuntu-latest` 上跑 `tools/e2e_live/e2e_run.py`
   的 SQLite 方言全套 62 条用例（自起 uvicorn、自建临时库、自清理，

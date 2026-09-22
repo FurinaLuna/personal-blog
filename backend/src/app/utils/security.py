@@ -5,10 +5,15 @@
 - bcrypt 的输入上限是 72 字节（注意是字节不是字符），超过会直接抛 ValueError，
   因此这里显式校验字节长度，而不是静默截断——截断会让"前 72 字节相同"的两个
   不同密码互相能登录。
+- **bcrypt 是 CPU 密集的同步调用**（cost=12，实测约 180ms/次）。在 async 路径上
+  直接调用会把整个事件循环按住：部署是单 worker（`deploy/Dockerfile.backend`），
+  一次登录就能让所有并发请求排队等 180ms。所以业务代码一律用下面两个 async
+  包装（丢到线程池执行），同步版本只留给测试与脚本。
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -60,6 +65,30 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
     except (ValueError, TypeError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# async 包装：把同步的 bcrypt 丢到线程池，别按住事件循环
+# ---------------------------------------------------------------------------
+#
+# 用标准库的 ``asyncio.to_thread`` 而不是 anyio：功能上等价（都不支持强制中断
+# 已开始的线程），但 anyio 目前只是 FastAPI 的传递依赖 —— 直接 import 会引入
+# "幽灵依赖"（哪天上游不带了，运行时才炸）。仓库对依赖卫生的要求写在
+# tests/test_dependency_lock.py 里，这里遵守同一取舍。
+#
+# 线程池不是逃生舱：线程池默认上限 40（``min(32, cpu+4)``），真被刷满时请求会排队。
+# 所以限流（登录 5/分）仍然是第一道防线，这里的目的是"CPU 密集不占事件循环"，
+# 不是"可以无限并发"。
+
+
+async def hash_password_async(password: str) -> str:
+    """``hash_password`` 的 async 版本（在线程池里执行）。"""
+    return await asyncio.to_thread(hash_password, password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """``verify_password`` 的 async 版本（在线程池里执行）。"""
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
 
 @dataclass(frozen=True, slots=True)

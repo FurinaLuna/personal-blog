@@ -154,7 +154,10 @@ class TestVisitLogPruning:
         async with async_session_factory() as session:
             repo = VisitLogRepository(session)
             for index in range(count):
-                await repo.create(article_id=article_id, date=day, ip_hash=f"old{index:062d}")
+                # 61 位而不是 62 位：ip_hash 是 String(64)，"old" + 62 位 = 65 字符。
+                # SQLite 不校验 VARCHAR 长度，所以这里曾长期悄悄写超长值；
+                # 换成 PostgreSQL 会直接 StringDataRightTruncationError（PG 测试路径抓到的）。
+                await repo.create(article_id=article_id, date=day, ip_hash=f"old{index:061d}")
             await session.commit()
 
     async def test_prune_removes_only_expired_rows(
