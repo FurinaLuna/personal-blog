@@ -16,8 +16,14 @@ import { toErrorMessage } from '@/composables/useAsyncData'
 import { useToast } from '@/composables/useToast'
 
 export interface ActionOptions {
-  /** 成功提示文案；不传则不提示 */
-  success?: string
+  /**
+   * 成功提示文案；不传则不提示。
+   *
+   * 支持传函数：文案里常常要引用**执行后才有值**的状态
+   * （例如登录后的 `auth.displayName`）。写成模板串是在调用前求值的，
+   * 会得到"欢迎回来，访客"这种明显不对的提示——本项目实际踩过。
+   */
+  success?: string | (() => string)
   /** 失败时的兜底文案（后端没给可读消息时用） */
   errorMessage?: string
   /** 字段级错误的接收方：表单场景把它接到自己的 fieldErrors 上 */
@@ -62,7 +68,11 @@ export function useAction(): Action {
     pending.value += 1
     try {
       const result = await task()
-      if (options.success) toast.success(options.success)
+      if (options.success) {
+        // 在这里求值：函数形式要能读到"任务刚写完"的状态
+        const message = typeof options.success === 'function' ? options.success() : options.success
+        if (message) toast.success(message)
+      }
       options.onSuccess?.()
       return result
     } catch (error) {

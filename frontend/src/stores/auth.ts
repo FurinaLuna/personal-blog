@@ -2,10 +2,11 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { ApiError, authApi, tokenStore } from '@/api'
+import { ApiError, authApi, onCredentialsCleared, tokenStore } from '@/api'
 import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
-export const useAuthStore = defineStore('auth', () => {  const user = ref<User | null>(null)
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref<User | null>(null)
   /** 是否已经尝试过恢复登录态（用于避免路由守卫在恢复完成前误判为未登录） */
   const restored = ref(false)
   const restoring = ref(false)
@@ -129,6 +130,18 @@ export const useAuthStore = defineStore('auth', () => {  const user = ref<User |
     user.value = null
     restored.value = true
   }
+
+  // 凭证被 http 层判死时（续期失败 / 重放仍 401），把内存里的 user 一起清掉。
+  //
+  // 为什么必须订阅：http 层只清 localStorage 里的 token，而 `user` 是内存状态。
+  // 公开页面上不再整页跳登录页（见 api/http.ts 的 forceLogout），
+  // 于是"token 没了但顶栏还显示着昵称和头像"会一直挂着，
+  // 用户点任何需要登录的东西都被弹走却不知道原因。
+  onCredentialsCleared(() => {
+    user.value = null
+    // 这里是**确定**的答案（服务端已经否认了凭证），不是网络问题
+    restored.value = true
+  })
 
   async function updateProfile(payload: {
     nickname?: string | null

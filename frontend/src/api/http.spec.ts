@@ -21,7 +21,7 @@ import axios, {
 } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, api, http, tokenStore } from '@/api/http'
+import { ApiError, api, http, onCredentialsCleared, setAuthRequiredProbe, tokenStore } from '@/api/http'
 
 type Handler = (config: InternalAxiosRequestConfig) => Promise<AxiosResponse>
 
@@ -69,12 +69,15 @@ function replaceStub(): { replace: ReturnType<typeof vi.fn>; pathname: string } 
 
 beforeEach(() => {
   localStorage.clear()
+  // 默认按"公开页面"起步：只有需要登录的页面才允许整页跳登录页
+  setAuthRequiredProbe(() => false)
   handler = async (config) => ok(config, { ok: true })
   http.defaults.adapter = ((config: InternalAxiosRequestConfig) =>
     handler(config)) as unknown as AxiosAdapter
 })
 
 afterEach(() => {
+  setAuthRequiredProbe(() => false)
   vi.unstubAllGlobals()
 })
 
@@ -217,7 +220,7 @@ describe('401 静默续期', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
-  it('续期失败时强制登出并清除本地凭证', async () => {
+  it('续期失败时清除本地凭证；公开页面上不做整页跳转', async () => {
     tokenStore.save({ access_token: OLD_ACCESS, refresh_token: 'rt' })
     const { replace } = replaceStub()
     handler = async (config) => {
@@ -230,12 +233,44 @@ describe('401 静默续期', () => {
       code: 'token_expired',
     })
     expect(tokenStore.access).toBeNull()
+    // 公开页面（探针为 false）：访客正在读文章，某个后台请求 401 不该把他弹走
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('需要登录的页面上续期失败才整页跳登录页（带回跳地址）', async () => {
+    tokenStore.save({ access_token: OLD_ACCESS, refresh_token: 'rt' })
+    setAuthRequiredProbe(() => true)
+    const { replace } = replaceStub()
+    handler = async (config) => {
+      throw httpError(config, 401, { detail: '过期', code: 'unauthorized' })
+    }
+    vi.spyOn(axios, 'post').mockRejectedValue(new Error('refresh 挂了'))
+
+    await expect(api.get('/articles')).rejects.toMatchObject({ code: 'token_expired' })
     expect(replace).toHaveBeenCalledTimes(1)
     expect(String(replace.mock.calls[0][0])).toContain('/login?redirect=')
   })
 
+  it('凭证被判死时通知订阅者（store 要把内存里的 user 一起清掉）', async () => {
+    tokenStore.save({ access_token: OLD_ACCESS, refresh_token: 'rt' })
+    const notified = vi.fn()
+    const unsubscribe = onCredentialsCleared(notified)
+    handler = async (config) => {
+      throw httpError(config, 401, { detail: '过期', code: 'unauthorized' })
+    }
+    vi.spyOn(axios, 'post').mockRejectedValue(new Error('refresh 挂了'))
+
+    await expect(api.get('/articles')).rejects.toMatchObject({ code: 'token_expired' })
+    expect(notified).toHaveBeenCalledTimes(1)
+
+    // 退订之后不再通知（避免组件卸载后仍被调用）
+    unsubscribe()
+    await expect(api.get('/articles')).rejects.toMatchObject({ status: 401 })
+  })
+
   it('续期成功但重放仍 401（凭证已死）时强制登出，不留死局', async () => {
     tokenStore.save({ access_token: OLD_ACCESS, refresh_token: 'rt' })
+    setAuthRequiredProbe(() => true)
     const { replace } = replaceStub()
     // 无论令牌新旧都 401：模拟账号被停用
     handler = async (config) => {
@@ -253,7 +288,7 @@ describe('401 静默续期', () => {
     expect(replace).toHaveBeenCalledTimes(1)
   })
 
-  it('没有 refresh token 时直接失败，不做无意义的续期', async () => {
+  it('有 access 但没有 refresh 时同样按凭证已死处理（不留 401 死局）', async () => {
     localStorage.clear()
     localStorage.setItem('blog-access-token', OLD_ACCESS)
     handler = async (config) => {
@@ -261,7 +296,25 @@ describe('401 静默续期', () => {
     }
     const post = vi.spyOn(axios, 'post')
 
-    await expect(api.get('/articles')).rejects.toMatchObject({ status: 401 })
+    // 旧实现里这条路径条件不成立，于是既不续期也不清凭证 ——
+    // 表现为"守卫放行、请求全 401、页面永远空白"
+    await expect(api.get('/articles')).rejects.toMatchObject({
+      status: 401,
+      code: 'token_expired',
+    })
     expect(post).not.toHaveBeenCalled()
+    expect(tokenStore.access).toBeNull()
+  })
+
+  it('完全匿名（没有任何凭证）时的 401 仍按普通未授权处理', async () => {
+    localStorage.clear()
+    handler = async (config) => {
+      throw httpError(config, 401, { detail: '需要登录', code: 'unauthorized' })
+    }
+
+    await expect(api.get('/articles')).rejects.toMatchObject({
+      status: 401,
+      code: 'unauthorized',
+    })
   })
 })

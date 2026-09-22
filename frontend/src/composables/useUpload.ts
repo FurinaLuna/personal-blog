@@ -9,7 +9,7 @@
  * multiple / 重置时机不同，DOM 细节留给视图；这里只管「文件 → 上传 → 提示」。
  * 批量上传（部分失败语义）由调用方循环调用并在外层汇总，见 MediaView。
  */
-import { computed, ref, type ComputedRef } from 'vue'
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
 
 import { attachmentApi } from '@/api'
 import { toErrorMessage } from '@/composables/useAsyncData'
@@ -32,6 +32,14 @@ export interface UploadCallOptions {
 export interface Upload {
   /** 是否有上传在进行（并发计数，喂给按钮禁用态） */
   uploading: ComputedRef<boolean>
+  /**
+   * 最近一次上传的进度（0–100）。没有上传进行时保持 0。
+   *
+   * 这个值以前没人用：`attachmentApi.upload` 早早支持了 onProgress 回调，
+   * 但调用方一个都没传 —— 于是 5MB 的封面图在慢网络上只能干等 20 秒超时，
+   * 用户既不知道在上传、也不知道传到哪了。
+   */
+  progress: Ref<number>
   /** 上传单个文件；失败返回 null（已提示），成功返回附件对象 */
   upload: (file: File, options?: UploadCallOptions) => Promise<Attachment | null>
 }
@@ -40,6 +48,7 @@ export function useUpload(options: { maxSizeMB?: number } = {}): Upload {
   const toast = useToast()
   const pending = ref(0)
   const uploading = computed(() => pending.value > 0)
+  const progress = ref(0)
   const maxSizeBytes = options.maxSizeMB ? options.maxSizeMB * 1024 * 1024 : null
 
   async function upload(
@@ -56,8 +65,12 @@ export function useUpload(options: { maxSizeMB?: number } = {}): Upload {
     }
 
     pending.value += 1
+    progress.value = 0
     try {
-      const result = await attachmentApi.upload(file)
+      const result = await attachmentApi.upload(file, (percent) => {
+        progress.value = percent
+      })
+      progress.value = 100
       if (callOptions.successMessage !== false) {
         toast.success(callOptions.successMessage ?? '上传成功')
       }
@@ -71,5 +84,5 @@ export function useUpload(options: { maxSizeMB?: number } = {}): Upload {
     }
   }
 
-  return { uploading, upload }
+  return { uploading, progress, upload }
 }

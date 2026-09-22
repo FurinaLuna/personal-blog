@@ -15,6 +15,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { tokenStore } from '@/api'
+import { setAuthRequiredProbe } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
 declare module 'vue-router' {
@@ -192,6 +193,15 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/SettingsView.vue'),
         meta: { title: '站点设置', requiresAuth: true, requiresAdmin: true, layout: 'admin' },
       },
+      {
+        // 后台内部的兜底：没有它，`/admin/typo` 会落到下面那个顶层兜底路由，
+        // 而那条路由没有 layout，于是**后台的 404 会渲染成前台布局** ——
+        // 侧边栏消失、用户以为自己被登出了。
+        path: ':pathMatch(.*)*',
+        name: 'admin-not-found',
+        component: () => import('@/views/NotFoundView.vue'),
+        meta: { title: '页面不存在', requiresAuth: true, layout: 'admin' },
+      },
     ],
   },
 
@@ -213,26 +223,61 @@ export const router = createRouter({
   },
 })
 
+/**
+ * 守卫里等待「恢复登录态」的上限。
+ *
+ * 为什么需要上限：`/auth/me` 走的是 20s 超时 + 一次 400ms 退避重试的链路
+ * （见 stores/auth.ts 的 attemptRestore），网络半死时最坏能把一次导航按住
+ * 几十秒 —— 用户看到的是"点了链接没反应"。
+ *
+ * 6 秒的取法：正常网络下 `/auth/me` 是几十毫秒；超过 6 秒基本可以判定
+ * "问不出来"，此时**放行**比继续等更有用（页面自己的加载态/错误态会表达问题，
+ * 真的没登录的话后续请求 401 会把用户带回登录页）。
+ */
+const RESTORE_TIMEOUT_MS = 6000
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  const requiresAuth = Boolean(to.meta.requiresAuth)
 
-  // 首次进入需要登录的区域时才去恢复登录态：公开页面不做多余请求
-  const needsIdentity = Boolean(to.meta.requiresAuth) || tokenStore.access !== null
-  if (needsIdentity && !auth.restored) {
-    await auth.restore()
+  if (requiresAuth) {
+    // 需要决定"放不放行"时才等，而且带超时。
+    if (!auth.restored && tokenStore.access) {
+      await Promise.race([
+        auth.restore(),
+        new Promise((resolve) => setTimeout(resolve, RESTORE_TIMEOUT_MS)),
+      ])
+    }
+
+    if (!auth.isAuthenticated) {
+      // 关键区分：`restored === false` 表示"没问到"（网络问题 / 超时），
+      // 不代表"没登录"。把这种情况也踢去登录页，会让网络抖动的用户
+      // 以为自己被登出了 —— 放行，让页面自己表达失败。
+      if (!auth.restored && tokenStore.access) return true
+      return { name: 'login', query: { redirect: to.fullPath } }
+    }
+
+    if (to.meta.requiresAdmin && !auth.isAdmin) {
+      // 已登录但权限不够：留在原页并提示，而不是跳登录页（会让人误以为没登录）
+      return { name: 'home' }
+    }
+
+    return true
   }
 
-  if (to.meta.requiresAuth && !auth.isAuthenticated) {
-    return { name: 'login', query: { redirect: to.fullPath } }
-  }
-
-  if (to.meta.requiresAdmin && !auth.isAdmin) {
-    // 已登录但权限不够：留在原页并提示，而不是跳登录页（会让人误以为没登录）
-    return { name: 'home' }
+  // 公开页面**绝不等待**身份恢复：它只影响顶栏显示什么，不影响内容渲染。
+  // 旧实现是 `await auth.restore()`（只要本地有 token 就等），
+  // 于是"带着 token 打开首页"会被一个后台请求堵住首屏。
+  if (!auth.restored && tokenStore.access) {
+    void auth.restore()
   }
 
   return true
 })
+
+// 告诉 http 层"当前页面是否需要登录"：凭证失效时只有需要登录的页面才整页跳转，
+// 公开页面被 401 不该把访客弹走（详见 api/http.ts 的 forceLogout）。
+setAuthRequiredProbe(() => Boolean(router.currentRoute.value.meta.requiresAuth))
 
 router.afterEach((to) => {
   const base = '个人博客'

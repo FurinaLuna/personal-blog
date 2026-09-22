@@ -109,6 +109,29 @@ onMounted(() => {
       >
         {{ upload.uploading.value ? '上传中…' : '上传文件' }}
       </button>
+
+      <!--
+        上传进度：以前只有一个「上传中…」文案，大图在慢上行要等几十秒，
+        用户既不知道在动、也不知道传到哪了（attachmentApi 早就支持 onProgress，
+        只是没人接线）。
+      -->
+      <div
+        v-if="upload.uploading.value"
+        class="flex items-center gap-2"
+        role="progressbar"
+        :aria-valuenow="upload.progress.value"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-label="上传进度"
+      >
+        <div class="h-1.5 w-24 overflow-hidden rounded-full bg-line">
+          <div
+            class="h-full rounded-full bg-brand transition-[width] duration-200"
+            :style="{ width: `${upload.progress.value}%` }"
+          />
+        </div>
+        <span class="text-xs tabular-nums text-ink-faint">{{ upload.progress.value }}%</span>
+      </div>
       <button
         v-if="auth.isAdmin"
         type="button"

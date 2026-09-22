@@ -8,8 +8,54 @@
 
 ## [Unreleased]
 
+> 本节按 Keep a Changelog 归类：**新增**（新能力）、**已变更**（行为或契约变了）、
+> **已修复**（原来的行为是错的）。2026-09-22 的四轮改动与更早的条目合并在一起，
+> 逐条决策见 [`docs/devlog/2026-09-22.md`](docs/devlog/2026-09-22.md)。
+
+### 新增
+
+- **CI 新增 `e2e-live` 作业**：在 `ubuntu-latest` 上跑 `tools/e2e_live/e2e_run.py`
+  的 SQLite 方言全套 62 条用例（自起 uvicorn、自建临时库、自清理，
+  不需要任何 service），失败时上传逐用例报告；此前这套脚本从未进过流水线
+- **CI 新增 `backend-postgres` 作业**：整套 pytest 跑在真 PostgreSQL 上
+  （service 容器），并在 PG 上执行 `upgrade head → downgrade base → upgrade head`。
+  这条路径此前**从未被执行过**——生产方言的迁移、`pg_trgm` 分支、外键级联
+  全都只有 SQLite 的验证
+- `tools/lib/chrome.mjs`：三个浏览器脚本共用的浏览器探测与启动参数
+  （环境变量覆盖 → 平台候选路径 → `PATH` 查找；失败时打印全部尝试过的位置；
+  含容器/CI 需要的 `--disable-dev-shm-usage`，以及**仅在 root 下**追加的
+  `--no-sandbox`——不无条件削弱沙箱）
+- `make e2e-live`：本地一条命令跑同一套端到端用例
+- **测试用例可按方言互斥**：新增 `sqlite_only` / `pg_only` 两个 marker，
+  由 `conftest.py` 在另一条方言上自动 skip 并写明原因（不假装通过）
+- `tests/conftest.py` 支持 `TEST_DATABASE_URL` 切换测试库方言；
+  PG 上改用 `create_all + TRUNCATE ... RESTART IDENTITY`（每例重建 11 张表
+  的 DDL 要 1.6s，442 例就是十几分钟）
+- `tests/test_password_threading.py`：以**行为**而非实现断言 bcrypt 不阻塞
+  事件循环（同步实现必然失败：实测事件循环调度 0 次）
+- `tests/test_search_indexes.py`：方言分流 + 索引定义 + `ILIKE` 可用性
+  （`enable_seqscan = off` 下验证计划里出现 trgm 索引）
+- `frontend/src/utils/markdown.spec.ts` 补 13 例：覆盖式钓鱼（工具类 / `id` /
+  密码框）、协议相对外链的 `rel`、站内链接不带 `target`、任务列表复选框仍在
+  （安全加固最容易顺手把正常功能一起修坏，这条是护栏）
+- `frontend/src/router/guard.spec.ts` 补 4 例、`frontend/src/api/http.spec.ts`
+  补 4 例：公开页面不阻塞导航、恢复请求挂起超时后放行、后台内部 404 留在后台布局、
+  凭证被判死时通知订阅者、匿名 401 不被说成"登录已过期"
+- 媒体库上传进度条（`role="progressbar"`）：`attachmentApi.upload` 早就支持
+  `onProgress`，但此前没有任何调用方传过
+
 ### 已变更
 
+- `useAction` 的 `success` 支持传函数（成功那一刻才求值）。原因是一个真实缺陷：
+  `success: \`欢迎回来，${auth.displayName}\`` 是**调用前**求值的，
+  而 `displayName` 要等登录成功才有值 —— 登录成功却提示"欢迎回来，访客"
+- 路由守卫不再对公开页面 `await auth.restore()`：身份恢复只影响顶栏显示，
+  不该阻塞内容渲染；需要登录的页面仍会等待，但**加上限**（6s）
+- `forceLogout()` 只在**当前路由需要登录**时才整页跳转（探针由 router 注入，
+  避免 `router → stores/auth → api/http` 的循环依赖）；公开页面只清凭证，
+  并通过 `onCredentialsCleared` 通知 store 清掉内存里的 `user`
+- 上传单独使用 120s 超时（全局 20s 是给 JSON 接口定的：5MB 封面图在 2Mbps
+  上行需要约 20 秒，必然超时）
 - 后端引入 import-linter 分层契约（`backend/.importlinter`），
   模块依赖方向机器可验证，纳入 `make lint`；
   seed 迁出 db 包、`BaseRepository` 收敛存在性检查、分页值对象统一下沉
@@ -85,16 +131,42 @@
   照样能通过 `window.opener` 反向操作本页。现改用 `new URL(href, origin)`
   判同源；顺带把站内链接上作者手写的 `target="_blank"` 去掉（目录/相关文章
   不该开新标签页）
-
-### 已变更
-
+- **路由守卫把「网络抖动」当成「你没登录」**：`/auth/me` 失败（非 401）时
+  `restored` 保持 false，而守卫只要 `isAuthenticated` 为假就跳登录页 ——
+  网络一抖，已登录的作者就"被登出"了。现区分两种"不知道"：401 是确定答案
+  （跳登录页），网络失败/超时是未确定（**放行**，让页面表达失败，下次导航再试）
+- **公开页面被 401 整页踢去登录页**：`forceLogout()` 此前无条件
+  `window.location.replace('/login')`，访客正在读文章时任何一个后台请求
+  （如未读统计）401 就会把他弹走
+- **有 access 无 refresh 时落进 401 死局**：该分支条件不成立，于是既不续期
+  也不清凭证，表现为"守卫放行、请求全 401、页面永远空白"。现按"凭证已死"
+  处理（刻意带 `tokenStore.access` 判断：完全匿名的 401 仍是普通未授权）
+- **顶栏显示已登录、请求全 401**：http 层只清 token，内存里的 `user` 还在，
+  而公开页面又不再整页跳转 —— "没登录却显示昵称头像"会一直挂着
+- **后台 404 掉回前台布局**：`/admin/typo` 落到顶层兜底路由（没有 layout），
+  侧边栏消失、用户以为被登出。现后台内部有自己的兜底路由，保留 admin 布局
+- **上传没有进度、且用 20 秒超时**：见上一条"已变更"里的超时说明；
+  进度条此前完全没接线
+- **PostgreSQL 上的搜索是「假加速」**：`articles_fts` 是 SQLite 专有虚拟表，
+  非 SQLite 方言上 `fulltext_available()` 恒为 False，于是生产库
+  （compose 用 postgres:16）的搜索永远是 `title/summary/content_md ILIKE '%kw%'`
+  三列**全表扫描** + 同条件 COUNT。现补 `pg_trgm` 扩展与 3 条 GIN
+  （`gin_trgm_ops`）索引，迁移 `a7c1e9d4b2f8`；实测 5 万篇语料下
+  7 字关键词从 181ms 降到 6.6ms，3 字以内 PG 仍选顺序扫描（三元组索引的
+  固有粒度限制，与 FTS5 trigram 同一条限制，已写进文档不夸大）
+- **搜索端点无限流**：它是唯一"一次请求 = 一次全表扫描 + 一次 COUNT"的读接口，
+  可被脚本廉价放大；现 30 次/分（真人不可能触发）
+- **bcrypt 阻塞事件循环**：`hash_password` / `verify_password` 是同步 CPU 调用
+  （cost=12，实测 185ms/次），而部署是单 worker —— 一次登录能让所有并发请求
+  排队 185ms。现业务路径统一走 `asyncio.to_thread` 包装，
+  实测哈希期间事件循环从「0 次调度」变为「13 次调度」
+- **测试数据写超列长度**：`test_stats.py` 造 `ip_hash` 用了 65 字符而列是
+  `varchar(64)` —— SQLite 不校验长度所以长期没暴露，PG 上直接
+  `StringDataRightTruncationError`
 - **CI 里的端到端作业从来不可能通过**：`tools/interaction-check.mjs` 把
   Chrome 路径写死成 `C:/Program Files/Google/Chrome/Application/chrome.exe`，
   而该作业跑在 `ubuntu-latest` 上 —— 于是「交互验证」这一步必然失败，
-  它后面的「全功能回归」（41 项，本仓库最强的浏览器防线）因步骤中断**从未被执行**。
-  现抽出 `tools/lib/chrome.mjs` 统一跨平台探测：环境变量覆盖
-  （`CHROME_PATH` / `CHROME_BIN` / `PUPPETEER_EXECUTABLE_PATH`）→
-  Windows/macOS/Linux 候选路径 → `PATH` 查找，失败时打印全部尝试过的位置
+  它后面的「全功能回归」（41 项，本仓库最强的浏览器防线）因步骤中断**从未被执行**
 - **`tools/e2e_live/e2e_run.py` 写死 Windows 解释器**：`PY` 曾是
   `backend/.venv/Scripts/python.exe`，Linux 上直接 `FileNotFoundError`，
   导致 62 条端到端用例只能在作者本机运行；现改为 `sys.executable`
@@ -104,52 +176,10 @@
 - **覆盖率没有门槛**：`--cov` 只在本地手工跑过，CI 里 `pytest -q` 不带覆盖率，
   82% 这个数字没有任何机制阻止它下滑；现于 `pyproject.toml` 设
   `[tool.coverage.report] fail_under = 80`，CI 与 `make test-cov` 都带上 `--cov`
-
-- **PostgreSQL 上的搜索是「假加速」**：`articles_fts` 是 SQLite 专有虚拟表，
-  非 SQLite 方言上 `fulltext_available()` 恒为 False，于是生产库
-  （compose 用 postgres:16）的搜索永远是 `title/summary/content_md ILIKE '%kw%'`
-  三列**全表扫描** + 同条件 COUNT。现补 `pg_trgm` 扩展与 3 条 GIN
-  （`gin_trgm_ops`）索引，迁移 `a7c1e9d4b2f8`；实测 5 万篇语料下
-  7 字关键词从 181ms 降到 6.6ms，3 字以内 PG 仍选顺序扫描（三元组索引的
-  固有粒度限制，与 FTS5 trigram 同一条限制，已写进文档不夸大）
-- **搜索端点限流**：它是唯一"一次请求 = 一次全表扫描 + 一次 COUNT"的读接口，
-  此前不在限流名单里，可被脚本廉价放大；现 30 次/分（真人不可能触发）
-- **bcrypt 阻塞事件循环**：`hash_password` / `verify_password` 是同步 CPU 调用
-  （cost=12，实测 185ms/次），而部署是单 worker —— 一次登录能让所有并发请求
-  排队 185ms。现业务路径统一走 `asyncio.to_thread` 包装，
-  实测哈希期间事件循环从「0 次调度」变为「13 次调度」
-- **测试数据写超列长度**：`test_stats.py` 造 `ip_hash` 用了 65 字符而列是
-  `varchar(64)` —— SQLite 不校验长度所以长期没暴露，PG 上直接
-  `StringDataRightTruncationError`
 - **README 数字与实物不一致**：模型表数「10 张」（目录树）/「12 张业务表」
   （基线表）实为 **11 张**；迁移 8 条实为 9 条；测试基线 442 已过时
-
-### 新增
-
-- **CI 新增 `backend-postgres` 作业**：整套 pytest 跑在真 PostgreSQL 上
-  （service 容器），并在 PG 上执行 `upgrade head → downgrade base → upgrade head`。
-  这条路径此前**从未被执行过**——生产方言的迁移、`pg_trgm` 分支、外键级联
-  全都只有 SQLite 的验证
-- **测试用例可按方言互斥**：新增 `sqlite_only` / `pg_only` 两个 marker，
-  由 `conftest.py` 在另一条方言上自动 skip 并写明原因（不假装通过）
-- `tests/conftest.py` 支持 `TEST_DATABASE_URL` 切换测试库方言；
-  PG 上改用 `create_all + TRUNCATE ... RESTART IDENTITY`（每例重建 11 张表
-  的 DDL 要 1.6s，442 例就是十几分钟）
-- `tests/test_password_threading.py`：以**行为**而非实现断言 bcrypt 不阻塞
-  事件循环（同步实现必然失败：实测事件循环调度 0 次）
-- `tests/test_search_indexes.py`：方言分流 + 索引定义 + `ILIKE` 可用性
-  （`enable_seqscan = off` 下验证计划里出现 trgm 索引）
-- `frontend/src/utils/markdown.spec.ts` 补 13 例：覆盖式钓鱼（工具类 / `id` /
-  密码框）、协议相对外链的 `rel`、站内链接不带 `target`、任务列表复选框仍在
-  （安全加固最容易顺手把正常功能一起修坏，这条是护栏）
-
-- **CI 新增 `e2e-live` 作业**：在 `ubuntu-latest` 上跑 `tools/e2e_live/e2e_run.py`
-  的 SQLite 方言全套 62 条用例（自起 uvicorn、自建临时库、自清理，
-  不需要任何 service），失败时上传逐用例报告；此前这套脚本从未进过流水线
-- `make e2e-live`：本地一条命令跑同一套端到端用例
-- `tools/lib/chrome.mjs`：三个浏览器脚本共用的浏览器探测与启动参数
-  （含容器/CI 需要的 `--disable-dev-shm-usage`，以及**仅在 root 下**追加的
-  `--no-sandbox`——不无条件削弱沙箱）
+  （现为 SQLite 452 passed / 5 skipped、PostgreSQL 456 passed / 1 skipped）
+- 顺手修掉 `stores/auth.ts` 里 `defineStore(...) {` 与下一行粘连的排版
 
 - **`ADMIN_EMAIL` 不校验导致运行时静默半残**：seed 写入时不校验邮箱，
   读取时才被 `SiteProfileRead` / `UserRead` 的 `EmailStr` 拦下 →

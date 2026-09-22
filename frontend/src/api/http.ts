@@ -174,7 +174,37 @@ function shouldSkipRefresh(config?: AxiosRequestConfig): boolean {
 }
 
 /**
- * 强制登出：清掉凭证并回到登录页。
+ * 「当前页面是否需要登录」的探针，由 router 在创建后注入（见 router/index.ts）。
+ *
+ * 为什么不直接 import router：会形成
+ * `router → stores/auth → api/auth → api/http → router` 的循环依赖，
+ * 打包器能容忍、运行时却会在某个加载顺序下拿到未初始化的值。
+ * 注入式还顺带让这个行为可以被测试直接驱动，不需要真的挂一个 router。
+ */
+let currentRouteRequiresAuth: () => boolean = () => false
+
+export function setAuthRequiredProbe(probe: () => boolean): void {
+  currentRouteRequiresAuth = probe
+}
+
+/**
+ * 「凭证被判死」的订阅点：清完 token 后触发，让 auth store 把 `user` 也清掉。
+ *
+ * 没有它会出现审计里描述的那种"没有出口的状态"：token 没了、顶栏还显示着
+ * 登录态、页面上的每个请求都 401。http 层不能直接 import store（循环依赖），
+ * 所以用这个单向信号。
+ */
+const credentialsClearedHandlers = new Set<() => void>()
+
+export function onCredentialsCleared(handler: () => void): () => void {
+  credentialsClearedHandlers.add(handler)
+  return () => {
+    credentialsClearedHandlers.delete(handler)
+  }
+}
+
+/**
+ * 强制登出：清掉凭证，必要时回到登录页。
  *
  * 抽成函数是因为有两条路径需要它：续期失败，以及**续期成功但重放请求仍然 401**。
  * 后者以前走不到这里，会出现「token 还在、user 还在、路由守卫继续放行，
@@ -184,10 +214,23 @@ function shouldSkipRefresh(config?: AxiosRequestConfig): boolean {
  * 异常冒泡到外层的 catch 又会调用一次。重复 `replace` 肉眼看不出差别，
  * 但同一副作用触发两遍终归不稳（且在测试/离线场景下会放大），所以用
  * 「凭证是不是已经清过」做闸门：没有凭证说明刚刚已经执行过，直接返回。
+ *
+ * **只有"当前页面本来就需要登录"时才整页跳转**：公开页面上某个后台请求 401
+ * （比如顶栏没渲染出来的未读统计）不该把正在读文章的访客弹到登录页——
+ * 那会让人以为"站点坏了"。公开页只清凭证 + 通知 store，页面自己按未登录渲染。
  */
 function forceLogout(): void {
   if (!tokenStore.access && !tokenStore.refresh) return
   tokenStore.clear()
+  for (const handler of credentialsClearedHandlers) {
+    try {
+      handler()
+    } catch {
+      // 单个订阅者出错不能影响登出本身
+    }
+  }
+
+  if (!currentRouteRequiresAuth()) return
   // 用 replace 而不是 push：登出后不该还能按返回键回到需要登录的页面
   if (!window.location.pathname.startsWith('/login')) {
     const redirect = encodeURIComponent(window.location.pathname + window.location.search)
@@ -226,6 +269,19 @@ http.interceptors.response.use(
         } finally {
           refreshPromise = null
         }
+      }
+
+      if (!shouldSkipRefresh(original) && !tokenStore.refresh && tokenStore.access) {
+        // 边界：**有** access 但**没有** refresh token 可用（本地存储被清、
+        // 无痕模式、手动删过 key）时，上面的分支条件不成立，旧代码会直接落到
+        // `normalizeError` 返回 401 —— 于是"守卫放行、请求全 401、
+        // 页面上什么都没有"这个死局又回来了。这里同样按"凭证已死"处理。
+        //
+        // 注意必须带 `tokenStore.access`：完全匿名（一个凭证都没有）的 401
+        // 就是普通的未授权，不该说成"登录已过期"——那会让新访客看到
+        // 莫名其妙的"过期"提示。
+        forceLogout()
+        return await Promise.reject(new ApiError('登录已过期，请重新登录', 401, 'token_expired'))
       }
     }
 

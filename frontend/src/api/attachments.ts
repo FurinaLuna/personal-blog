@@ -3,6 +3,15 @@ import { api, http } from './http'
 
 import type { Attachment, BackfillResult, Page } from '@/types'
 
+/**
+ * 上传的超时时间。
+ *
+ * 不能用全局的 20s：那是给 JSON 接口定的。一张 5MB 的封面图在 2Mbps 的上行
+ * 需要约 20 秒，慢一点的网络必然超时——而超时后浏览器已经发出去的数据白费，
+ * 用户只能重来。服务端有 `MAX_UPLOAD_SIZE` 兜底，这里给足时间更合理。
+ */
+const UPLOAD_TIMEOUT_MS = 120_000
+
 export const attachmentApi = {
   /**
    * 上传文件。
@@ -14,6 +23,7 @@ export const attachmentApi = {
     const form = new FormData()
     form.append('file', file)
     const { data } = await http.post<Attachment>('/attachments/upload', form, {
+      timeout: UPLOAD_TIMEOUT_MS,
       onUploadProgress: (event) => {
         if (!onProgress || !event.total) return
         onProgress(Math.round((event.loaded / event.total) * 100))

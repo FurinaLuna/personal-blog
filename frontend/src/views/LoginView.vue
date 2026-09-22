@@ -32,7 +32,10 @@ async function submit(): Promise<void> {
 
   errorMessage.value = ''
   const ok = await action.run(() => auth.login(form.value.username.trim(), form.value.password), {
-    success: `欢迎回来，${auth.displayName}`,
+    // 传函数而不是模板串：`欢迎回来，${auth.displayName}` 是**调用前**求值的，
+    // 而 displayName 要等 login 成功、user 落库之后才有值 —— 于是登录成功
+    // 却提示"欢迎回来，访客"。委托给 useAction 在成功那一刻求值。
+    success: () => `欢迎回来，${auth.displayName}`,
     // 登录失败的错误要贴在表单里而不是弹 toast：用户的下一个动作是改输入
     silent: true,
     onError: (error) => {
