@@ -27,6 +27,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { chromeArgs, findChrome } from './lib/chrome.mjs'
+
 const BASE = (process.argv[2] ?? 'http://127.0.0.1:5173').replace(/\/$/, '')
 const OUT = process.argv[3] ?? join(tmpdir(), 'blog-full')
 const PORT = Number(process.env.FULL_CHECK_PORT ?? 9250)
@@ -34,14 +36,6 @@ const PORT = Number(process.env.FULL_CHECK_PORT ?? 9250)
 const RUN = `E2E-${Date.now().toString(36)}`
 const ADMIN = { username: 'admin', password: 'admin123456' }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-const CHROME_CANDIDATES = [
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-]
 
 const results = []
 const registry = { articles: [], categories: [], tags: [], users: [], attachments: [], comments: [] }
@@ -77,11 +71,7 @@ async function getWsUrl(port) {
   throw new Error('CDP 未就绪')
 }
 
-const chromePath = CHROME_CANDIDATES.find((p) => existsSync(p))
-if (!chromePath) {
-  console.error('未找到 Chrome/Edge，无法运行')
-  process.exit(2)
-}
+const chromePath = findChrome()
 
 /**
  * 重新登录并刷新模块级 token。
@@ -226,16 +216,12 @@ async function cleanup() {
 
 const chrome = spawn(
   chromePath,
-  [
-    '--headless=new',
-    '--disable-gpu',
-    '--no-first-run',
-    `--remote-debugging-port=${PORT}`,
-    // 必须每次唯一：复用会带上历史登录态（踩过）
-    `--user-data-dir=${join(tmpdir(), `full-check-${RUN}`)}`,
-    '--window-size=1440,1200',
-    'about:blank',
-  ],
+  // 每次唯一 profile：复用会带上历史登录态（踩过）
+  chromeArgs({
+    port: PORT,
+    userDataDir: join(tmpdir(), `full-check-${RUN}`),
+    windowSize: '1440,1200',
+  }),
   { stdio: 'ignore' },
 )
 

@@ -7,11 +7,12 @@
  * 3. 文章状态切换 → toast「已转为草稿」+ 状态徽标变化
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+import { chromeArgs, findChrome } from './lib/chrome.mjs'
+
 // 目标站点可用 INTERACTION_BASE 覆盖。
 // 需要它是因为本脚本与另外两个脚本的入参语义不同：smoke / full-check 的
 // argv[2] 是「要测哪个站点」，而这里的 argv[2] 是「截图放哪」。
@@ -35,11 +36,16 @@ async function getWsUrl() {
   throw new Error('CDP not ready')
 }
 
-const chrome = spawn(CHROME, [
-  '--headless=new', '--disable-gpu', '--no-first-run',
-  `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(tmpdir(), `interaction-profile-${Date.now()}`)}`,
-  '--window-size=1440,1000', 'about:blank',
-], { stdio: 'ignore' })
+const chromePath = findChrome()
+const chrome = spawn(
+  chromePath,
+  chromeArgs({
+    port: PORT,
+    userDataDir: join(tmpdir(), `interaction-profile-${Date.now()}`),
+    windowSize: '1440,1000',
+  }),
+  { stdio: 'ignore' },
+)
 
 
 /** 轮询等待某个表达式为真（替代固定 sleep：dev server 冷编译时长的差异很大）。 */
@@ -59,7 +65,6 @@ const record = (name, ok, detail = '') => {
 }
 
 try {
-  if (!existsSync(CHROME)) throw new Error('chrome not found')
   mkdirSync(OUT, { recursive: true })
   const ws = new WebSocket(await getWsUrl())
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })

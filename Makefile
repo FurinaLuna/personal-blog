@@ -23,9 +23,9 @@ LINT_IMPORTS := $(abspath $(VENV_PY)) scripts/lint_imports.py
 
 .DEFAULT_GOAL := help
 .PHONY: help install install-backend install-frontend dev dev-backend dev-frontend \
-        test test-frontend test-all test-cov lint lint-frontend fmt fmt-check check \
-        smoke interaction full-check \
-        migrate migration seed backup backup-list build build-preview \
+        test test-frontend test-all test-cov lint lint-frontend fmt fmt-check check typecheck \
+        smoke interaction full-check e2e-live \
+        migrate migration migrate-down seed backup backup-list build build-preview \
         docker-config docker-up docker-down docker-logs docker-migrate clean
 
 help: ## 显示所有可用命令
@@ -103,6 +103,9 @@ full-check: ## 全功能回归 + 数据基线核对（会写数据但自清理�
 	@curl -fsS http://127.0.0.1:8000/health >/dev/null || (echo "后端未运行，请先 make dev" && exit 1)
 	@curl -fsS http://127.0.0.1:5173/ >/dev/null || (echo "前端未运行，请先 make dev" && exit 1)
 	node tools/full-check.mjs http://127.0.0.1:5173 ./shots/full
+
+e2e-live: ## 端到端真实链路（自起进程与临时库，不需要先 make dev；CI 跑的就是它）
+	$(abspath $(VENV_PY)) tools/e2e_live/e2e_run.py
 
 # ---------------------------------------------------------------- 数据库
 

@@ -45,7 +45,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          cache-dependency-path: backend/requirements.lock
 
       # 用锁文件而不是 `pip install -e ".[dev]"`：后者只给了下界，
       # 同一个提交在不同时间会装出不同的环境 —— 本项目实际已经漂到
@@ -70,8 +70,10 @@ jobs:
       - name: 分层契约（import-linter）
         run: python scripts/lint_imports.py
 
-      - name: pytest
-        run: pytest -q
+      # 带 --cov：覆盖率门槛写在 pyproject 的 [tool.coverage.report] fail_under = 80。
+      # 不带 --cov 时门槛不生效，所以这里必须带，否则它就只是一行注释。
+      - name: pytest（含覆盖率门槛）
+        run: pytest -q --cov=app --cov-report=term-missing
 
   frontend:
     name: 前端 · 类型 + 单测 + 构建
@@ -120,7 +122,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          cache-dependency-path: backend/requirements.lock
 
       - name: 安装依赖
         run: |
@@ -144,6 +146,57 @@ jobs:
           JWT_SECRET_KEY: ci-only-secret-key-not-for-production
           DATABASE_URL: sqlite+aiosqlite:///./ci_migration.db
           SEED_DEMO_DATA: 'false'
+
+  e2e-live:
+    # tools/e2e_live 是本仓库最强的一张回归网（SQLite 62 条 / PG 61 条，
+    # 每条都真起进程、真走 HTTP、真直连数据库复核），但它此前**只在作者本机跑过**：
+    # e2e_run.py 里写死了 `backend/.venv/Scripts/python.exe`——一个 Windows 专有路径，
+    # Linux runner 上连启动都会 FileNotFoundError。也就是说，"最强防线"恰恰是
+    # 唯一没被自动化执行的那条。
+    #
+    # 这一版把解释器改成 sys.executable 之后，脚本在任何装了 requirements.lock 的
+    # 环境里都能跑。SQLite 方言不需要任何外部服务，所以直接进 CI；
+    # PG 方言由 backend-postgres job（pytest 跑在真 PG 上）与本地
+    # `E2E_DB=postgres` 两级覆盖。
+    name: 端到端 · 真实链路（SQLite 方言）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+
+      - name: 安装依赖（锁定版本）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install --no-deps -e .
+
+      # 脚本自己起 uvicorn、自己用 alembic upgrade head 建库、自己清理，
+      # 不需要 service、也不需要预先起任何进程。
+      - name: 执行端到端用例（SQLite）
+        working-directory: .
+        env:
+          E2E_DB: sqlite
+        run: python tools/e2e_live/e2e_run.py
+
+      # 报告默认写在 tools/e2e_live/reports/（gitignore），失败时上传才能看到
+      # 逐用例的失败原因与复现步骤。
+      - name: 上传报告（失败现场）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-live-report
+          path: tools/e2e_live/reports/
+          retention-days: 7
+          if-no-files-found: ignore
 
   audit:
     # 依赖漏洞是"上线时才发现、但上线前就能查出来"的典型。前端有 npm audit
@@ -198,7 +251,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          cache-dependency-path: backend/requirements.lock
 
       - uses: actions/setup-node@v4
         with:

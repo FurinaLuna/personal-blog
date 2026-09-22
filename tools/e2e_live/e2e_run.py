@@ -1,14 +1,16 @@
 """personal-blog 端到端（E2E）测试执行器。
 
 设计原则：**真实跑通，不做占位验证**。
-- 真实进程：用 backend/.venv 的解释器启动独立 uvicorn 实例。
+- 真实进程：用**当前解释器**（backend 的 venv，或 CI 里装好 lock 的 python）启动独立 uvicorn 实例。
 - 真实数据库：临时目录新建空 SQLite，**用 alembic upgrade head 建表**（与生产同路径），
   而不是 ORM 的 create_all，保证被测结构与真实部署一致。
-- 真实链路：所有断言走 HTTP；落库结果**直连 sqlite 二次校验**。
+- 真实链路：所有断言走 HTTP；落库结果**直连数据库二次校验**。
 - 不污染项目：不使用 backend/blog.db 与 backend/storage，测试前后对真实库做指纹比对。
 
-用法：
-    backend/.venv/Scripts/python.exe tools/e2e_live/e2e_run.py
+用法（Windows / macOS / Linux 通用，见 `_interpreter()`）：
+    backend/.venv/Scripts/python.exe tools/e2e_live/e2e_run.py    # Windows
+    backend/.venv/bin/python tools/e2e_live/e2e_run.py            # macOS / Linux
+    python tools/e2e_live/e2e_run.py                              # CI（依赖装在当前解释器里）
 
 产出：
     tools/e2e_live/reports/e2e-report-<时间戳>.md      可读报告（含失败原因、证据、复现步骤）
@@ -35,7 +37,28 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
-PY = BACKEND / ".venv" / "Scripts" / "python.exe"
+
+
+def _interpreter() -> Path:
+    """启动被测服务用的解释器。
+
+    优先用**当前解释器**：这个脚本是「用哪个 python 跑，就用哪个 python 起服务」，
+    在 Windows（`.venv/Scripts/python.exe`）、macOS/Linux（`.venv/bin/python`）、
+    CI（系统 python + requirements.lock）三种情况下都成立。
+
+    以前这里写死了 `backend/.venv/Scripts/python.exe` —— 一个 Windows 专有路径。
+    后果不是"报错得不够友好"，而是这个脚本**根本没法在 CI 里跑**：
+    Linux 上那个路径不存在，subprocess 直接 FileNotFoundError。最强的回归网
+    因此只存在于作者本机。
+    """
+    if sys.executable:
+        return Path(sys.executable)
+    # 兜底：理论上不会走到（sys.executable 只在嵌入式解释器里为空）
+    fallback = BACKEND / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return fallback
+
+
+PY = _interpreter()
 REPORTS = Path(__file__).resolve().parent / "reports"
 
 ADMIN_USER = "admin"

@@ -73,6 +73,33 @@
 
 ### 已修复
 
+- **CI 里的端到端作业从来不可能通过**：`tools/interaction-check.mjs` 把
+  Chrome 路径写死成 `C:/Program Files/Google/Chrome/Application/chrome.exe`，
+  而该作业跑在 `ubuntu-latest` 上 —— 于是「交互验证」这一步必然失败，
+  它后面的「全功能回归」（41 项，本仓库最强的浏览器防线）因步骤中断**从未被执行**。
+  现抽出 `tools/lib/chrome.mjs` 统一跨平台探测：环境变量覆盖
+  （`CHROME_PATH` / `CHROME_BIN` / `PUPPETEER_EXECUTABLE_PATH`）→
+  Windows/macOS/Linux 候选路径 → `PATH` 查找，失败时打印全部尝试过的位置
+- **`tools/e2e_live/e2e_run.py` 写死 Windows 解释器**：`PY` 曾是
+  `backend/.venv/Scripts/python.exe`，Linux 上直接 `FileNotFoundError`，
+  导致 62 条端到端用例只能在作者本机运行；现改为 `sys.executable`
+- **CI 的 pip 缓存键指向错误的文件**：`cache-dependency-path` 写的是
+  `backend/pyproject.toml`，而实际安装的是 `requirements.lock`，
+  锁文件更新时缓存不会失效（三个 job 全部修正）
+- **覆盖率没有门槛**：`--cov` 只在本地手工跑过，CI 里 `pytest -q` 不带覆盖率，
+  82% 这个数字没有任何机制阻止它下滑；现于 `pyproject.toml` 设
+  `[tool.coverage.report] fail_under = 80`，CI 与 `make test-cov` 都带上 `--cov`
+
+### 新增
+
+- **CI 新增 `e2e-live` 作业**：在 `ubuntu-latest` 上跑 `tools/e2e_live/e2e_run.py`
+  的 SQLite 方言全套 62 条用例（自起 uvicorn、自建临时库、自清理，
+  不需要任何 service），失败时上传逐用例报告；此前这套脚本从未进过流水线
+- `make e2e-live`：本地一条命令跑同一套端到端用例
+- `tools/lib/chrome.mjs`：三个浏览器脚本共用的浏览器探测与启动参数
+  （含容器/CI 需要的 `--disable-dev-shm-usage`，以及**仅在 root 下**追加的
+  `--no-sandbox`——不无条件削弱沙箱）
+
 - **`ADMIN_EMAIL` 不校验导致运行时静默半残**：seed 写入时不校验邮箱，
   读取时才被 `SiteProfileRead` / `UserRead` 的 `EmailStr` 拦下 →
   `/site/profile` 与 `/auth/me` 一律 500，而服务照常启动且无任何告警

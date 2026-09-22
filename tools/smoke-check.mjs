@@ -21,21 +21,15 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { chromeArgs, findChrome } from './lib/chrome.mjs'
 
 const BASE_URL = process.argv[2] ?? 'http://127.0.0.1:5173'
 const OUT_DIR = process.argv[3] ?? join(tmpdir(), 'blog-smoke')
 const DEBUG_PORT = 9333
-
-const CHROME_CANDIDATES = [
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-]
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -242,22 +236,11 @@ function record(name, ok, detail) {
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true })
 
-  const chromePath = CHROME_CANDIDATES.find((candidate) => existsSync(candidate))
-  if (!chromePath) throw new Error('找不到 Chrome / Edge 可执行文件')
-
+  const chromePath = findChrome()
   const userDataDir = join(tmpdir(), `blog-smoke-profile-${Date.now()}`)
   const chrome = spawn(
     chromePath,
-    [
-      '--headless=new',
-      `--remote-debugging-port=${DEBUG_PORT}`,
-      `--user-data-dir=${userDataDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      'about:blank',
-    ],
+    chromeArgs({ port: DEBUG_PORT, userDataDir, hideScrollbars: true }),
     { stdio: 'ignore' },
   )
 
