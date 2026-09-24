@@ -175,6 +175,17 @@ function httpGet(url, { headers = {}, insecure = false, timeoutMs = 15000 } = {}
 }
 
 /**
+ * GitHub Actions 注解的转义规则：`%` → `%25`、换行 → `%0A`、回车 → `%0D`。
+ * 顺序不能反：先把 `%` 转义掉再做换行替换，否则会把刚生成的 `%0A` 里的 `%` 又转一遍。
+ */
+function escapeAnnotation(value) {
+  return text(value)
+    .replaceAll('%', '%25')
+    .replaceAll(String.fromCharCode(13), '%0D')
+    .replaceAll(String.fromCharCode(10), '%0A')
+}
+
+/**
  * spawnSync 在 `encoding: null`（要往子进程 stdin 灌二进制的那条路径，
  * 也就是恢复演练）下把 stdout/stderr 返回成 Buffer 而不是字符串。
  * 断言里直接 `.trim()` 会抛 "xxx.trim is not a function"，而这条断言本来
@@ -741,6 +752,20 @@ async function main() {
   if (failed.length) {
     console.log('\n失败项:')
     for (const item of failed) console.log(`  - ${item.name} ${item.detail}`)
+    // 失败现场也写进 GitHub 注解。
+    // 为什么非要多这一步：Actions 的**日志**只有协作者能下载（匿名 API 会回
+    // "Must have admin rights"），而**注解**是公开可读的。这一层验证恰恰最容易
+    // "我这边绿、CI 上挂"（第一次就是这样：脚本隐式依赖了本地的 .env），
+    // 让失败原因出现在注解里，排查时就不必先找人要日志。
+    if (process.env.GITHUB_ACTIONS) {
+      for (const item of failed) {
+        console.log(`::error title=部署验证失败：${item.name}::${escapeAnnotation(item.detail)}`)
+      }
+      const logs = collectDiagnostics()
+      if (logs) {
+        console.log(`::error title=部署验证失败：容器日志::${escapeAnnotation(logs.slice(0, 12000))}`)
+      }
+    }
     process.exitCode = 1
   }
   if (crashed) console.error('\n异常:', crashed.message)
