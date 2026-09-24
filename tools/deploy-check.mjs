@@ -196,9 +196,26 @@ function text(value) {
   return typeof value === 'string' ? value : String(value)
 }
 
+/**
+ * 发一条"给人看但不参与判定"的信息。
+ *
+ * 在 CI 上走 `::notice::`：它会变成**公开可读的注解**（Actions 日志本身要协作者权限）。
+ * 本地就是普通一行输出，不打扰人。
+ */
+function describe(message) {
+  const line = String(message ?? '')
+  if (process.env.GITHUB_ACTIONS) console.log(`::notice title=部署验证::${escapeAnnotation(line)}`)
+  console.log(line)
+}
+
 function record(name, ok, detail = '') {
   results.push({ name, ok: Boolean(ok), detail })
   console.log(`${ok ? '✅' : '❌'} ${name}${detail ? `  ${detail}` : ''}`)
+  if (!ok && process.env.GITHUB_ACTIONS) {
+    // 双保险：失败的断言既发 ::error::（失败注解），也发 ::notice::
+    // （有些场景下 error 注解会被去重或截断，notice 至少保证信息在）
+    console.log(`::notice title=断言失败：${name}::${escapeAnnotation(detail)}`)
+  }
   return Boolean(ok)
 }
 
@@ -707,14 +724,39 @@ function writeReport(failed) {
 }
 
 async function main() {
-  const version = docker(['version', '--format', '{{.Server.Version}}'])
-  if (version.code !== 0) {
-    console.error('需要可用的 Docker（含 compose v2）：', version.err.trim() || version.spawnError?.message)
+  // 环境自检：这几行在 CI 上会用 ::notice:: 发出去，成为**公开可读的注解** ——
+  // 排查"我这边绿、CI 上挂"时，第一步要确认的就是 runner 上的工具版本与守护进程状态，
+  // 而 Actions 的完整日志匿名读不到（见 escapeAnnotation 附近的说明）。
+  const nodeVersion = process.version
+  const composeVersion = docker(['compose', 'version', '--short'])
+  // 守护进程可能要等一会儿才可连（CI runner 上 Docker 是懒启动的，
+  // 实测第一次跑 CI 时这一步挂了 ~60s 然后失败，而当时的代码是"打印一行就 return"，
+  // 于是远端只看到"步骤失败"、报告为空、注解为空 —— 排查成本全落在猜上）。
+  let serverVersion = docker(['version', '--format', '{{.Server.Version}}'])
+  for (let attempt = 1; attempt <= 6 && serverVersion.code !== 0; attempt += 1) {
+    console.log(`Docker 守护进程尚未就绪（第 ${attempt} 次），10s 后重试…`)
+    await sleep(10000)
+    serverVersion = docker(['version', '--format', '{{.Server.Version}}'])
+  }
+  const daemon = serverVersion.code === 0 ? serverVersion.out.trim() : '（取不到）'
+  describe(`环境：node ${nodeVersion}，docker compose ${composeVersion.out.trim() || '?'}，daemon ${daemon}`)
+
+  if (serverVersion.code !== 0) {
+    // ⚠️ 这条路径以前是「打印一行 → 直接 return」：不产出报告、不产出注解，
+    // 于是远端只看到"步骤失败"而没有任何原因（第一次 CI 失败就是这个形态：
+    // 91 秒的作业、报告为空、注解里什么都没有）。现在所有退出路径都自报。
+    const reason = serverVersion.err.trim() || serverVersion.spawnError?.message || '未知原因'
+    record('Docker 守护进程可用', false, reason.slice(0, 300))
+    describe(`docker version 退出码 ${serverVersion.code}：${reason.slice(0, 800)}`)
+    const info = docker(['info', '--format', '{{.ServerVersion}} / driver={{.Driver}} / rootless={{.SecurityOptions}}'])
+    describe(`docker info：${(info.out + info.err).trim().slice(0, 500) || '（无输出）'}`)
+    const which = run('sh', ['-c', 'command -v docker; ls -la /var/run/docker.sock 2>&1 | head -2'])
+    describe(`docker 位置与 socket：${(which.out + which.err).trim().slice(0, 400)}`)
     process.exitCode = 1
     return
   }
 
-  console.log(`部署产物验证 · 项目 ${PROJECT} · Docker ${version.out.trim()}`)
+  console.log(`部署产物验证 · 项目 ${PROJECT} · Docker ${serverVersion.out.trim()}`)
   console.log(`临时目录 ${TMP}（备份 ${BACKUP_DIR}，证书 ${CERTS_DIR}）`)
 
   const createdEnvFile = ensureEnvFile()
