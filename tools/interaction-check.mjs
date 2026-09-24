@@ -156,7 +156,72 @@ try {
   record('登录失败：未弹 toast（silent 语义）', bad.toastCount === 0, `toast 元素 ${bad.toastCount ?? '未知'} 个`)
   await shot('01-login-error')
 
-  // ---------- 2) 登录成功 → 评论审核 ----------
+  // ---------- 2) 匿名发表留言（未登录状态，正是这条路径要覆盖的形态）----------
+  //
+  // 为什么放这里而不是 full-check：full-check 全程以站长身份登录，而公开页在登录后
+  // 显示的是「以 XX 的身份留言」（站长发的会直接过审），于是
+  // 「匿名提交 → 进入待审队列 → 公开列表里看不到」这条路径在那里根本走不到。
+  //
+  // 这条用例会**留下一条待审留言**（匿名没有删除权限，清不掉）——
+  // 由 full-check 的 cleanup 按 `E2E` 命名约定兜底扫掉（那边有注释说明）。
+  await send('Page.navigate', { url: `${BASE}/guestbook` })
+  await sleep(1400)
+  const guestbookPost = await evalJs(`(async () => {
+    const set = (label, value) => {
+      const el = document.querySelector(\`[aria-label="\${label}"]\`)
+      if (!el) return false
+      el.value = value
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      return true
+    }
+    if (!set('昵称（必填）', 'E2E 访客')) return { ok: false, reason: '找不到昵称输入框' }
+    if (!set('留言内容', 'E2E interaction-check 待审留言')) {
+      return { ok: false, reason: '找不到留言输入框' }
+    }
+    const submit = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '发表留言')
+    if (!submit) return { ok: false, reason: '找不到「发表留言」按钮' }
+    submit.click()
+    await new Promise(r => setTimeout(r, 1800))
+    return {
+      ok: true,
+      toast: document.body.innerText.includes('已提交，等待站长审核'),
+      notice: document.body.innerText.includes('站长审核通过后会显示在下方'),
+      listed: document.body.innerText.includes('E2E interaction-check 待审留言'),
+    }
+  })()`, true)
+  record(
+    '匿名留言提交：提示待审',
+    guestbookPost?.ok === true && guestbookPost?.toast === true,
+    guestbookPost?.reason ?? '',
+  )
+  record(
+    '匿名留言提交：说清它去哪了，且不在公开列表里',
+    guestbookPost?.notice === true && guestbookPost?.listed === false,
+    `提示=${guestbookPost?.notice}，列表里出现=${guestbookPost?.listed}`,
+  )
+  await shot('02-guestbook-pending')
+
+  // 空值校验：一个请求都不该发出去（与评论区同一口径）
+  const guestbookEmpty = await evalJs(`(async () => {
+    const set = (label, value) => {
+      const el = document.querySelector(\`[aria-label="\${label}"]\`)
+      if (!el) return false
+      el.value = value
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      return true
+    }
+    set('昵称（必填）', 'E2E 访客')
+    set('留言内容', '   ')
+    const submit = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '发表留言')
+    submit?.click()
+    await new Promise(r => setTimeout(r, 900))
+    return { toast: document.body.innerText.includes('留言内容不能为空') }
+  })()`, true)
+  record('匿名留言空内容：前端拦截并给出提示', guestbookEmpty?.toast === true)
+  await send('Page.navigate', { url: `${BASE}/login` })
+  await sleep(600)
+
+  // ---------- 3) 登录成功 → 评论审核 ----------
   await evalJs(`(() => {
     const u = document.querySelector('#username'), p = document.querySelector('#password')
     const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }

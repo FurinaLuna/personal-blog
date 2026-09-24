@@ -339,6 +339,30 @@ async function main() {
     // 演示数据里有 3 条友链；数量为 0 说明 seed 没跑或列表被前端过滤掉了
     record('友链页显示演示友链', (links?.count ?? 0) >= 1, `卡片 ${links?.count ?? 0} 张：${links?.first ?? ''}`)
 
+    // ---------------------------------------------------------- 留言板
+    // 与友链页同类：这一页此前是占位页，现在有真实数据与写入入口。
+    // 断言分两层：页面结构（表格/表单）与**演示数据确实渲染出来了** ——
+    // 只断言"页面打开了"的话，接口 500、列表被前端过滤、seed 没跑都会漏过。
+    await navigate(cdp, `${BASE_URL}/guestbook`)
+    const guestbook = await evaluate(cdp, `(() => {
+      const heading = document.querySelector('h1')?.textContent?.trim() ?? ''
+      const form = document.querySelector('[aria-label="留言内容"]')
+      const submit = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '发表留言')
+      // 留言列表的 li 直接子节点是留言卡片；站长回复块是 li 内的 div，不会重复计数。
+      // 分页器渲染的是 <nav><button>，也不在这个选择器里（已确认它的模板）。
+      const messages = document.querySelectorAll('section ul > li').length
+      const replies = document.body.innerText.includes('站长回复')
+      return { heading, form: Boolean(form), submit: Boolean(submit), messages, replies }
+    })()`)
+    record('留言板页渲染', guestbook?.heading?.includes('留言板') === true, guestbook?.heading ?? '')
+    record('留言板发表框可用', guestbook?.form === true && guestbook?.submit === true, '')
+    // 演示数据里有 2 条已过审留言，其中一条带站长回复
+    record(
+      '留言板显示演示留言',
+      (guestbook?.messages ?? 0) >= 1,
+      `列表 ${guestbook?.messages ?? 0} 条，站长回复块 ${guestbook?.replies ? '有' : '无'}`,
+    )
+
     // ---------------------------------------------------------- 关于页
     await navigate(cdp, `${BASE_URL}/about`)
     const about = await evaluate(
@@ -466,6 +490,7 @@ async function main() {
       ['/admin/users', '用户管理', '新建用户'],
       ['/admin/settings', '站点设置', '保存设置'],
       ['/admin/comments', '评论管理', '待审核'],
+      ['/admin/guestbook', '留言板管理', '待审核'],
     ]) {
       await navigate(cdp, `${BASE_URL}${path}`)
       await waitFor(cdp, `document.body.innerText.includes(${JSON.stringify(marker)})`, 25000, `${name} 渲染`)

@@ -38,7 +38,16 @@ const ADMIN = { username: 'admin', password: 'admin123456' }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const results = []
-const registry = { articles: [], categories: [], tags: [], users: [], attachments: [], comments: [], friendLinks: [] }
+const registry = {
+  articles: [],
+  categories: [],
+  tags: [],
+  users: [],
+  attachments: [],
+  comments: [],
+  friendLinks: [],
+  guestbook: [],
+}
 const uncovered = []
 let token = ''
 
@@ -198,11 +207,35 @@ async function cleanup() {
   for (const id of registry.categories.reverse()) await tryDelete(`category#${id}`, `/api/v1/categories/${id}`)
   for (const id of registry.friendLinks.reverse())
     await tryDelete(`friend-link#${id}`, `/api/v1/links/${id}`)
+  for (const id of registry.guestbook.reverse())
+    await tryDelete(`guestbook#${id}`, `/api/v1/guestbook/${id}`)
   for (const id of registry.users.reverse()) await tryDelete(`user#${id}`, `/api/v1/auth/users/${id}`)
 
-  // 兜底：按命名约定清扫漏登记的附件。
+  // 兜底一：按命名约定清扫遗留的**留言**。
+  // interaction-check 以匿名身份留了一条待审留言（那条用例要的正是匿名视角），
+  // 而匿名没有删除权限 —— 它自己清不掉，只能在这里以站长身份按命名约定扫掉。
+  //
+  // ⚠️ page_size 用 50：这是后端的 MAX_PAGE_SIZE。写成 100 会得到 422，
+  // 而"扫描请求失败"如果只体现在"没删掉东西"上，就成了一次静默的空操作 ——
+  // 所以下面显式把非 200 记进日志（第一次写这条时正是踩了这个：扫描返回 422，
+  // 遗留留言安安静静地留在库里，清理日志里一个字都没有）。
+  try {
+    const managed = await api('/api/v1/guestbook/manage?page_size=50')
+    if (managed.status !== 200) log.push(`guestbook-sweep:HTTP(${managed.status})`)
+    for (const item of managed.body?.items ?? []) {
+      const stray =
+        String(item.content ?? '').startsWith('E2E') ||
+        String(item.author_name ?? '').startsWith('E2E')
+      if (stray) await tryDelete(`stray-guestbook#${item.id}`, `/api/v1/guestbook/${item.id}`)
+    }
+  } catch (error) {
+    log.push(`guestbook-sweep:ERR(${error.message})`)
+  }
+
+  // 兜底二：按命名约定清扫漏登记的**附件**。
   // 「编辑器封面上传 / 正文图片上传」拿不到附件 id（响应只回 URL），
   // 只能靠命名前缀兜底——否则会像首次运行那样留下 2 个孤儿附件。
+
   try {
     const list = await api('/api/v1/attachments?page_size=50')
     for (const item of list.body?.items ?? []) {
@@ -533,8 +566,129 @@ try {
   })()`)
   record('A5c-4 删除入口可用（删除动作在 cleanup 执行）', a5cDeleteVisible?.exists === true)
 
+  // A5d 留言板：匿名发表 → 前台不可见（待审）→ 站长回复 → 过审 → 队列里消失 + 前台可见。
+  //
+  // 与 A5c 同为「后台写 → 前台缓存读」的跨层链路，但多了一层**审核状态**：
+  // 未过审的留言绝不能出现在公开接口里（那是"先审后发"的全部意义），
+  // 而这条规则横跨服务层的默认取值与前端缓存两层，只有真跑一遍才看得见。
+  //
+  // 顺序刻意是「先回复、后过审」：后台默认只筛待审，一旦过审这条就从队列里消失，
+  // 再回头找它的回复框会找不到（这不是脚本取巧，而是它本来就该在待审时被处理）。
+  const guestbookName = `E2E 留言 ${RUN}`
+  const guestbookContent = `E2E 留言内容 ${RUN}`
+  const guestbookReply = `E2E 站长回复 ${RUN}`
+  // 造一条**待审**留言。刻意用匿名 API 而不是页面表单：这一轮脚本全程以站长身份登录，
+  // 而公开页在登录后显示的是「以 XX 的身份留言」——站长发的会直接过审，
+  // 于是「匿名提交 → 进入待审队列」这条路径在这里根本走不到。
+  // 匿名表单的 UI 行为由 interaction-check（未登录状态）与 vitest 覆盖。
+  const a5dPost = await evalJs(`(async () => {
+    const res = await fetch('/api/v1/guestbook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // 刻意不带 Authorization：这就是匿名访客的请求
+      body: JSON.stringify({
+        author_name: ${JSON.stringify(guestbookName)},
+        content: ${JSON.stringify(guestbookContent)},
+      }),
+    })
+    const body = await res.json().catch(() => ({}))
+    return { status: res.status, approved: body.is_approved }
+  })()`, true)
+  const guestbookList = await api('/api/v1/guestbook/manage?approved=false&page_size=50')
+  const guestbookItem = (guestbookList.body?.items ?? []).find(
+    (item) => item.content === guestbookContent,
+  )
+  if (guestbookItem) registry.guestbook.push(guestbookItem.id)
+  record(
+    'A5d-1 匿名留言进入待审队列',
+    a5dPost?.status === 201 && a5dPost?.approved === false && Boolean(guestbookItem),
+    `HTTP ${a5dPost?.status}，is_approved=${a5dPost?.approved}，id=${guestbookItem?.id}`,
+  )
+
+  const pendingHidden = await evalJs(`(async () => {
+    const res = await fetch('/api/v1/guestbook?page=1&page_size=50', { cache: 'no-store' })
+    const body = await res.json()
+    return { has: (body.items ?? []).some(i => i.content === ${JSON.stringify(guestbookContent)}) }
+  })()`, true)
+  record(
+    'A5d-2 未过审的留言不在公开列表里',
+    pendingHidden?.has === false,
+    `公开列表里出现=${pendingHidden?.has}`,
+  )
+
+  await goto('/admin/guestbook', 2600)
+  const a5dReply = await evalJs(`(async () => {
+    const row = [...document.querySelectorAll('li')].find(el => el.textContent?.includes(${JSON.stringify(guestbookContent)}))
+    if (!row) return { ok: false, reason: '后台待审队列里找不到这条留言' }
+    const open = [...row.querySelectorAll('button')].find(b => ['回复', '编辑回复'].includes(b.textContent.trim()))
+    if (!open) return { ok: false, reason: '找不到「回复」按钮' }
+    open.click()
+    await new Promise(r => setTimeout(r, 300))
+    const box = document.querySelector('[aria-label="回复 ${guestbookName} 的留言"]')
+    if (!box) return { ok: false, reason: '回复框没有出现' }
+    box.value = ${JSON.stringify(guestbookReply)}
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    const save = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '保存回复')
+    if (!save) return { ok: false, reason: '找不到「保存回复」按钮' }
+    save.click()
+    await new Promise(r => setTimeout(r, 1500))
+    return { ok: true, toast: document.body.innerText.includes('回复已保存') }
+  })()`, true)
+  record('A5d-3 站长回复待审留言', a5dReply?.ok && a5dReply?.toast, a5dReply?.reason ?? '')
+
+  const a5dApprove = await evalJs(`(async () => {
+    const row = [...document.querySelectorAll('li')].find(el => el.textContent?.includes(${JSON.stringify(guestbookContent)}))
+    if (!row) return { ok: false, reason: '审核前找不到这条留言' }
+    const btn = [...row.querySelectorAll('button')].find(b => b.textContent.trim() === '通过')
+    if (!btn) return { ok: false, reason: '找不到「通过」按钮' }
+    btn.click()
+    await new Promise(r => setTimeout(r, 1600))
+    return {
+      ok: true,
+      toast: document.body.innerText.includes('已通过'),
+      // 过审后应当从「待审」队列里消失
+      drained: !document.body.innerText.includes(${JSON.stringify(guestbookContent)}),
+    }
+  })()`, true)
+  const afterApprove = await evalJs(`(async () => {
+    const res = await fetch('/api/v1/guestbook?page=1&page_size=50', { cache: 'no-store' })
+    const body = await res.json()
+    const found = (body.items ?? []).find(i => i.content === ${JSON.stringify(guestbookContent)})
+    return { visible: Boolean(found), reply: found?.reply_content ?? null }
+  })()`, true)
+  record(
+    'A5d-4 过审后从待审队列消失，前台立即可见且带站长回复',
+    a5dApprove?.ok &&
+      a5dApprove?.toast &&
+      a5dApprove?.drained === true &&
+      afterApprove?.visible === true &&
+      afterApprove?.reply === guestbookReply,
+    a5dApprove?.reason ??
+      `队列已清=${a5dApprove?.drained}，前台可见=${afterApprove?.visible}，回复=${afterApprove?.reply}`,
+  )
+
+  // 删除放在 cleanup：这里先确认按钮存在，避免"建了没删"污染数据库。
+  // 过审之后它已不在待审队列，所以要先把筛选切到「全部」才找得到。
+  const a5dDeleteVisible = await evalJs(`(async () => {
+    const tab = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '全部')
+    if (!tab) return { ok: false, reason: '找不到「全部」筛选' }
+    tab.click()
+    await new Promise(r => setTimeout(r, 1400))
+    const row = [...document.querySelectorAll('li')].find(el => el.textContent?.includes(${JSON.stringify(guestbookContent)}))
+    if (!row) return { ok: false, reason: '切到全部后仍找不到这条留言' }
+    return {
+      ok: true,
+      exists: Boolean([...row.querySelectorAll('button')].find(b => b.textContent.trim() === '删除')),
+    }
+  })()`, true)
+  record(
+    'A5d-5 删除入口可用（删除动作在 cleanup 执行）',
+    a5dDeleteVisible?.ok === true && a5dDeleteVisible?.exists === true,
+    a5dDeleteVisible?.reason ?? '',
+  )
+
   // ⚠️ 必须切回分类页：紧跟其后的 A6（标签）与 A7（清理空标签按钮）都假设
-  // 当前停留在 /admin/taxonomy。少了这一句，它们会在友链页上找不到元素而失败，
+  // 当前停留在 /admin/taxonomy。少了这一句，它们会在友链/留言板管理页上找不到元素而失败，
   // 进而让 A6 创建的标签漏登记、污染数据基线 —— 这是真实踩过的（一次 4 条用例连带失败）。
   await goto('/admin/taxonomy', 2000)
 

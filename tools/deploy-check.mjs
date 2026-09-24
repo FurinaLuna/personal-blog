@@ -489,9 +489,11 @@ async function containerChecks() {
     `head=${headRevision || '?'} 库=${currentRevision || '?'}`)
 
   // 光看 alembic_version 不够：万一 head 恰好是别的迁移，这里断言"最新那批表"确实存在。
+  // 每加一个业务域就往这里补一张表 —— 这条断言的价值正来自于它跟着 head 一起长。
   const tables = compose(['exec', '-T', 'db', ...PSQL, '-tAc',
-    "select to_regclass('public.friend_links') is not null and to_regclass('public.refresh_sessions') is not null"])
-  record('最新迁移建出的两张表都在（证明升到的是 head 而不是中间版本）',
+    "select bool_and(to_regclass('public.' || name) is not null) from unnest(" +
+    "array['friend_links', 'refresh_sessions', 'guestbook_messages']) as name"])
+  record('最新几批迁移建出的表都在（证明升到的是 head 而不是中间版本）',
     tables.out.trim() === 't', tables.out.trim())
 
   // ---------- 备份服务 ----------
