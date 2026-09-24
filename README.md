@@ -339,15 +339,15 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **594 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.81%（门槛 80%） |
-| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **598 passed, 1 skipped**（实测于 postgres:16；1 条跳过的是 `sqlite_only`；同一提交上 SQLite 跑 594+5、PG 跑 598+1，收集数一致都是 599） |
+| `pytest`（默认 SQLite） | **665 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.96%（门槛 80%） |
+| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **598 passed, 1 skipped**（实测于 postgres:16；1 条跳过的是 `sqlite_only`）。⚠️ 这是**留言板之前**的数字：SQLite 侧已随留言板涨到 665+5，PG 侧待下次跑 `backend-postgres` 作业时回填 |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **690 passed / 44 files**（22 个视图全部有 spec） |
+| `vitest run` | **713 passed / 45 files**（含留言板前台页与后台页各 14 条；每个视图都有 spec） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 11 条迁移升至 head = 13 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
-| `tools/smoke-check.mjs` | **36/36**（真实 Chrome，页面错误 0） |
-| `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
-| `tools/full-check.mjs` | **45/45** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
+| `alembic upgrade head` / `downgrade base` | 12 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
+| `tools/smoke-check.mjs` | **40/40**（真实 Chrome，页面错误 0） |
+| `tools/interaction-check.mjs` | **25/25**（登录失败路径 / 匿名留言待审 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
+| `tools/full-check.mjs` | **50/50** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
 | `tools/e2e_live/e2e_run.py` | **62/62**：真实进程 + 真实数据库的全链路端到端（6 条主流程 + 异常边界），运行前后比对 `blog.db` 指纹确保零污染 |
 | `tools/deploy-check.mjs` | **49/49**：真构建两个镜像、真用 compose 起一套完整栈（HTTP + HTTPS 两套外壳），逐条验证容器形态与部署行为（见「部署产物验证」） |
 

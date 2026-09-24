@@ -136,7 +136,7 @@ layers = api > services > repositories > schemas > models > db > utils > config
 | 模块 | 职责 | 依赖 |
 |---|---|---|
 | `api/` | HTTP 客户端：token 管理、401 静默续期、错误归一 `ApiError`、参数清洗。按领域一文件一模块 | `types`（叶子） |
-| `types/` | 与后端 Schema 一一对应的类型，按领域拆分（common/user/taxonomy/article/attachment/comment/site），`index.ts` 纯 re-export | 无 |
+| `types/` | 与后端 Schema 一一对应的类型，按领域拆分（common/user/taxonomy/article/attachment/comment/guestbook/link/site），`index.ts` 纯 re-export | 无 |
 | `utils/` | 纯函数：markdown 渲染消毒、格式化、状态徽标、分页空页、预取 | `types` |
 | `composables/` | 含响应式的可复用交互单元（见下表） | `api`（仅 ApiError/attachmentApi）、`utils` |
 | `stores/` | Pinia：auth（会话+用户管理）、site（站点档案）、theme | `api`、`types` |
@@ -213,7 +213,7 @@ const action = useAction()
 
 | 想做的事 | 标准路径 |
 |---|---|
-| 新增业务域（`friend_links` 就是照这条走的第一例） | 后端：models → schemas → repositories（继承 BaseRepository）→ services → api/v1 路由 + 注册到 `api/v1/__init__.py` + **alembic 迁移**；前端：`types/` 领域文件 → `api/` 模块 → 视图（`@/types`、`@/api` 两个出口要同步导出）。公开读 + 后台写的组合按「`GET /x`（只返回启用项） + `GET /x/manage`（全部）」拆，**别用一个接口兼顾两种视角** |
+| 新增业务域（`friend_links` 是第一例，`guestbook_messages` 是第二例） | 后端：models → schemas → repositories（继承 BaseRepository）→ services → api/v1 路由 + 注册到 `api/v1/__init__.py` + **alembic 迁移**；前端：`types/` 领域文件 → `api/` 模块 → 视图（`@/types`、`@/api` 两个出口要同步导出）。公开读 + 后台写的组合按「`GET /x`（只返回启用项） + `GET /x/manage`（全部）」拆，**别用一个接口兼顾两种视角** |
 | 新增列表接口 | 路由声明 `PageParamsDep` → 服务层收 `PageParams` → 仓储 `list_paged`；**禁止手算 offset** |
 | 换存储后端（如 S3） | 实现 `utils/storage.py` 的 `StorageBackend` 协议，替换 `storage` 实例——`AttachmentService` 不用改 |
 | 换数据库（PostgreSQL） | `db/` 保持方言无关（`db/types.py` 已隔离 SQLite 方言）；模型互引用保持 `TYPE_CHECKING` 守卫 |

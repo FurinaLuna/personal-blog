@@ -22,6 +22,7 @@
 
 | 2026-09-22（续） | `31989a9`…`e84d58c` | views 层补齐到 12 个视图 / 333 条；HEAD 全线 405 与公开读缓存的读己之写；刷新令牌轮换 + 复用检测；标签云体积封顶；CSS 复查结论为**无需优化**（gzip 10.8KB，实测证据见日志批次 11） |
 
+| 2026-09-24 | 本批 | **留言板**（第 4 个业务域，`/guestbook` 从占位页变真功能）：模型 + 迁移 + 仓储/服务/Schema/API + 前台页 + 后台管理页 + 71 条后端用例 + 28 条前端用例；浏览器回归 +12 条（含**匿名**提交与审核链路两侧）；同时删掉已无引用的占位页组件 |
 | 2026-09-24 | `147067a` | PostgreSQL 方言复核：真库上跑迁移（升→降→升）与整套 pytest（**598 passed, 1 skipped**）；`compare_metadata` 对两张新表 0 差异，抓到并修掉 `refresh_sessions` 迁移的两处结构漂移 |
 | 2026-09-24 | 本批 | **部署三件套**：`tools/deploy-check.mjs`（49 条断言，CI 与本地同一入口）+ 定时备份 sidecar + 自管证书 TLS 模板。首次运行即抓到"首页文档从来没有 CSP""备份赶在迁移前落了一份空 dump"等 6 个问题 |
 | 2026-09-24 | `c1f4b8e2d6a3` 前后 | 友情链接落地（`/links` 从占位页变真功能）：模型 + 迁移 + 仓储/服务/Schema/API + 前台页面 + 后台管理 + 44 条后端用例 + 24 条前端用例；URL 校验抽成唯一实现（评论复用）；浏览器回归新增 A5c 生命周期 4 条 |
@@ -44,7 +45,7 @@
 |---|---|
 | 规模 | 45 个 Vue 组件 + 67 个 TS 文件 + 42 个 spec；后端源文件与测试文件见 README 基线表 |
 | 前端产物 | vendor 111KB、markdown 90KB + 60KB、主包 82KB、CSS 60KB（gzip 后 43/31/18/31/11 KB），dist 合计 644KB |
-| 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；**11 条迁移 / 13 张业务表**（+ FTS5 影子表；PG 上另有 pg_trgm 与 3 条 GIN 索引）；**599 个 pytest**（SQLite 594 passed/5 skipped，覆盖率 82.81%，门槛 80%），ruff 全绿 |
+| 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；**12 条迁移 / 15 张表**（+ FTS5 的 5 张虚拟/影子表；PG 上另有 pg_trgm 与 3 条 GIN 索引）；**670 个 pytest**（SQLite 665 passed/5 skipped，覆盖率 82.96%，门槛 80%），ruff 全绿 |
 | 前端 | **690 个 vitest 用例 / 44 个 spec**（22 个视图全部有 spec）；vue-tsc 0 error、eslint 干净 |
 | 端到端 | `tools/e2e_live` 两套方言：SQLite **62/62**（已进 CI）、PostgreSQL **60 pass + 1 skip**；另有 smoke 34 / interaction 22 / full-check 41 三项浏览器脚本（**首个浏览器脚本此前写死 Windows 路径导致 CI 必挂，已修**） |
 | 已有能力 | 分页排序全入 URL、JWT 双 Token 静默续期 + 登出真吊销、RSS/sitemap/OG meta、主题三态、移动端目录、代码块复制、阅读进度条、系列文章、图片多尺寸 srcset、访问趋势 PV/UV、评论邮件通知 |

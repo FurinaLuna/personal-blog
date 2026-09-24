@@ -14,6 +14,24 @@
 
 ### 新增
 
+- **留言板（`/guestbook` 从占位页变成真功能）**：完整垂直切片 —— `guestbook_messages`
+  表（迁移 `ec88a7148baa`，`is_approved` 索引 + `replied_by_id` 外键）、仓储 / 服务 /
+  Schema / API、前台页面与后台管理页（`/admin/guestbook`）、3 条演示留言、后端 71 条用例、
+  前端 28 条用例、浏览器回归 9 条。三条设计决定（都可以改，但改了要知道代价）：
+  - **一条留言只有一个站长回复**（`reply_content` 落在同一行），刻意不做楼中楼：
+    「无限嵌套」在结构上就不可能发生，前台也不必渲染层级。代价是访客之间不能互相回复，
+    而这正是留言板想要的形态 —— 它是**访客对站长**说话的地方
+  - **先审后发**：`is_approved` 默认 false，公开接口只返回已过审的；站长自己发的那条直接过审
+    （否则「站长发了一条自己都看不到」很荒谬）。**刻意没有做免审核开关**：
+    加它要动站点设置（模型 + 迁移 + 后台表单），而先审后发是留言板该有的默认
+  - **回复才发信，过审不发信**：对访客来说「我的留言过审了」不是他关心的事件，
+    「站长回复了」才是；且只有「此前没有回复」的那一次才发，改错别字不会重复打扰
+- **演示数据里的留言刻意覆盖三种形态**：已过审 + 有回复（前台"站长回复"块）、
+  已过审 + 无回复、待审核（后台队列）—— 缺一条就会有一整块 UI 在演示里看不见
+- **浏览器回归网覆盖到留言板**：`smoke` +4（前台页渲染 / 发表框可用 / 演示留言可见 /
+  后台管理页）、`interaction` +3（**匿名**提交进入待审 + 说清它去哪了 + 空内容前端拦截）、
+  `full-check` +5（A5d 生命周期：匿名留言进待审 → 公开列表看不到 → 站长回复 →
+  过审后从队列消失且前台可见带回复 → 删除入口）
 - **部署产物验证 `tools/deploy-check.mjs`（`make deploy-check`，已接入 CI）**：这个仓库
   此前**所有**自动化跑的都是源码（uvicorn 跑 `app/`、Vite dev server 跑 `src/`），
   而线上跑的是两个镜像 + nginx + PostgreSQL。新脚本真的构建镜像、真的用 compose 起一套栈，
@@ -166,6 +184,14 @@
 
 ### 已变更
 
+- **`/guestbook` 不再走占位组件**，并因此删掉了 `frontend/src/views/PlaceholderView.vue`
+  与它的 spec：`/links` 与 `/guestbook` 两个占位页都已落地，它已无任何引用
+  （占位页作为"导航先行"的脚手架留在 git 历史里即可，留着才是死代码）
+- **`docker-compose*.yml` 的变量扫描扩展到全部 compose 文件**：
+  `tests/test_deploy_config.py` 原先只扫主文件，于是覆盖文件（`docker-compose.tls.yml`）
+  里新增的变量会同时绕过两条测试 —— 既不用写进 `.env.example`，也不会被判为"没人读"。
+  同时把"nginx 配置必须落到 `conf.d/`"这条从"写死文件名"改成"钉住目标路径 + 校验
+  include 的片段都真的被拷进镜像"（配置拆成多文件后，旧写法会误报）
 - **nginx 配置拆成"两套外壳 + 一份共享 server 体"**：新增 `deploy/nginx-common.inc`
   （http 上下文的 upstream）、`deploy/nginx-server.inc`（站点 location 与缓存策略）、
   `deploy/security-headers.inc`（安全响应头）。`nginx.conf` 与 `nginx.https.conf`
@@ -265,6 +291,18 @@
 
 ### 已修复
 
+- **上一批部署改动打破了 3 条既有测试，而我当时只跑了前端与部署验证、没跑后端测试**：
+  `tests/test_deploy_config.py` 的 `test_every_interpolated_var_is_documented`
+  （compose 新增的 7 个变量没写进 `.env.example` —— **这条测试是对的，错的是我**）、
+  `test_hsts_is_conditional_on_forwarded_proto` 与
+  `test_nginx_conf_is_included_into_http_context`（两条都写死了旧的文件布局，
+  拆分后自然对不上）。现在三条都通过，且覆盖范围比原来更宽
+- **`refresh_sessions` 迁移的格式化漏跑**（我上一批改的那条）：`ruff format --check`
+  在 CI 会拦下，本地却漏了 —— 本地验证没跑 `ruff format --check` 就等于没有这道门
+- **`full-check` 的留言兜底清扫第一版是静默空操作**：扫描用了 `page_size=100`，
+  而后端 `MAX_PAGE_SIZE=50` 会返回 422，于是"没删掉东西"这件事在清理日志里一个字都没有
+  （实测：interaction-check 留下的待审留言安静地留在库里）。现在改成 50，
+  且响应非 200 时显式记进清理日志
 - **生产环境的 CSP 实际上从未生效（首页文档一个安全响应头都没有）**：nginx 的
   `add_header` **不继承** —— 只要某一层自己写了哪怕一条，父层的全部失效。
   而 `location = /index.html` 为了加 `Cache-Control: no-cache` 写了一条，
