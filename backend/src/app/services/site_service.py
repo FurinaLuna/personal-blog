@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SiteProfile
 from app.repositories import (
-    ArticleRepository,
+    ArticleQueryRepository,
     CategoryRepository,
     CommentRepository,
     SiteRepository,
@@ -36,7 +36,7 @@ class SiteService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.site = SiteRepository(session)
-        self.articles = ArticleRepository(session)
+        self.articles = ArticleQueryRepository(session)
         self.categories = CategoryRepository(session)
         self.tags = TagRepository(session)
         self.comments = CommentRepository(session)

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Article, ArticleSort, ArticleStatus, SiteProfile
-from app.repositories import ArticleFilter, ArticleRepository, ArticleSorting, SiteRepository
+from app.repositories import ArticleFilter, ArticleQueryRepository, ArticleSorting, SiteRepository
 from app.utils.text import strip_markdown
 
 # RSS 只取最近 N 篇：全量输出会让 feed 随文章数无限膨胀，
@@ -49,7 +49,7 @@ class FeedService:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        self.articles = ArticleRepository(session)
+        self.articles = ArticleQueryRepository(session)
         self.sites = SiteRepository(session)
 
     async def _latest(self, limit: int) -> list[Article]:

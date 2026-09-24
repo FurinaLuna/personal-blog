@@ -388,7 +388,11 @@ class AttachmentService:
             }
             updated += 1
         await self.session.flush()
-        return BackfillResult(processed=processed, updated=updated, skipped=skipped)
+        # 顺手统计"还剩多少"：让前端不必拿 processed 去猜后端的分批上限
+        remaining = await self.attachments.count_images_without_variants()
+        return BackfillResult(
+            processed=processed, updated=updated, skipped=skipped, remaining=remaining
+        )
 
 
 def _rand_token() -> str:

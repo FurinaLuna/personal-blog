@@ -45,3 +45,7 @@ class BackfillResult(BaseModel):
     processed: int = Field(description="本轮检查的图片数")
     updated: int = Field(description="成功生成并落库变体的图片数")
     skipped: int = Field(description="跳过数（已有变体 / GIF / 小图 / 原文件缺失或损坏）")
+    remaining: int = Field(
+        default=0,
+        description="本轮之后仍待处理的图片数；>0 表示可以再跑一次",
+    )

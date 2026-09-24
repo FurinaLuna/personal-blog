@@ -12,7 +12,7 @@ from functools import partial
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ArticleStatus, Series
-from app.repositories import ArticleRepository, SeriesRepository
+from app.repositories import ArticleQueryRepository, SeriesRepository
 from app.schemas.article import ArticleSummary
 from app.schemas.common import Page, PageParams
 from app.schemas.series import SeriesCreate, SeriesRead, SeriesUpdate
@@ -28,7 +28,7 @@ class SeriesService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.series = SeriesRepository(session)
-        self.articles = ArticleRepository(session)
+        self.articles = ArticleQueryRepository(session)
         # 「封面 URL -> 多尺寸变体」的映射是附件域知识，装配在这里组合使用
         self.attachments = AttachmentService(session)
 
@@ -142,7 +142,7 @@ class SeriesService:
     # ---------------------------------------------------------------- 供文章领域调用
 
     async def ensure_series(self, series_id: int | None) -> Series | None:
-        """取系列对象（而不是只校验存在性），供 ``ArticleService`` 使用。"""
+        """取系列对象（而不是只校验存在性），供文章写入路径使用（``ArticleCommandService``）。"""
         if series_id is None:
             return None
         series = await self.series.get(series_id)

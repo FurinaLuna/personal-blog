@@ -59,3 +59,16 @@ class AttachmentRepository(BaseRepository[Attachment]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_images_without_variants(self) -> int:
+        """还差多少张（回填接口用它告诉前端"要不要再跑一次"）。
+
+        刻意由后端算：前端拿 processed 去和批次上限比较是在**猜**后端的分批策略，
+        而这个常量一改（或将来改成按体积分批），前端的提示就会说谎。
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Attachment)
+            .where(Attachment.kind == "image", Attachment.variants.is_(None))
+        )
+        return int((await self.session.execute(stmt)).scalar_one())

@@ -27,7 +27,7 @@ from app.models import ArticleSort, ArticleStatus
 from app.schemas.article import ArticleCreate, ArticleDetail, ArticleSummary, ArticleUpdate
 from app.schemas.common import Page
 from app.schemas.site import ArchiveGroup
-from app.services import ArticleService, VisitStatsService
+from app.services import ArticleCommandService, ArticleQueryService, VisitStatsService
 
 router = APIRouter(prefix="/articles", tags=["文章"])
 
@@ -45,7 +45,7 @@ async def list_articles(
     sort: Annotated[ArticleSort, Query(description="排序方式")] = ArticleSort.LATEST,
 ) -> Page[ArticleSummary]:
     """前台列表：只返回已发布文章，支持分页 + 关键词/分类/标签筛选 + 多种排序。"""
-    return await ArticleService(session).list_public(
+    return await ArticleQueryService(session).list_public(
         page_params=page_params,
         keyword=keyword,
         category=category,
@@ -72,7 +72,7 @@ async def search_articles(
     声明在 ``/archive`` 旁边而不是 ``/{slug_or_id}`` 之后：静态路径必须
     先注册，否则 ``/search`` 会被当成 slug 去查文章。
     """
-    return await ArticleService(session).search(keyword=q, page_params=page_params)
+    return await ArticleQueryService(session).search(keyword=q, page_params=page_params)
 
 
 @router.get("/archive", response_model=list[ArchiveGroup], summary="按月归档")
@@ -80,7 +80,7 @@ async def list_archive(
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=100, description="每个月份最多返回多少篇")] = 50,
 ) -> list[ArchiveGroup]:
-    return await ArticleService(session).archive_groups(limit_per_month=limit)
+    return await ArticleQueryService(session).archive_groups(limit_per_month=limit)
 
 
 @router.get("/manage/list", response_model=Page[ArticleSummary], summary="文章列表（后台）")
@@ -96,7 +96,7 @@ async def list_managed_articles(
     sort: Annotated[ArticleSort, Query()] = ArticleSort.UPDATED,
 ) -> Page[ArticleSummary]:
     """后台列表：作者只看自己的（含草稿），站长可看全站并可按作者过滤。"""
-    return await ArticleService(session).list_managed(
+    return await ArticleQueryService(session).list_managed(
         page_params=page_params,
         viewer=user,
         keyword=keyword,
@@ -115,7 +115,7 @@ async def create_article(
     payload: ArticleCreate, user: AuthorUser, session: SessionDep
 ) -> ArticleDetail:
     """新建文章。``status`` 直接传 ``published`` 即为发布，传 ``draft`` 存草稿。"""
-    detail = await ArticleService(session).create(payload, user)
+    detail = await ArticleCommandService(session).create(payload, user)
     # 写路由显式提交：yield 依赖的收尾提交发生在响应发送之后，会把「提交落地」
     # 暴露给连接池里的下一个请求，引入写后立读旧快照的竞态（见 db/session.py）
     await session.commit()
@@ -131,7 +131,7 @@ async def get_article(
     带登录态时可以预览自己的草稿；访客访问草稿会得到 404（而非 403），
     避免暴露「这里存在一篇未发布文章」。
     """
-    detail = await ArticleService(session).get_detail(slug_or_id, viewer)
+    detail = await ArticleQueryService(session).get_detail(slug_or_id, viewer)
     # 详情 GET 也会写库（已发布文章的浏览计数 + 访问日志）。显式提交与其他
     # 写路由同口径，不依赖 get_session 的收尾提交，规避写后读旧快照的竞态
     # （见 db/session.py）。访问记录与 view_count 同门槛：仅已发布文章
@@ -146,14 +146,14 @@ async def update_article(
     article_id: int, payload: ArticleUpdate, user: AuthorUser, session: SessionDep
 ) -> ArticleDetail:
     """部分更新：只提交需要改的字段，未出现的字段保持原值。"""
-    detail = await ArticleService(session).update(article_id, payload, user)
+    detail = await ArticleCommandService(session).update(article_id, payload, user)
     await session.commit()
     return detail
 
 
 @router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除文章")
 async def delete_article(article_id: int, user: AuthorUser, session: SessionDep) -> None:
-    await ArticleService(session).delete(article_id, user)
+    await ArticleCommandService(session).delete(article_id, user)
     await session.commit()
 
 
@@ -165,7 +165,7 @@ async def like_article(
 
     因为无需登录，这个接口天然可被脚本刷——限流是它唯一的门槛。
     """
-    count = await ArticleService(session).like(article_id)
+    count = await ArticleCommandService(session).like(article_id)
     await session.commit()
     return {"like_count": count}
 
@@ -177,4 +177,4 @@ async def related_articles(
     limit: Annotated[int, Query(ge=1, le=10)] = 5,
 ) -> list[ArticleSummary]:
     """同分类或共享标签的文章，按发布时间倒序。"""
-    return await ArticleService(session).related(article_id, limit=limit)
+    return await ArticleQueryService(session).related(article_id, limit=limit)

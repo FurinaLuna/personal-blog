@@ -6,10 +6,10 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Comment, User, UserRole
-from app.repositories import ArticleRepository, CommentRepository, SiteRepository
+from app.repositories import ArticleQueryRepository, CommentRepository, SiteRepository
 from app.schemas.comment import CommentCreate, CommentRead
 from app.schemas.common import Page, PageParams
-from app.services.article_service import is_publicly_visible
+from app.services.article_query_service import is_publicly_visible
 from app.utils.exceptions import BadRequestError, NotFoundError, PermissionDeniedError
 
 
@@ -27,7 +27,7 @@ class CommentService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.comments = CommentRepository(session)
-        self.articles = ArticleRepository(session)
+        self.articles = ArticleQueryRepository(session)
         self.site = SiteRepository(session)
 
     # ---------------------------------------------------------------- 读取

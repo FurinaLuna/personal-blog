@@ -1,4 +1,11 @@
-"""文章仓储：列表筛选/排序、上下篇、归档、站点统计。"""
+"""文章只读仓储：列表筛选/排序、检索、上下篇、归档、站点统计。
+
+读写拆分自 ``article_repository.py``：本文件承载全部只读方法与只读的表达式
+构造器，方法体逐字搬移（只改了类名）。写入方法（``increment_view`` /
+``increment_like`` / ``set_tags``）见 ``article_write_repository``；
+``ArticleFilter`` / ``ArticleSorting`` / ``ArticleListRow`` 三个值对象随只读
+查询一起放在这里，并照旧从 ``app.repositories`` 导出。
+"""
 
 from __future__ import annotations
 
@@ -6,9 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, String, case, cast, func, or_, select, text, update
+from sqlalchemy import Select, String, case, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import ColumnElement
 
 from app.models import Article, ArticleSort, ArticleStatus, Category, Comment, Tag
@@ -103,7 +109,7 @@ class ArticleListRow:
     comment_count: int = 0
 
 
-class ArticleRepository(BaseRepository[Article]):
+class ArticleQueryRepository(BaseRepository[Article]):
     model = Article
 
     def __init__(self, session: AsyncSession) -> None:
@@ -225,7 +231,7 @@ class ArticleRepository(BaseRepository[Article]):
         会出现「第一页只剩两条」这种分页数量对不上的问题。
 
         短查询（<3 字符）不走这里——trigram 分词要求查询词不少于 3 个字符，
-        调用方需自行判断，见 ``ArticleService.search``。
+        调用方需自行判断，见 ``ArticleQueryService.search``。
         """
         if not query.strip():
             return [], 0
@@ -609,68 +615,6 @@ class ArticleRepository(BaseRepository[Article]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
-
-    # ------------------------------------------------------------------ 写入
-
-    async def increment_view(self, article: Article) -> int:
-        """原子自增阅读量，并把新值同步回会话里的对象。
-
-        绝不用「读出来 +1 再存回去」——并发下会丢计数。这里交给数据库做
-        ``SET view_count = view_count + 1``，一条语句搞定。
-
-        两个必须加的执行选项：
-
-        - ``synchronize_session=False``：默认的自动同步策略在遇到
-          ``view_count + 1`` 这种数据库表达式时无法求值，会把这行对象上的
-          ``updated_at``（带 onupdate）标记为过期。异步会话里再去访问它就会抛
-          ``MissingGreenlet``。
-        - 配合 ``set_committed_value``：把新值直接告诉 ORM 并标记为「已提交」，
-          这样响应里能拿到新计数，也不会反过来生成一条多余的 UPDATE。
-
-        ``updated_at`` 必须显式钉住（``updated_at=Article.updated_at``）：
-        列上的 ``onupdate`` 对 Core ``update()`` 同样生效，不钉住的话**读一次文章
-        就会改一次 updated_at**。后果是后台默认排序 ``sort=updated`` 变成
-        「最近被看过的」，热门旧文会压过刚编辑过的；同时 sitemap 的 ``<lastmod>``
-        每次访问都变，等于告诉爬虫全站天天在改。计数变化不是内容修改。
-
-        Returns:
-            自增后的阅读量。
-        """
-        await self.session.execute(
-            update(Article)
-            .where(Article.id == article.id)
-            .values(view_count=Article.view_count + 1, updated_at=Article.updated_at)
-            .execution_options(synchronize_session=False)
-        )
-        new_value = (article.view_count or 0) + 1
-        set_committed_value(article, "view_count", new_value)
-        return new_value
-
-    async def increment_like(self, article: Article) -> int:
-        """原子自增点赞数，说明同 ``increment_view``（含 updated_at 必须钉住的理由）。"""
-        await self.session.execute(
-            update(Article)
-            .where(Article.id == article.id)
-            .values(like_count=Article.like_count + 1, updated_at=Article.updated_at)
-            .execution_options(synchronize_session=False)
-        )
-        new_value = (article.like_count or 0) + 1
-        set_committed_value(article, "like_count", new_value)
-        return new_value
-
-    async def set_tags(self, article: Article, tags: list[Tag]) -> None:
-        """整体替换文章的标签集合（先清后加，幂等）。
-
-        必须先 ``refresh`` 把现有集合真正加载进来，再赋值。原因是：
-        直接写 ``article.tags = tags`` 时，SQLAlchemy 为了算出「增删了哪些」
-        会去**惰性加载**原有的 collection —— 而异步会话里的惰性加载会在事件
-        循环里发起同步 IO，直接抛 ``MissingGreenlet``。
-
-        这个坑只在真正跑起请求时才会暴露，静态检查完全看不出来。
-        """
-        await self.session.refresh(article, ["tags"])
-        article.tags = list(tags)
-        await self.session.flush()
 
     # ------------------------------------------------------------------ 统计
 

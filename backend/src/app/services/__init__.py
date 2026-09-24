@@ -5,7 +5,8 @@
 共享同一个事务。
 """
 
-from app.services.article_service import ArticleService
+from app.services.article_command_service import ArticleCommandService
+from app.services.article_query_service import ArticleQueryService
 from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.comment_service import CommentService
@@ -16,7 +17,8 @@ from app.services.taxonomy_service import TaxonomyService
 from app.services.visit_stats_service import VisitStatsService
 
 __all__ = [
-    "ArticleService",
+    "ArticleCommandService",
+    "ArticleQueryService",
     "AttachmentService",
     "AuthService",
     "CommentService",

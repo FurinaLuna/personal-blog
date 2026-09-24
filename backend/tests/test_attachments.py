@@ -398,6 +398,37 @@ class TestVariantBackfill:
         mine = next(item for item in library["items"] if item["id"] == body["id"])
         assert [variant["width"] for variant in mine["variants"]] == [480, 800, 1600]
 
+    async def test_backfill_reports_how_many_are_left(
+        self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
+    ) -> None:
+        """回填要如实报告"还剩多少"。
+
+        前端拿这个数决定提示文案（"还剩 N 张可再次运行" vs "已全部处理完"）。
+        以前没有这个字段，前端只能固定说"还剩待处理"—— 已经跑完时那句话是错的，
+        用户会白跑一趟；或者拿 processed 去猜后端的分批上限，改一次上限就说谎。
+        """
+        body = (
+            await client.post(
+                "/api/v1/attachments/upload",
+                files=_files("left.png", make_png_bytes((1920, 1080)), "image/png"),
+                headers=author_headers,
+            )
+        ).json()
+        await self._clear_variants(body["id"])
+
+        first = (
+            await client.post("/api/v1/attachments/backfill-variants", headers=admin_headers)
+        ).json()
+        assert first["updated"] >= 1
+        # 本轮已经处理掉它，所以没有剩下的（这个测试库里只有这一张缺变体的图）
+        assert first["remaining"] == 0
+
+        second = (
+            await client.post("/api/v1/attachments/backfill-variants", headers=admin_headers)
+        ).json()
+        assert second["processed"] == 0
+        assert second["remaining"] == 0
+
     async def test_backfill_is_idempotent(
         self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
     ) -> None:

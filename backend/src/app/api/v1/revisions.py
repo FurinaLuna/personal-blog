@@ -17,7 +17,7 @@ from fastapi import APIRouter
 from app.api.deps import AuthorUser, SessionDep
 from app.schemas.article import ArticleDetail
 from app.schemas.revision import RevisionRead
-from app.services.article_service import ArticleService
+from app.services import ArticleQueryService
 from app.services.revision_service import RevisionService
 
 router = APIRouter(prefix="/articles", tags=["文章版本"])
@@ -70,4 +70,4 @@ async def restore_revision(
     await service.restore(article_id, revision_id, viewer=user)
     await session.commit()
     # 复用详情构建，保证恢复后的响应与其他写接口结构一致
-    return await ArticleService(session).get_detail(str(article_id), user, count_view=False)
+    return await ArticleQueryService(session).get_detail(str(article_id), user, count_view=False)

@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Article, ArticleRevision, User, UserRole
-from app.repositories import ArticleRepository, ArticleRevisionRepository
+from app.repositories import ArticleQueryRepository, ArticleRevisionRepository
 from app.schemas.revision import RevisionAuthorBrief, RevisionRead
 from app.utils.exceptions import NotFoundError, PermissionDeniedError
 
@@ -44,7 +44,7 @@ class RevisionService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.revisions = ArticleRevisionRepository(session)
-        self.articles = ArticleRepository(session)
+        self.articles = ArticleQueryRepository(session)
 
     async def snapshot_if_content_changed(
         self,
