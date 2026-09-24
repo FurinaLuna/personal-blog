@@ -63,6 +63,17 @@ const BACKUP_DIR = join(TMP, 'backups')
 const CERTS_DIR = join(TMP, 'certs')
 const WEBROOT_DIR = join(TMP, 'webroot')
 const REPORT_DIR = join(ROOT, 'shots', 'deploy')
+
+// 绑定挂载的**源目录**必须由我们自己先建出来。
+//
+// 这是远端 CI 教的一课（run #52 的注解里写着
+// `EACCES: permission denied, mkdir '/tmp/blog-deploy-XXXX/webroot/.well-known/acme-challenge'`）：
+// 源目录不存在时，Docker 在 **Linux 上以 root 创建它**，于是之后宿主用户（runner 的
+// 非 root 账号）连往里 mkdir 都不行 —— 而 TLS 阶段正要把 ACME 挑战文件写到那儿。
+// Windows / Docker Desktop 上绑定挂载会沿用当前用户的属主，所以本地一直是绿的。
+for (const dir of [BACKUP_DIR, CERTS_DIR, WEBROOT_DIR]) {
+  mkdirSync(dir, { recursive: true })
+}
 const CERT_DOMAIN = 'example.com' // 与 deploy/nginx.https.conf 里的路径一致
 
 const results = []
@@ -778,7 +789,15 @@ async function main() {
     writeReport(failed)
     if (!KEEP) {
       cleanup()
-      rmSync(TMP, { recursive: true, force: true })
+      try {
+        rmSync(TMP, { recursive: true, force: true })
+      } catch (error) {
+        // 容器以 root 写进去的文件/目录，宿主用户可能删不掉（Linux 上绑定挂载的
+        // 属主是 root）。这不该让验证本身失败，但也不能装作没发生 —— 指路即可。
+        console.log(`
+⚠️ 临时目录没能完全清理：${TMP}（${error.code ?? error.message}）`)
+        console.log('   容器里以 root 创建的文件需要 sudo rm -rf 才能删掉；CI 上是一次性机器，忽略即可。')
+      }
       // 只删自己生成的那份；本来就有 .env 的话上面返回 null，这里什么都不做
       if (createdEnvFile) rmSync(createdEnvFile, { force: true })
     } else {
