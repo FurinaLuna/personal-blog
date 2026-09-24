@@ -2,7 +2,8 @@
 
 幂等：重复启动不会重复插入。演示内容只在「一篇文章都没有」时写入，
 所以站长把自己写的文章删光后会重新出现演示数据——如果不想要，
-把 ``SEED_DEMO_DATA`` 设为 false 即可。
+把 ``SEED_DEMO_DATA`` 设为 false 即可。演示友链同理，只是守卫换成
+「友链表是空的」（理由见 ``seed_friend_links``）。
 
 归属说明：初始化数据是业务规则（要灌什么、灌多少），不是数据库基础设施，
 所以放在 services 层而不是 db 层——db 包只保留 Base / 会话 / 引擎这类
@@ -14,11 +15,20 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Article, ArticleStatus, Category, SiteProfile, Tag, User, UserRole
+from app.models import (
+    Article,
+    ArticleStatus,
+    Category,
+    FriendLink,
+    SiteProfile,
+    Tag,
+    User,
+    UserRole,
+)
 from app.utils.security import hash_password
 from app.utils.text import estimate_reading_time, slugify, strip_markdown
 
@@ -162,6 +172,36 @@ def _set_pragmas(dbapi_connection, _):
 
 读完最大的收获不是知道了什么结论，而是多了一把可以反复用的尺子。
 """,
+    },
+]
+
+
+# 演示友链。只用**真实存在**的站点：编造的域名（example.com 之类）在演示里看着
+# 没问题，实际是一张点不开的卡片——而站长第一件事就是点一遍自己的友链页。
+# 其中 SQLite 那条刻意不给头像（avatar_url 为 None）：前端「头像为空时用站名首字
+# 占位」的分支，只有存在一条空头像的数据才看得见，否则它永远是死代码。
+DEMO_FRIEND_LINKS: list[dict[str, object]] = [
+    {
+        "name": "FastAPI",
+        "url": "https://fastapi.tiangolo.com/",
+        "description": "本站后端的框架文档，写得比大多数教程都清楚",
+        "avatar_url": "https://fastapi.tiangolo.com/img/favicon.png",
+        "sort_order": 1,
+    },
+    {
+        "name": "Vue.js",
+        "url": "https://vuejs.org/",
+        "description": "本站前端的框架，组合式 API 的官方文档",
+        "avatar_url": "https://vuejs.org/logo.svg",
+        "sort_order": 2,
+    },
+    {
+        "name": "SQLite",
+        "url": "https://www.sqlite.org/",
+        "description": "单文件数据库；本站默认就用它，备份就是复制一个文件",
+        # 显式写 None（而不是省略这个键）：多行 INSERT 要求每行的键集合一致
+        "avatar_url": None,
+        "sort_order": 3,
     },
 ]
 
@@ -346,8 +386,6 @@ async def seed_demo_content(session: AsyncSession, admin: User) -> None:
     再去插一遍同名分类 → ``IntegrityError`` → lifespan 回滚并重新抛出 →
     **应用直接起不来**。而 SEED_DEMO_DATA 默认就是 true。
     """
-    from sqlalchemy import func
-
     existing = await session.execute(select(func.count()).select_from(Article))
     if int(existing.scalar_one()) > 0:
         return
@@ -400,9 +438,45 @@ async def seed_demo_content(session: AsyncSession, admin: User) -> None:
     await session.flush()
 
 
+async def seed_friend_links(session: AsyncSession) -> None:
+    """写入演示友链。**表里已有任何一条友链时直接跳过。**
+
+    守卫口径与演示文章不同，这里刻意用「表是不是空的」而不是「有没有演示友链」：
+    友链的典型用法就是站长一上来先把自己常逛的站点记下来，而那往往是
+    他开始写第一篇文章之前的事。此时再往里塞三条演示数据，等于把真实数据
+    和演示数据混在一张表里，而站长分不清哪条是自己的。
+
+    写入用 ``ON CONFLICT DO NOTHING``（与 ``seed_admin`` / ``seed_site_profile``
+    同一手法）而不是 check-then-insert：多进程启动时两个进程会双双通过
+    「表是空的」判断，后提交的那个撞 ``url`` 唯一键 —— 而 lifespan 里的异常
+    会 re-raise，**输掉的进程直接启动失败**。``url`` 是唯一索引，
+    正好可以做冲突目标。
+    """
+    existing = await session.execute(select(func.count()).select_from(FriendLink))
+    if int(existing.scalar_one()) > 0:
+        return
+
+    dialect = session.bind.dialect.name if session.bind else ""
+    insert = _insert_ignoring_conflicts(dialect)
+    if insert is not None:
+        # 一条语句插三行：竞态被压缩成一次原子写入，没有窗口可钻
+        await session.execute(
+            insert(FriendLink)
+            .values(DEMO_FRIEND_LINKS)
+            .on_conflict_do_nothing(index_elements=["url"])
+        )
+        await session.flush()
+        return
+
+    for item in DEMO_FRIEND_LINKS:  # pragma: no cover - 仅覆盖 SQLite / PostgreSQL
+        session.add(FriendLink(**item))
+    await session.flush()
+
+
 async def ensure_seed(session: AsyncSession) -> None:
     """统一入口：启动时调用一次即可。"""
     admin = await seed_admin(session)
     await seed_site_profile(session)
     if settings.seed_demo_data:
         await seed_demo_content(session, admin)
+        await seed_friend_links(session)

@@ -109,6 +109,11 @@ class FeedService:
             (f"{base}/tags", None, "weekly"),
             (f"{base}/categories", None, "weekly"),
             (f"{base}/archive", None, "weekly"),
+            # /series 与 /links 都有真实内容且可被爬虫独立访问：
+            # 前者是系列聚合页，后者是友链页（后台录入后才会出现在这里，
+            # 但"可能为空"不是不收录的理由——空页面自己会显示空态）
+            (f"{base}/series", None, "weekly"),
+            (f"{base}/links", None, "monthly"),
             (f"{base}/about", None, "monthly"),
         ]
         for article in await self._latest(SITEMAP_ITEM_LIMIT):

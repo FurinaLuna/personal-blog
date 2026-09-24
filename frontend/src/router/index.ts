@@ -90,9 +90,8 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/links',
     name: 'links',
-    component: () => import('@/views/PlaceholderView.vue'),
+    component: () => import('@/views/LinksView.vue'),
     meta: { title: '友情链接' },
-    props: { heading: '友情链接', hint: '这里会放一些我经常逛的站点。' },
   },
   {
     path: '/guestbook',
@@ -180,6 +179,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-media',
         component: () => import('@/views/admin/MediaView.vue'),
         meta: { title: '媒体库', requiresAuth: true, layout: 'admin' },
+      },
+      {
+        path: 'links',
+        name: 'admin-links',
+        component: () => import('@/views/admin/LinksView.vue'),
+        meta: { title: '友链管理', requiresAuth: true, requiresAdmin: true, layout: 'admin' },
       },
       {
         path: 'users',

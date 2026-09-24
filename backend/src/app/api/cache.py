@@ -45,9 +45,12 @@ CACHEABLE_PREFIXES = (
     "/api/v1/series",
     "/api/v1/site",
     "/api/v1/comments",
+    "/api/v1/links",
 )
 
 # 与前台共用前缀、但属于后台/个人化的路径标记
+# （/api/v1/links 与 /api/v1/links/manage 正是靠 "/manage" 这一条区分开：
+#  前者是匿名可读的友链页，后者含未启用条目、只有站长能看）
 _EXCLUDED_MARKERS = ("/manage", "/revisions")
 
 # 前台内容的缓存时长（秒）。改大之前请先想清楚"定时发布"的体感。

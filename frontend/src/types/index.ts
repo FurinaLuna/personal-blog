@@ -8,6 +8,7 @@
  * 也方便加注释说明字段的**业务含义**（自动生成的只有字段名）。
  * 一旦后端 schema 变更，对应领域文件必须同步改——这是唯一的维护成本。
  */
+export type { FriendLink, FriendLinkPayload, FriendLinkUpdatePayload } from './link'
 export type { Message, Page, ValidationIssue } from './common'
 export type {
   ArticleDetail,

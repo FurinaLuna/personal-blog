@@ -7,6 +7,7 @@ from app.api.v1 import (
     attachments,
     auth,
     comments,
+    links,
     notifications,
     revisions,
     series,
@@ -27,6 +28,7 @@ api_router.include_router(taxonomy.tag_router)
 api_router.include_router(series.router)
 api_router.include_router(attachments.router)
 api_router.include_router(comments.router)
+api_router.include_router(links.router)
 api_router.include_router(site.router)
 api_router.include_router(stats.router)
 api_router.include_router(notifications.router)

@@ -96,6 +96,9 @@ class TestSitemap:
         ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         locs = [url.findtext("sm:loc", namespaces=ns) for url in root.findall("sm:url", ns)]
         assert any(loc and loc.endswith("/about") for loc in locs)
+        # 有真实内容的聚合页都要收录，否则"页面存在但搜索引擎不知道"
+        assert any(loc and loc.endswith("/series") for loc in locs)
+        assert any(loc and loc.endswith("/links") for loc in locs)
         assert any(loc and published_article["slug"] in loc for loc in locs)
 
 

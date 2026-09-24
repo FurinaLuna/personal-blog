@@ -10,6 +10,7 @@ from app.models.associations import article_tags
 from app.models.attachment import Attachment
 from app.models.comment import Comment
 from app.models.enums import ArticleSort, ArticleStatus, UserRole
+from app.models.friend_link import FriendLink
 from app.models.notification_opt_out import NotificationOptOut
 from app.models.refresh_session import RefreshSession
 from app.models.revision import ArticleRevision
@@ -28,6 +29,7 @@ __all__ = [
     "Base",
     "Category",
     "Comment",
+    "FriendLink",
     "NotificationOptOut",
     "RefreshSession",
     "Series",
