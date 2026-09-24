@@ -1,20 +1,32 @@
 <script setup lang="ts">
 /** 系列详情：该系列的文章按阅读顺序排列（series_order 升序）。 */
-import { computed, onMounted } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { computed, onMounted, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { seriesApi } from '@/api'
 import EmptyState from '@/components/EmptyState.vue'
+import Pagination from '@/components/Pagination.vue'
 import { toErrorMessage, useAsyncData } from '@/composables/useAsyncData'
 import { useHead } from '@/composables/useHead'
 import type { SeriesWithArticles } from '@/types'
 import { formatDateTime } from '@/utils/format'
 
 const route = useRoute()
+const router = useRouter()
 const slugOrId = computed(() => route.params.slug as string)
 
+/** 每页文章数。以前这个 50 是硬编码的且没有分页器：60 篇的系列只列前 50 篇，
+ *  第 51 篇起在页面上**没有任何入口**（头部还写着"60 篇"）。 */
+const PAGE_SIZE = 50
+
+/** 页码来自 URL（与首页/搜索页同一口径：URL 是状态的唯一来源）。 */
+const page = computed(() => {
+  const raw = Number(route.query.page ?? 1)
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 1
+})
+
 const detail = useAsyncData<SeriesWithArticles>(
-  () => seriesApi.detail(slugOrId.value, 1, 50),
+  () => seriesApi.detail(slugOrId.value, page.value, PAGE_SIZE),
   { series: null, articles: { items: [], total: 0, page: 1, page_size: 50, pages: 0 } } as unknown as SeriesWithArticles,
 )
 
@@ -23,6 +35,25 @@ useHead(() => ({ title: detail.data.value?.series?.name ?? '系列' }))
 onMounted(() => {
   void detail.run()
 })
+
+/**
+ * 跟随路由参数重拉。
+ *
+ * `/series/a → /series/b` 是**同一条路由记录**，组件实例被复用 ——
+ * 只绑 onMounted 的话页面会停在旧系列的标题与列表上，而且不报任何错
+ * （地址栏已经变了，内容没变）。这与编辑页那个竞态是同一类问题。
+ */
+watch([slugOrId, page], () => {
+  void detail.run()
+})
+
+/** 翻页写回 URL（第 1 页不带参数，与其它列表页一致）。 */
+function goPage(next: number): void {
+  void router.replace({
+    query: next > 1 ? { ...route.query, page: String(next) } : { ...route.query, page: undefined },
+  })
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
 </script>
 
 <template>
@@ -45,9 +76,21 @@ onMounted(() => {
       <div v-for="index in 5" :key="index" class="skeleton h-14 rounded-lg"></div>
     </div>
 
-    <p v-else-if="detail.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(detail.error.value) }}
-    </p>
+    <div
+
+      v-else-if="detail.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+
+      role="alert"
+    >
+
+      <span class="text-ink-soft">{{ toErrorMessage(detail.error.value) }}</span>
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="detail.run()">
+        重试
+
+      </button>
+
+    </div>
 
     <EmptyState
       v-else-if="!detail.data.value?.articles.items.length"
@@ -76,5 +119,14 @@ onMounted(() => {
         </RouterLink>
       </li>
     </ol>
+
+    <Pagination
+      v-if="detail.data.value && detail.data.value.articles.total > PAGE_SIZE"
+      class="mt-6"
+      :page="detail.data.value.articles.page"
+      :page-size="PAGE_SIZE"
+      :total="detail.data.value.articles.total"
+      @change="goPage"
+    />
   </div>
 </template>

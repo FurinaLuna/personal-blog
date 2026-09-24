@@ -137,7 +137,7 @@ function goPage(next: number): void {
         <Pagination
           v-if="results.data.value.total > PAGE_SIZE"
           class="mt-8"
-          :page="page"
+          :page="results.data.value.page"
           :page-size="PAGE_SIZE"
           :total="results.data.value.total"
           @change="goPage"

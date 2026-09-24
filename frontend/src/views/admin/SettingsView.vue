@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 站点设置（仅站长）。改完直接影响前台首页、页脚与关于页。 */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { useAction } from '@/composables/useAction'
 import { useToast } from '@/composables/useToast'
@@ -47,6 +47,21 @@ function fillFromStore(): void {
 }
 
 watch(() => site.loaded, (loaded) => { if (loaded) fillFromStore() }, { immediate: true })
+
+/**
+ * 能不能保存。
+ *
+ * **只有确实读到过服务端档案才允许保存**。否则会出现一条静默数据丢失：
+ * 档案接口失败 → store 回落到默认值 → 表单是空的 → 站长随手一点「保存」，
+ * 就把站点名、签名、关于页、邮箱、备案号、评论策略整片覆盖成默认值，
+ * 而且界面会提示"保存成功"。
+ */
+const canSave = computed(() => site.loaded && !action.running.value)
+
+/** 档案加载失败时的重试。 */
+function reloadProfile(): void {
+  void site.load(true)
+}
 
 function addSocialLink(): void {
   if (form.value.social_links.length >= 8) {
@@ -101,9 +116,22 @@ onMounted(() => {
   <div class="mx-auto max-w-3xl space-y-6">
     <div class="flex items-center gap-3">
       <h2 class="text-sm text-ink-soft">站点信息会实时反映到前台首页、页脚与关于页</h2>
-      <button type="button" class="btn--primary ml-auto" :disabled="action.running.value" @click="save">
+      <button type="button" class="btn--primary ml-auto" :disabled="!canSave" @click="save">
         {{ action.running.value ? '保存中…' : '保存设置' }}
       </button>
+    </div>
+
+    <!--
+      档案没读到时必须说清楚：否则表单看起来只是"空的"，
+      而保存按钮一旦可用就会把真实数据覆盖成默认值（静默数据丢失）。
+    -->
+    <div
+      v-if="site.error"
+      class="card flex items-center justify-between gap-3 border-red-200 p-4 text-sm"
+      role="alert"
+    >
+      <span class="text-ink-soft">{{ site.error }}（当前不可保存，避免用默认值覆盖真实配置）</span>
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="reloadProfile">重试</button>
     </div>
 
     <section class="card p-5">
@@ -225,7 +253,7 @@ onMounted(() => {
     </section>
 
     <div class="flex justify-end">
-      <button type="button" class="btn--primary" :disabled="action.running.value" @click="save">
+      <button type="button" class="btn--primary" :disabled="!canSave" @click="save">
         {{ action.running.value ? '保存中…' : '保存设置' }}
       </button>
     </div>

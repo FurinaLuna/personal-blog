@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { ApiError, siteApi } from '@/api'
+import { toErrorMessage } from '@/composables/useAsyncData'
 import type { SiteProfile, SiteProfilePayload, SiteStats } from '@/types'
 
 const FALLBACK: SiteProfile = {
@@ -25,6 +26,15 @@ export const useSiteStore = defineStore('site', () => {
   const profile = ref<SiteProfile>({ ...FALLBACK })
   const loaded = ref(false)
   const loading = ref(false)
+  /**
+   * 最近一次加载的失败原因（成功时清空）。
+   *
+   * 为什么需要它：`load()` 刻意"失败就用默认值"，这对前台是对的（页脚与关于页
+   * 不该因为一个次要接口白屏）。但**后台设置页不能这么降级** —— 它看到的是
+   * 一个空表单，保存按钮又是可用的，一点就把真实站点信息整片覆盖成默认值。
+   * 所以这里把失败也如实暴露出来，让后台能提示 + 重试 + 禁用保存。
+   */
+  const error = ref<string | null>(null)
 
   const title = computed(() => profile.value.owner_name || '个人博客')
   const headline = computed(() => profile.value.headline ?? '')
@@ -45,11 +55,15 @@ export const useSiteStore = defineStore('site', () => {
     try {
       profile.value = await siteApi.profile()
       loaded.value = true
-    } catch {
+      error.value = null
+    } catch (cause) {
       // 站点档案取不到是有意降级的：它只影响页脚与关于页的文案，
       // 不该因为一个次要接口就让整站白屏。留个 debug 便于排查「为什么显示默认文案」
       console.debug('[site] 档案加载失败，使用默认文案')
       profile.value = { ...FALLBACK }
+      // 降级归降级，失败这件事要如实记下来：后台设置页靠它决定
+      // 「能不能保存」（见 SettingsView 的 canSave）
+      error.value = toErrorMessage(cause, '站点信息加载失败')
     } finally {
       loading.value = false
     }
@@ -83,6 +97,7 @@ export const useSiteStore = defineStore('site', () => {
 
   return {
     profile,
+    error,
     loaded,
     loading,
     title,

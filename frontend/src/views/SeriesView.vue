@@ -29,9 +29,21 @@ onMounted(() => {
       <div v-for="index in 4" :key="index" class="skeleton h-28 rounded-xl"></div>
     </div>
 
-    <p v-else-if="series.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(series.error.value) }}
-    </p>
+    <div
+
+      v-else-if="series.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+
+      role="alert"
+    >
+
+      <span class="text-ink-soft">{{ toErrorMessage(series.error.value) }}</span>
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="series.run()">
+        重试
+
+      </button>
+
+    </div>
 
     <EmptyState
       v-else-if="!series.data.value.length"

@@ -71,7 +71,10 @@ async function backfillVariants(): Promise<void> {
   })
   if (result === undefined) return
   if (result.updated > 0) {
-    toast.success(`回填完成：生成 ${result.updated} 张，跳过 ${result.skipped} 张，还剩待处理可再次运行`)
+    // 按后端给的真实剩余数说话：以前无论是否还有待处理，都固定提示
+    // "还剩待处理可再次运行" —— 已经跑完的时候这句话是错的，用户会白跑一趟
+    const tail = result.remaining > 0 ? `，还剩 ${result.remaining} 张可再次运行` : '，已全部处理完'
+    toast.success(`回填完成：生成 ${result.updated} 张，跳过 ${result.skipped} 张${tail}`)
     void attachments.run()
   } else {
     toast.success('没有需要回填的图片')

@@ -28,4 +28,6 @@ export interface BackfillResult {
   processed: number
   updated: number
   skipped: number
+  /** 本轮之后仍待处理的图片数；>0 表示可以再跑一次 */
+  remaining: number
 }

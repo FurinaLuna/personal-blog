@@ -11,10 +11,28 @@ import { useHead } from '@/composables/useHead'
 useHead({ title: '标签' })
 import type { Tag } from '@/types'
 
-const tags = useAsyncData<Tag[]>(() => tagApi.list(), [])
+/**
+ * 标签页一次最多取多少个。
+ *
+ * 200 是后端的 `limit` 上限。加这个上限是因为：标签云是"一眼看全"的界面，
+ * 没有合适的分页切法，但**不能不设上限** —— 标签上千时首屏要等一个
+ * 带计数的长列表（每个计数都是一次子查询）。
+ * 触顶时页面会明确说明"只显示了最常用的 N 个"，而不是让人以为标签就这么多。
+ */
+const TAG_LIMIT = 200
 
-/** 只看有文章的标签。空标签出现在标签云里对读者毫无意义。 */
+// 服务端就把没有文章的标签过滤掉：这一页只展示有文章的标签（下面那个 filter
+// 是防御性保留），以前是把全量标签（含计数）都拉下来再在浏览器里丢掉。
+const tags = useAsyncData<Tag[]>(
+  () => tagApi.list({ minCount: 1, limit: TAG_LIMIT }),
+  [],
+)
+
+/** 防御性过滤：接口契约若返回 0 篇的标签，也不该出现在标签云里。 */
 const meaningful = computed(() => tags.data.value.filter((tag) => tag.article_count > 0))
+
+/** 是否因为上限被截断（用于给出"还有更多"的说明）。 */
+const truncated = computed(() => tags.data.value.length >= TAG_LIMIT)
 
 const hideCount = ref(false)
 
@@ -45,9 +63,15 @@ onMounted(() => {
       <div v-for="index in 12" :key="index" class="skeleton h-8 w-20 rounded-full"></div>
     </div>
 
-    <p v-else-if="tags.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(tags.error.value) }}
-    </p>
+    <div
+      v-else-if="tags.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+      role="alert"
+    >
+      <span class="text-ink-soft">{{ toErrorMessage(tags.error.value) }}</span>
+      <!-- 与其它列表一致：失败必须给出下一步，而不是只留一行文案 -->
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="tags.run()">重试</button>
+    </div>
 
     <EmptyState
       v-else-if="!meaningful.length"
@@ -55,6 +79,11 @@ onMounted(() => {
       description="发布文章时随手打标签，这里就会自动长出来。"
     />
 
-    <TagCloud v-else :tags="meaningful" :hide-count="hideCount" />
+    <template v-else>
+      <TagCloud :tags="meaningful" :hide-count="hideCount" />
+      <p v-if="truncated" class="mt-4 text-center text-xs text-ink-faint">
+        标签较多，这里只显示最常用的 {{ TAG_LIMIT }} 个。
+      </p>
+    </template>
   </div>
 </template>

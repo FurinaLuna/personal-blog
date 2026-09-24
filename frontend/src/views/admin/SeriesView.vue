@@ -2,7 +2,7 @@
 /** 系列管理：技术连载 / 合集的增改删。作者可建/改，删除需站长（后端强制）。 */
 import { onMounted, ref } from 'vue'
 
-import { seriesApi } from '@/api'
+import { ApiError, seriesApi } from '@/api'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useAction } from '@/composables/useAction'
@@ -50,10 +50,17 @@ function startEdit(item: Series): void {
 async function saveEdit(): Promise<void> {
   const id = editingId.value
   if (id === null) return
+  // 与新建同一道校验：清空名字再点保存，以前会把 name: '' 直接发给后端
+  // （只能靠 422 兜底，用户看到的是服务端报错而不是"这里不能为空"）
+  const name = editDraft.value.name.trim()
+  if (!name) {
+    toast.error('请填写系列名称')
+    return
+  }
   const saved = await action.run(
     () =>
       seriesApi.update(id, {
-        name: editDraft.value.name.trim(),
+        name,
         description: editDraft.value.description.trim() || null,
       }),
     { success: '系列已更新', errorMessage: '更新失败' },
@@ -69,7 +76,10 @@ const pendingDelete = useConfirmDelete<Series>({
   remove: (item) => seriesApi.remove(item.id),
   success: '系列已删除，其下文章变为普通文章',
   // 作者点删除会拿到 403，给出明确解释
-  mapError: (error) => (error instanceof Error && /403|站长/.test(String(error)) ? '只有站长可以删除系列' : undefined),
+  // 用错误对象的结构化字段判定，而不是拿后端文案做正则：
+  // 以前写的是 /403|站长/.test(String(error)) —— 既会因为后端换文案而静默失效
+  // （退化成一句原文），也会把任何消息里恰好带「站长」的错误误判成权限问题。
+  mapError: (error) => (error instanceof ApiError && error.isForbidden ? '只有站长可以删除系列' : undefined),
   onDeleted: () => void series.run(),
 })
 

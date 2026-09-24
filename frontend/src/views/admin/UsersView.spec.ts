@@ -340,6 +340,26 @@ describe('UsersView · 新建用户', () => {
     expect(useToast().items.value).toHaveLength(0)
   })
 
+  it('用户改输入时对应的字段错误立刻消失（改完了红字不该还挂着）', async () => {
+    vi.spyOn(authApi, 'createUser').mockRejectedValue(
+      new ApiError('校验失败', 422, 'validation_error', {
+        username: '用户名已存在',
+        email: '邮箱格式不对',
+      }),
+    )
+
+    const { wrapper } = await mountUsers()
+    await wrapper.get(USERNAME).setValue('admin')
+    await wrapper.get(EMAIL).setValue('taken@example.com')
+    await wrapper.get(PASSWORD).setValue('secret123')
+    await submitCreate(wrapper)
+    expect(fieldErrorTexts(wrapper)).toEqual(['用户名已存在', '邮箱格式不对'])
+
+    // 只改用户名：只清它自己那条，邮箱那条留着（两处错误分别消失）
+    await wrapper.get(USERNAME).setValue('another-name')
+    expect(fieldErrorTexts(wrapper)).toEqual(['邮箱格式不对'])
+  })
+
   it('非字段错误才弹 toast，且输入内容不丢、按钮解禁', async () => {
     vi.spyOn(authApi, 'createUser').mockRejectedValue(
       new ApiError('邮箱已被占用', 409, 'conflict'),

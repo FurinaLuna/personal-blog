@@ -45,7 +45,13 @@ const comments = useAsyncData<Page<Comment>>(
 const pendingDelete = useConfirmDelete<Comment>({
   remove: (item) => commentApi.remove(item.id),
   success: '评论已删除',
-  onDeleted: () => void comments.run(),
+  onDeleted: () => {
+    // 删掉当前页最后一条时要把页码退回去：否则会停在一个空页上，
+    // 空态分支里没有分页器，而 total 仍然大于 0 —— 用户没有任何入口回到上一页。
+    const wasLastOnPage = comments.data.value.items.length <= 1
+    if (wasLastOnPage && page.value > 1) page.value -= 1
+    void comments.run()
+  },
 })
 /** 行级忙碌标记：审核是按行进行的，需要知道「哪一行」在转，这个不属于通用 action 语义 */
 const busyId = ref<number | null>(null)
@@ -88,9 +94,17 @@ onMounted(() => {
       <div v-for="index in 5" :key="index" class="skeleton h-20 rounded-lg"></div>
     </div>
 
-    <p v-else-if="comments.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(comments.error.value) }}
-    </p>
+    <div
+      v-else-if="comments.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+      role="alert"
+    >
+      <span class="text-ink-soft">{{ toErrorMessage(comments.error.value) }}</span>
+      <!-- 以前失败只有一行文案：除了"切一下筛选"没有别的办法把列表拉回来 -->
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="comments.run()">
+        重试
+      </button>
+    </div>
 
     <EmptyState
       v-else-if="!comments.data.value.items.length"
@@ -119,7 +133,7 @@ onMounted(() => {
             >
               {{ item.is_approved ? '已通过' : '待审核' }}
             </span>
-            <span v-if="item.parent_id" class="text-[11px] text-ink-faint">回复 #{item.parent_id}</span>
+            <span v-if="item.parent_id" class="text-[11px] text-ink-faint">回复 #{{ item.parent_id }}</span>
             <span class="ml-auto text-xs text-ink-faint" :title="formatDateTime(item.created_at)">
               {{ formatRelative(item.created_at) }}
             </span>
@@ -134,7 +148,7 @@ onMounted(() => {
               :to="`/article/${item.article_id}`"
               class="text-ink-faint hover:text-brand-600"
             >
-              查看文章 #{item.article_id}
+              查看文章 #{{ item.article_id }}
             </RouterLink>
 
             <div class="ml-auto flex items-center gap-3">

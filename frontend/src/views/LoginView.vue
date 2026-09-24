@@ -19,9 +19,18 @@ const action = useAction()
 const form = ref({ username: '', password: '' })
 const errorMessage = ref('')
 
+/**
+ * 登录成功后的落点。
+ *
+ * 只接受**站内绝对路径**，且必须排除 `//` 开头的**协议相对地址**：
+ * `//evil.example/phish` 也能通过 `startsWith('/')`，而浏览器会把它解析成
+ * `https://evil.example/phish` —— 用 history 模式 pushState 到跨源地址时
+ * 浏览器直接抛 SecurityError，于是"登录成功却停在登录页"，控制台还有一条
+ * 没人处理的 rejection。用 `/^\/(?!\/)/` 一次性排掉外站与伪协议。
+ */
 const redirect = computed(() => {
   const value = route.query.redirect
-  return typeof value === 'string' && value.startsWith('/') ? value : '/admin'
+  return typeof value === 'string' && /^\/(?!\/)/.test(value) ? value : '/admin'
 })
 
 async function submit(): Promise<void> {

@@ -34,12 +34,17 @@ onMounted(() => {
       </div>
     </div>
 
-    <p
+    <div
       v-else-if="categories.error.value"
-      class="card p-6 text-center text-sm text-ink-soft"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+      role="alert"
     >
-      {{ toErrorMessage(categories.error.value) }}
-    </p>
+      <span class="text-ink-soft">{{ toErrorMessage(categories.error.value) }}</span>
+      <!-- 失败必须有下一步：只有一行文案时用户只能自己猜"刷新一下试试" -->
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="categories.run()">
+        重试
+      </button>
+    </div>
 
     <EmptyState
       v-else-if="!categories.data.value.length"

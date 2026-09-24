@@ -52,9 +52,21 @@ onMounted(() => {
       </div>
     </div>
 
-    <p v-else-if="groups.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(groups.error.value) }}
-    </p>
+    <div
+
+      v-else-if="groups.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+
+      role="alert"
+    >
+
+      <span class="text-ink-soft">{{ toErrorMessage(groups.error.value) }}</span>
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="groups.run()">
+        重试
+
+      </button>
+
+    </div>
 
     <EmptyState v-else-if="!groups.data.value.length" title="还没有可归档的文章" />
 

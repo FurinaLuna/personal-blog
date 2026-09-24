@@ -2,7 +2,10 @@ import typography from '@tailwindcss/typography'
 
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
+  // 排除测试文件：spec 里出现的类名不该进构建产物。
+  // 实测（2026-09-22）：当前排除前后产物**一个字节都不差**（60499 = 60499），
+  // 说明现在没有"只出现在测试里"的类；留着是为了防止将来出现时悄悄带上。
+  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}', '!./src/**/*.spec.ts'],
   // 主题切换靠给 <html> 加 .dark 类，而不是只跟随系统——
   // 用户手动选过之后应当被记住（存在 localStorage）。
   darkMode: 'class',

@@ -77,7 +77,12 @@ onMounted(() => {
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="create">
         <label class="block text-sm">
           <span class="text-ink-soft">用户名</span>
-          <input v-model="newUser.username" class="input mt-1.5" placeholder="至少 3 个字符" />
+          <input
+            v-model="newUser.username"
+            class="input mt-1.5"
+            placeholder="至少 3 个字符"
+            @input="fieldErrors.username = ''"
+          />
           <span v-if="fieldErrors.username" class="mt-1 block text-xs text-red-600">
             {{ fieldErrors.username }}
           </span>
@@ -85,7 +90,13 @@ onMounted(() => {
 
         <label class="block text-sm">
           <span class="text-ink-soft">邮箱</span>
-          <input v-model="newUser.email" class="input mt-1.5" type="email" placeholder="name@example.com" />
+          <input
+            v-model="newUser.email"
+            class="input mt-1.5"
+            type="email"
+            placeholder="name@example.com"
+            @input="fieldErrors.email = ''"
+          />
           <span v-if="fieldErrors.email" class="mt-1 block text-xs text-red-600">
             {{ fieldErrors.email }}
           </span>
@@ -93,7 +104,13 @@ onMounted(() => {
 
         <label class="block text-sm">
           <span class="text-ink-soft">初始密码</span>
-          <input v-model="newUser.password" class="input mt-1.5" type="password" placeholder="至少 8 位" />
+          <input
+            v-model="newUser.password"
+            class="input mt-1.5"
+            type="password"
+            placeholder="至少 8 位"
+            @input="fieldErrors.password = ''"
+          />
           <span v-if="fieldErrors.password" class="mt-1 block text-xs text-red-600">
             {{ fieldErrors.password }}
           </span>

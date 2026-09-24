@@ -31,7 +31,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import Pagination from '@/components/Pagination.vue'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
-import type { Attachment, Page, User } from '@/types'
+import type { Attachment, BackfillResult, Page, User } from '@/types'
 
 import MediaView from './MediaView.vue'
 
@@ -564,7 +564,7 @@ describe('MediaView · 回填变体（仅站长）', () => {
     const list = stubList([makeAttachment()])
     const backfill = vi
       .spyOn(attachmentApi, 'backfillVariants')
-      .mockResolvedValue({ processed: 100, updated: 12, skipped: 88 })
+      .mockResolvedValue({ processed: 100, updated: 12, skipped: 88, remaining: 7 })
 
     const { wrapper } = await mountMedia('/admin/media', { asAdmin: true })
     const callsBefore = list.mock.calls.length
@@ -573,9 +573,27 @@ describe('MediaView · 回填变体（仅站长）', () => {
     await flushPromises()
 
     expect(backfill).toHaveBeenCalledTimes(1)
-    expect(lastToastMessage()).toBe('回填完成：生成 12 张，跳过 88 张，还剩待处理可再次运行')
+    // 文案按后端给的真实剩余数说话：以前无论是否还有待处理都固定说「还剩待处理」，
+    // 已经跑完时那句话是错的（用户会白跑一趟）
+    expect(lastToastMessage()).toBe('回填完成：生成 12 张，跳过 88 张，还剩 7 张可再次运行')
     // 变体是新生成的，卡片上的「变体 480/800」得跟着更新
     expect(list.mock.calls.length).toBe(callsBefore + 1)
+  })
+
+  it('没有剩余待处理时提示「已全部处理完」，不说「还剩待处理」', async () => {
+    stubList([makeAttachment()])
+    vi.spyOn(attachmentApi, 'backfillVariants').mockResolvedValue({
+      processed: 3,
+      updated: 3,
+      skipped: 0,
+      remaining: 0,
+    })
+
+    const { wrapper } = await mountMedia('/admin/media', { asAdmin: true })
+    await button(wrapper, '回填变体').trigger('click')
+    await flushPromises()
+
+    expect(lastToastMessage()).toBe('回填完成：生成 3 张，跳过 0 张，已全部处理完')
   })
 
   it('没有需要回填的图片时只说一句，不再刷列表', async () => {
@@ -584,6 +602,7 @@ describe('MediaView · 回填变体（仅站长）', () => {
       processed: 0,
       updated: 0,
       skipped: 0,
+      remaining: 0,
     })
 
     const { wrapper } = await mountMedia('/admin/media', { asAdmin: true })
@@ -611,7 +630,7 @@ describe('MediaView · 回填变体（仅站长）', () => {
   })
 
   it('回填进行中按钮禁用并显示「回填中…」（重复点只会白跑一遍运维任务）', async () => {
-    const pending = deferred<{ processed: number; updated: number; skipped: number }>()
+    const pending = deferred<BackfillResult>()
     vi.spyOn(attachmentApi, 'backfillVariants').mockReturnValue(pending.promise)
 
     const { wrapper } = await mountMedia('/admin/media', { asAdmin: true })
@@ -620,7 +639,7 @@ describe('MediaView · 回填变体（仅站长）', () => {
 
     expect(button(wrapper, '回填中…').attributes('disabled')).toBeDefined()
 
-    pending.resolve({ processed: 1, updated: 1, skipped: 0 })
+    pending.resolve({ processed: 1, updated: 1, skipped: 0, remaining: 0 })
     await flushPromises()
     expect(button(wrapper, '回填变体').attributes('disabled')).toBeUndefined()
   })
