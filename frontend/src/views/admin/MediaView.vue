@@ -157,9 +157,17 @@ onMounted(() => {
       <div v-for="index in 8" :key="index" class="skeleton aspect-square rounded-xl"></div>
     </div>
 
-    <p v-else-if="attachments.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(attachments.error.value) }}
-    </p>
+    <div
+      v-else-if="attachments.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+      role="alert"
+    >
+      <span class="text-ink-soft">{{ toErrorMessage(attachments.error.value) }}</span>
+      <!-- 与文章列表一致：失败态必须给出重试入口，而不是只留一行文案 -->
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="attachments.run()">
+        重试
+      </button>
+    </div>
 
     <EmptyState
       v-else-if="!attachments.data.value.items.length"

@@ -59,12 +59,26 @@ export function useConfirmDelete<T>(options: ConfirmDeleteOptions<T>): ConfirmDe
     if (target === null) return
     const successMessage =
       typeof options.success === 'function' ? options.success(target) : options.success
-    const done = await action.run(() => options.remove(target), {
-      success: successMessage,
-      errorMessage: options.errorMessage ?? '删除失败',
-      mapError: options.mapError,
-    })
-    if (done === undefined) return
+    // 不能直接 `action.run(() => options.remove(target))` 再拿返回值判成败：
+    // 删除接口的类型是 `Promise<unknown>`，而 `api.delete` 的泛型默认是 `void`，
+    // 于是**成功**时 resolve 出来就是 `undefined` —— 恰好等于 useAction 用来表示
+    // 失败的哨兵。那会进入一种自相矛盾的状态：绿色 toast 已经弹了「已删除」，
+    // 而对话框不关、列表也不刷新（被删的行还留在原地）。
+    //
+    // 现在让任务显式返回 true 表示"跑完了、没抛异常"，成败仍由 useAction 统一判定：
+    // 抛异常 ⇒ 它返回 undefined ⇒ 保留对话框，让用户重试或取消。
+    const done = await action.run(
+      async () => {
+        await options.remove(target)
+        return true
+      },
+      {
+        success: successMessage,
+        errorMessage: options.errorMessage ?? '删除失败',
+        mapError: options.mapError,
+      },
+    )
+    if (!done) return
     // 成功才关：失败时保留对话框，用户看到错误提示后可以重试或取消
     pending.value = null
     options.onDeleted?.(target)

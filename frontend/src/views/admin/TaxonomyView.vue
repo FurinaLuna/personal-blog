@@ -60,10 +60,18 @@ function startEditCategory(item: Category): void {
 async function saveCategory(): Promise<void> {
   const id = editingCategoryId.value
   if (id === null) return
+  // 与 createCategory 同一道校验：以前这里没有，把名字清空再点保存会发出
+  // `update(id, {name: ''})`，只能靠后端 422 拦下 —— 用户看到的是服务端报错，
+  // 而不是"这里不能为空"。
+  const name = categoryDraft.value.name.trim()
+  if (!name) {
+    toast.error('请填写分类名称')
+    return
+  }
   const saved = await action.run(
     () =>
       categoryApi.update(id, {
-        name: categoryDraft.value.name.trim(),
+        name,
         description: categoryDraft.value.description.trim() || null,
       }),
     { success: '分类已更新', errorMessage: '更新失败' },
@@ -145,7 +153,30 @@ onMounted(() => {
           </h2>
         </div>
 
-        <p v-if="!categories.data.value.length" class="px-4 py-6 text-center text-sm text-ink-soft">
+        <!--
+          失败态必须与"真的没有分类"分开：以前失败时直接落进下面的空态，
+          显示「还没有分类。」—— 站长会以为分类被清空了，而不是"接口挂了"。
+          加载中也不再先闪一下空态（这一页原先没有骨架屏）。
+        -->
+        <div v-if="categories.loading.value" class="space-y-2 px-4 py-4" aria-hidden="true">
+          <div v-for="n in 3" :key="n" class="h-9 animate-pulse rounded bg-surface-muted" />
+        </div>
+
+        <div
+          v-else-if="categories.error.value"
+          class="flex items-center justify-between gap-3 px-4 py-6 text-sm"
+          role="alert"
+        >
+          <span class="text-ink-soft">{{ categories.error.value }}</span>
+          <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="categories.run()">
+            重试
+          </button>
+        </div>
+
+        <p
+          v-else-if="!categories.data.value.length"
+          class="px-4 py-6 text-center text-sm text-ink-soft"
+        >
           还没有分类。
         </p>
 
@@ -230,7 +261,26 @@ onMounted(() => {
           </button>
         </div>
 
-        <p v-if="!tags.data.value.length" class="px-4 py-6 text-center text-sm text-ink-soft">
+        <!-- 与分类区块同理：失败 ≠ 空，加载中也不该先闪空态 -->
+        <div v-if="tags.loading.value" class="space-y-2 px-4 py-4" aria-hidden="true">
+          <div v-for="n in 3" :key="n" class="h-8 animate-pulse rounded bg-surface-muted" />
+        </div>
+
+        <div
+          v-else-if="tags.error.value"
+          class="flex items-center justify-between gap-3 px-4 py-6 text-sm"
+          role="alert"
+        >
+          <span class="text-ink-soft">{{ tags.error.value }}</span>
+          <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="tags.run()">
+            重试
+          </button>
+        </div>
+
+        <p
+          v-else-if="!tags.data.value.length"
+          class="px-4 py-6 text-center text-sm text-ink-soft"
+        >
           还没有标签。
         </p>
 

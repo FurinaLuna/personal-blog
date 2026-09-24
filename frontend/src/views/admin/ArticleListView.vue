@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 后台文章列表：作者看自己的（含草稿），站长看全站并可按作者/状态过滤。 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { articleApi } from '@/api'
@@ -30,9 +30,71 @@ const STATUS_OPTIONS: { value: ArticleStatus | ''; label: string }[] = [
   { value: 'archived', label: '已归档' },
 ]
 
-const status = ref<ArticleStatus | ''>((route.query.status as ArticleStatus) || '')
-const keyword = ref('')
-const page = ref(1)
+// 白名单必须在 ref 初始化**之前**声明：`const` 不提升，
+// 写在后面会在 setup 阶段直接抛 ReferenceError（组件挂载即失败）。
+const VALID_STATUSES: ArticleStatus[] = ['published', 'draft', 'archived']
+
+const status = ref<ArticleStatus | ''>(readStatusFromQuery())
+const keyword = ref(readKeywordFromQuery())
+const page = ref(readPageFromQuery())
+
+function readStatusFromQuery(): ArticleStatus | '' {
+  const raw = route.query.status
+  // 白名单校验：以前是 `as ArticleStatus` 直接透传，手改 ?status=hacked 会原样
+  // 发给后端（拿到 422 或空列表），而前台列表对 page=abc 是有兜底的。
+  return typeof raw === 'string' && (VALID_STATUSES as string[]).includes(raw)
+    ? (raw as ArticleStatus)
+    : ''
+}
+
+function readKeywordFromQuery(): string {
+  const raw = route.query.q
+  return typeof raw === 'string' ? raw : ''
+}
+
+function readPageFromQuery(): number {
+  const raw = Array.isArray(route.query.page) ? route.query.page[0] : route.query.page
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1
+}
+
+/**
+ * 把当前筛选写回地址栏。
+ *
+ * 与前台列表同一口径：**URL 是筛选状态的唯一来源**。以前这些条件只存在内存 ref 里，
+ * 于是「切到草稿 → 刷新」会弹回全部状态，分享出去的链接也带不上筛选条件；
+ * 分页与关键词更是完全不进 URL。
+ *
+ * 用 replace 而不是 push：翻页/切筛选属于同一屏内的状态微调，
+ * 每一次都 push 会让返回键变成"一步步倒着翻页"。
+ */
+function currentQuery(): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (status.value) query.status = status.value
+  const trimmed = keyword.value.trim()
+  if (trimmed) query.q = trimmed
+  // 第 1 页不写进 URL：?page=1 与不带参数是同一个视图，留着只是噪音
+  if (page.value > 1) query.page = String(page.value)
+  return query
+}
+
+function syncQuery(): void {
+  void router.replace({ query: currentQuery() })
+}
+
+/** 地址栏是否已经等于"该有的样子"（用来避免挂载时做一次无意义的 replace）。 */
+function queryIsCanonical(): boolean {
+  const expected = currentQuery()
+  const actual: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (typeof value === 'string') actual[key] = value
+  }
+  const keys = new Set([...Object.keys(expected), ...Object.keys(actual)])
+  for (const key of keys) {
+    if (expected[key] !== actual[key]) return false
+  }
+  return true
+}
 
 const emptyPage = emptyPageOf<ArticleSummary>(PAGE_SIZE)
 const articles = useAsyncData<Page<ArticleSummary>>(
@@ -50,12 +112,22 @@ const articles = useAsyncData<Page<ArticleSummary>>(
 const pendingDelete = useConfirmDelete<ArticleSummary>({
   remove: (item) => articleApi.remove(item.id),
   success: (item) => `《${item.title}》已删除`,
-  onDeleted: () => reload(),
+  // 与切换状态的口径一致：删掉一条不等于要回到第 1 页。
+  // 以前这里走 reload()（默认重置页码），在第 3 页删一条会被弹回第 1 页，
+  // 想接着删下一条就得重新翻回去。
+  onDeleted: () => reload(false),
 })
 
 function reload(resetPage = true): void {
   if (resetPage) page.value = 1
+  syncQuery()
   void articles.run()
+}
+
+/** 翻页：页号属于 URL 状态的一部分，所以走 reload(false) 而不是直接改 ref。 */
+function goToPage(next: number): void {
+  page.value = next
+  reload(false)
 }
 
 async function togglePublish(item: ArticleSummary): Promise<void> {
@@ -71,7 +143,37 @@ const isAdmin = computed(() => auth.isAdmin)
 
 onMounted(() => {
   void articles.run()
+  // 规范化地址栏：把 ?page=1 这类噪音清掉，其余条件原样保留。
+  // 先比对再写，免得每次进来都做一次多余的 replace。
+  if (!queryIsCanonical()) syncQuery()
 })
+
+/**
+ * 前进/后退、或有人直接改地址栏时，把 URL 的变化拉回视图。
+ *
+ * 组件实例会被复用（同一条路由记录），所以不能只依赖 onMounted。
+ * 这里必须先比对再赋值：否则 syncQuery() 写回 URL 会触发本 watch，
+ * 赋值 → 再写 → 再触发，绕成死循环。
+ */
+watch(
+  () => route.query,
+  () => {
+    const nextStatus = readStatusFromQuery()
+    const nextKeyword = readKeywordFromQuery()
+    const nextPage = readPageFromQuery()
+    if (
+      nextStatus === status.value &&
+      nextKeyword === keyword.value &&
+      nextPage === page.value
+    ) {
+      return
+    }
+    status.value = nextStatus
+    keyword.value = nextKeyword
+    page.value = nextPage
+    void articles.run()
+  },
+)
 </script>
 
 <template>
@@ -106,9 +208,17 @@ onMounted(() => {
       <div v-for="index in 6" :key="index" class="skeleton h-12 rounded-lg"></div>
     </div>
 
-    <p v-else-if="articles.error.value" class="card p-6 text-center text-sm text-ink-soft">
-      {{ toErrorMessage(articles.error.value) }}
-    </p>
+    <div
+      v-else-if="articles.error.value"
+      class="card flex items-center justify-between gap-3 p-6 text-sm"
+      role="alert"
+    >
+      <span class="text-ink-soft">{{ toErrorMessage(articles.error.value) }}</span>
+      <!-- 失败必须给出下一步：只有一行文案时用户只能自己猜"刷新一下试试" -->
+      <button type="button" class="btn--ghost px-2.5 py-1 text-xs" @click="reload(false)">
+        重试
+      </button>
+    </div>
 
     <EmptyState
       v-else-if="!articles.data.value.items.length"
@@ -247,7 +357,7 @@ onMounted(() => {
         :page="articles.data.value.page"
         :page-size="articles.data.value.page_size"
         :total="articles.data.value.total"
-        @change="(next) => { page = next; articles.run() }"
+        @change="goToPage"
       />
     </template>
 
