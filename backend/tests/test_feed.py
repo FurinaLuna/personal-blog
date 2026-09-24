@@ -99,6 +99,7 @@ class TestSitemap:
         # 有真实内容的聚合页都要收录，否则"页面存在但搜索引擎不知道"
         assert any(loc and loc.endswith("/series") for loc in locs)
         assert any(loc and loc.endswith("/links") for loc in locs)
+        assert any(loc and loc.endswith("/guestbook") for loc in locs)
         assert any(loc and published_article["slug"] in loc for loc in locs)
 
 

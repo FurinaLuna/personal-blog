@@ -194,3 +194,7 @@ LIKE_RATE_LIMIT = Depends(rate_limit("like", limit=20, window_seconds=60))
 # 30 次/分 远高于真人使用频率（没人一分钟搜 30 次），但足以让脚本化的
 # 全表扫描变成不划算的事。此前的审计结论是"这个端点是可以被廉价放大的攻击面"。
 SEARCH_RATE_LIMIT = Depends(rate_limit("search", limit=30, window_seconds=60))
+# 留言板与评论同一档：两者都是匿名可写的公开入口，也是机器人最先盯上的两个端点。
+# 规则名（"guestbook"）参与 key 构造，因此它与评论的配额互不影响——
+# 在留言板刷满不会把评论区一起封掉，反之亦然。
+GUESTBOOK_RATE_LIMIT = Depends(rate_limit("guestbook", limit=5, window_seconds=60))

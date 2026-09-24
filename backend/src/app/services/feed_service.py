@@ -114,6 +114,9 @@ class FeedService:
             # 但"可能为空"不是不收录的理由——空页面自己会显示空态）
             (f"{base}/series", None, "weekly"),
             (f"{base}/links", None, "monthly"),
+            # 留言板同理：内容由访客产生，是真实页面而不是空壳
+            # （changefreq 给 weekly：留言不像文章那样天天更新）
+            (f"{base}/guestbook", None, "weekly"),
             (f"{base}/about", None, "monthly"),
         ]
         for article in await self._latest(SITEMAP_ITEM_LIMIT):

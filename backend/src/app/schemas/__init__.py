@@ -12,6 +12,13 @@ from app.schemas.article import (
 from app.schemas.attachment import AttachmentRead, UploadResult
 from app.schemas.comment import CommentCreate, CommentModerate, CommentRead
 from app.schemas.common import ErrorBody, Message, Page
+from app.schemas.guestbook import (
+    GuestbookMessageAdminRead,
+    GuestbookMessageCreate,
+    GuestbookMessageRead,
+    GuestbookModerate,
+    GuestbookReply,
+)
 from app.schemas.notification import UnsubscribeRequest
 from app.schemas.series import SeriesBrief, SeriesCreate, SeriesRead, SeriesUpdate
 from app.schemas.site import (
@@ -65,6 +72,11 @@ __all__ = [
     "CommentRead",
     "DailyViewStats",
     "ErrorBody",
+    "GuestbookMessageAdminRead",
+    "GuestbookMessageCreate",
+    "GuestbookMessageRead",
+    "GuestbookModerate",
+    "GuestbookReply",
     "LoginRequest",
     "Message",
     "Page",

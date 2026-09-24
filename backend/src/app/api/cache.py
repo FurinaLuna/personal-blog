@@ -46,11 +46,17 @@ CACHEABLE_PREFIXES = (
     "/api/v1/site",
     "/api/v1/comments",
     "/api/v1/links",
+    # 留言板公开列表：只含已过审的留言，响应里没有任何随用户变化的字段
+    # （邮箱 / IP / UA 都不在公开 read schema 里，见 schemas/guestbook.py）——
+    # 这正是它能被共享缓存的前提。它的后台版 /api/v1/guestbook/manage
+    # 靠下面的 "/manage" 标记排除。
+    "/api/v1/guestbook",
 )
 
 # 与前台共用前缀、但属于后台/个人化的路径标记
 # （/api/v1/links 与 /api/v1/links/manage 正是靠 "/manage" 这一条区分开：
-#  前者是匿名可读的友链页，后者含未启用条目、只有站长能看）
+#  前者是匿名可读的友链页，后者含未启用条目、只有站长能看；
+#  /api/v1/guestbook 与 /api/v1/guestbook/manage 同理，后者还多出邮箱与 IP）
 _EXCLUDED_MARKERS = ("/manage", "/revisions")
 
 # 前台内容的缓存时长（秒）。改大之前请先想清楚"定时发布"的体感。

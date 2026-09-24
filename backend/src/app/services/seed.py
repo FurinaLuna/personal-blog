@@ -24,6 +24,7 @@ from app.models import (
     ArticleStatus,
     Category,
     FriendLink,
+    GuestbookMessage,
     SiteProfile,
     Tag,
     User,
@@ -175,6 +176,36 @@ def _set_pragmas(dbapi_connection, _):
     },
 ]
 
+
+# 演示留言。三条刻意覆盖留言板的三种形态，缺一条就会有一整块 UI 在演示里看不到：
+#   ① 已过审 + 站长回复 —— 前台"站长回复"那个块
+#   ② 已过审 + 无回复   —— 前台"还没回"的常态
+#   ③ 待审核           —— 后台待审队列（前台看不见它，这正是"先审后发"的证据）
+# 时间戳由 TimestampMixin 自动生成，三条的先后顺序就是 id 顺序（列表按 id 倒序，
+# 所以③会出现在后台队列最前面 —— 待办事项排在最上面才符合直觉）。
+DEMO_GUESTBOOK_MESSAGES: list[dict[str, object]] = [
+    {
+        "author_name": "小林",
+        # 这里的域名是**访客自己填的网站**，不是本站推荐的链接，所以用
+        # example.com 这种占位域名没有「点了打不开的友链」那种问题
+        # （对比 DEMO_FRIEND_LINKS 那条原则：卡片是给访客点的，必须真实可开）。
+        # 留着它是因为前台「有网站时渲染外链」这个分支需要一条带值的数据才看得见。
+        "author_site": "https://example.com/",
+        "content": "从搜索找过来的，目录和代码块的处理很舒服，已经加进阅读器了。",
+        "is_approved": True,
+    },
+    {
+        "author_name": "路过的猫",
+        "author_email": None,
+        "content": "想问下站点是自建的还是用框架？加载速度挺快。",
+        "is_approved": True,
+    },
+    {
+        "author_name": "新访客",
+        "content": "第一次留言，先占个位置，回头再仔细翻翻归档。",
+        "is_approved": False,
+    },
+]
 
 # 演示友链。只用**真实存在**的站点：编造的域名（example.com 之类）在演示里看着
 # 没问题，实际是一张点不开的卡片——而站长第一件事就是点一遍自己的友链页。
@@ -473,6 +504,41 @@ async def seed_friend_links(session: AsyncSession) -> None:
     await session.flush()
 
 
+async def seed_guestbook(session: AsyncSession, admin: User) -> None:
+    """写入演示留言。**表里已有任何一条留言时直接跳过**（守卫口径同 ``seed_friend_links``）。
+
+    留言板的典型用法和友链一样：站长往往会自己先留一条"欢迎留言"，
+    那通常发生在他写第一篇文章之前。此时再灌三条演示数据，等于把真实数据
+    和演示数据混在一张表里，而站长分不清哪条是自己的。
+
+    与友链的差别在于**没有可用的唯一键**：友链靠 ``url`` 唯一索引把并发双写
+    收敛成一次原子写入，这里只能退化成"先看表空不空、再插"。
+    残留的竞态窗口意味着两个进程同时冷启动时**有可能**各插一份 ——
+    代价是多两条演示留言，而不是像友链那样撞唯一键后让进程启动失败
+    （``lifespan`` 里的异常会 re-raise）。这个取舍是刻意的：
+    演示数据重复不致命，启动失败致命。
+
+    第一条演示留言带站长回复：前台"站长回复"那个块只有存在一条被回复过的
+    数据才看得见，否则它永远是死代码。
+    """
+    existing = await session.execute(select(func.count()).select_from(GuestbookMessage))
+    if int(existing.scalar_one()) > 0:
+        return
+
+    # 回复要挂在一条**已过审**的留言上：站长回复待审留言是允许的，
+    # 但演示数据里让"已发布且被回复"同时成立，前台一进来就能看到完整形态。
+    messages: list[GuestbookMessage] = []
+    for index, item in enumerate(DEMO_GUESTBOOK_MESSAGES):
+        message = GuestbookMessage(**item)
+        if index == 0:
+            message.reply_content = "谢谢！主题配色是自己调的，正文用的是思源宋体。"
+            message.replied_at = datetime.now(UTC)
+            message.replied_by_id = admin.id
+        messages.append(message)
+        session.add(message)
+    await session.flush()
+
+
 async def ensure_seed(session: AsyncSession) -> None:
     """统一入口：启动时调用一次即可。"""
     admin = await seed_admin(session)
@@ -480,3 +546,4 @@ async def ensure_seed(session: AsyncSession) -> None:
     if settings.seed_demo_data:
         await seed_demo_content(session, admin)
         await seed_friend_links(session)
+        await seed_guestbook(session, admin)
