@@ -14,6 +14,7 @@ from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.base import BaseRepository
 from app.repositories.comment_repository import CommentRepository
 from app.repositories.notification_opt_out_repository import NotificationOptOutRepository
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.revision_repository import ArticleRevisionRepository
 from app.repositories.series_repository import SeriesRepository
 from app.repositories.site_repository import SiteRepository
@@ -32,6 +33,7 @@ __all__ = [
     "CategoryRepository",
     "CommentRepository",
     "NotificationOptOutRepository",
+    "RefreshSessionRepository",
     "SeriesRepository",
     "SiteRepository",
     "TagRepository",

@@ -32,7 +32,7 @@ async def login(payload: LoginRequest, session: SessionDep, _: None = LOGIN_RATE
     """用用户名或邮箱 + 密码换取双 token。"""
     service = AuthService(session)
     user = await service.authenticate(payload.username, payload.password)
-    return service.issue_tokens(user)
+    return await service.issue_tokens(user)
 
 
 @router.post("/token", response_model=Token, summary="登录（OAuth2 表单，供 Swagger 调试）")
@@ -50,7 +50,7 @@ async def login_form(
     """
     service = AuthService(session)
     user = await service.authenticate(username, password)
-    return service.issue_tokens(user)
+    return await service.issue_tokens(user)
 
 
 @router.post("/refresh", response_model=Token, summary="刷新令牌")

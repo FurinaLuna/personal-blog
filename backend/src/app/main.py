@@ -29,6 +29,7 @@ from app.db.base import Base
 from app.db.fulltext import ensure_search_indexes
 from app.db.session import async_session_factory, engine
 from app.models import User  # noqa: F401 - 触发所有模型注册到 Base.metadata
+from app.services.auth_service import AuthService
 from app.services.seed import ensure_seed
 from app.services.visit_stats_service import VisitStatsService
 from app.utils.exceptions import DomainError, UnauthorizedError
@@ -64,6 +65,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             raise
 
     await _prune_visit_logs()
+    await _prune_refresh_sessions()
 
     logger.info("%s 已启动（env=%s）", settings.app_name, settings.app_env)
     yield
@@ -96,6 +98,23 @@ async def _ensure_fulltext_index() -> None:
             logger.info("当前数据库未建立检索索引，搜索将使用无索引的 LIKE")
     except Exception:  # 增强功能不能成为启动的单点故障
         logger.warning("检索索引初始化失败（搜索将退回无索引 LIKE，不影响启动）", exc_info=True)
+
+
+async def _prune_refresh_sessions() -> None:
+    """启动时清理过期的刷新会话（尽力而为）。
+
+    与访问日志同一类问题：`refresh_sessions` 每次登录/刷新都写一行，
+    只增不减的话备份体积与迁移耗时都会慢慢变难看，而收益是零。
+    同一个"尽力而为、失败不影响启动"的取舍。
+    """
+    try:
+        async with async_session_factory() as session:
+            removed = await AuthService(session).prune_expired_sessions()
+            await session.commit()
+        if removed:
+            logger.info("已清理 %d 条过期的刷新会话", removed)
+    except Exception:
+        logger.warning("刷新会话清理失败（不影响启动）", exc_info=True)
 
 
 async def _prune_visit_logs() -> None:

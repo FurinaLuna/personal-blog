@@ -11,6 +11,7 @@ from app.models.attachment import Attachment
 from app.models.comment import Comment
 from app.models.enums import ArticleSort, ArticleStatus, UserRole
 from app.models.notification_opt_out import NotificationOptOut
+from app.models.refresh_session import RefreshSession
 from app.models.revision import ArticleRevision
 from app.models.series import Series
 from app.models.site import SiteProfile
@@ -28,6 +29,7 @@ __all__ = [
     "Category",
     "Comment",
     "NotificationOptOut",
+    "RefreshSession",
     "Series",
     "SiteProfile",
     "Tag",
