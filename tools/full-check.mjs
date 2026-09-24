@@ -411,21 +411,60 @@ try {
   if (cat) registry.categories.push(cat.id)
   record('A5a 新建分类', a5create?.ok && a5create?.toast && Boolean(cat), `id=${cat?.id} slug=${cat?.slug}`)
 
+  // A5b 修改分类。
+  //
+  // 这条用例踩过两次"失败但说不出哪里失败"的坑（`record` 只传了布尔），
+  // 所以现在每一步都留证据：找不到行/找不到编辑按钮/编辑器没打开/保存按钮不在，
+  // 分别返回不同的 reason —— 排查时不用再猜是哪一环断了。
   const a5update = await evalJs(`(async () => {
     const row = [...document.querySelectorAll('li,tr,div')].find(el => el.textContent?.includes(${JSON.stringify(catName)}) && el.querySelector('button'))
-    const edit = [...(row?.querySelectorAll('button') ?? [])].find(b => /编辑|修改/.test(b.textContent))
-    edit?.click()
+    if (!row) {
+      // 现场取证：此刻分类区块到底渲染了什么（空态/骨架/错误/旧数据）
+      const cards = [...document.querySelectorAll('.card')]
+      const listCard = cards.find(c => c.textContent?.includes('全部分类')) ?? cards[0]
+      return {
+        ok: false,
+        reason: '没找到包含该分类且带按钮的容器',
+        listText: (listCard?.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 200),
+        items: [...document.querySelectorAll('li')].map(li => li.textContent.trim().slice(0, 24)),
+      }
+    }
+
+    const edit = [...row.querySelectorAll('button')].find(b => /编辑|修改/.test(b.textContent))
+    if (!edit) return { ok: false, reason: '容器里没有「编辑」按钮', rowText: row.textContent.trim().slice(0, 80) }
+    edit.click()
     await new Promise(r => setTimeout(r, 600))
+
     const inputs = [...document.querySelectorAll('input')]
     const nameInput = inputs.find(i => i.value === ${JSON.stringify(catName)}) ?? inputs[0]
+    if (!nameInput) return { ok: false, reason: '页面里没有任何输入框' }
     nameInput.value = ${JSON.stringify(catName2)}
     nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+
     const save = [...document.querySelectorAll('button')].find(b => /保存|确定/.test(b.textContent.trim()))
-    save?.click()
+    if (!save) return { ok: false, reason: '编辑器没打开（找不到保存按钮）', inputs: inputs.map(i => i.value) }
+    save.click()
     await new Promise(r => setTimeout(r, 1800))
-    return { ok: true, toast: document.body.innerText.includes('分类已更新') }
+
+    const text = document.body.innerText
+    return {
+      ok: true,
+      toast: text.includes('分类已更新'),
+      // 失败时把 toast 区域的文案带回去：区分"没反应"和"报错了"
+      tail: text.slice(-200).replace(/\\s+/g, ' '),
+    }
   })()`, true)
-  record('A5b 修改分类', a5update?.ok && a5update?.toast)
+  // 现场证据只在失败时带出来：通过时把整页文案打进报告只是噪音
+  const a5bOk = Boolean(a5update?.ok && a5update?.toast)
+  record(
+    'A5b 修改分类',
+    a5bOk,
+    a5bOk
+      ? ''
+      : a5update?.reason
+        ? `${a5update.reason} | 列表=${a5update.listText ?? '-'} | 条目=${JSON.stringify(a5update.items ?? [])}`
+        : (a5update?.tail ?? ''),
+  )
 
   // A6 标签 增（Enter 提交）/ 删  —— 先建，供 C0 种子文章共用
   const tagName = `E2E 标签 ${RUN}`

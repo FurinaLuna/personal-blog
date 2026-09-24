@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from app import __version__
 from app.api.cache import PublicCacheMiddleware
 from app.api.feed import router as feed_router
-from app.api.middleware import RequestContextMiddleware
+from app.api.middleware import HeadMethodMiddleware, RequestContextMiddleware
 from app.api.v1 import api_router
 from app.config import settings
 from app.db.base import Base
@@ -269,12 +269,19 @@ def create_app() -> FastAPI:
     # 也就是说原先的注释（"放在 CORS 之前注册…即使被 CORS 拒绝也能留下记录"）
     # 与代码效果**恰好相反**：被 CORS 拒掉的请求在日志里完全消失。
     #
-    # 因此这里刻意按「内 → 外」注册，最外层是 RequestContext：
+    # 因此这里刻意按「内 → 外」注册：
     #
     #   RequestContext（最外：所有请求都要留痕，包括被 CORS 拒的）
-    #     └── PublicCache（把 200 折叠成 304，日志里记的才是真实状态码）
-    #           └── CORS
-    #                 └── 路由
+    #     └── Head（把 HEAD 改写成 GET 交给路由，最后丢正文）
+    #           └── PublicCache（对**完整**正文取哈希算 ETag，把 200 折叠成 304）
+    #                 └── CORS
+    #                       └── 路由
+    #
+    # Head 与 PublicCache 的先后不能颠倒：PublicCache 的 ETag 是对响应体取
+    # 哈希得到的，如果把 Head 放在它内层，正文会先被清空 ⇒ 所有资源的 ETag
+    # 都变成"空正文的哈希"（同一个值），缓存语义直接失效。
+    # Head 放在 RequestContext 内层则是为了让访问日志仍记录 HEAD 而不是 GET。
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -288,6 +295,10 @@ def create_app() -> FastAPI:
 
     # 公开读接口的 ETag / Cache-Control（详见 api/cache.py）
     app.add_middleware(PublicCacheMiddleware)
+
+    # HEAD 复用 GET（FastAPI 不像 Starlette 那样给 GET 自动补 HEAD，见
+    # HeadMethodMiddleware 的说明）。必须在 PublicCache 之外、RequestContext 之内。
+    app.add_middleware(HeadMethodMiddleware)
 
     # 请求 ID 与访问日志（最外层）
     app.add_middleware(RequestContextMiddleware)

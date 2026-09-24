@@ -79,6 +79,28 @@ def make_etag(body: bytes) -> str:
     return f'W/"{hashlib.sha256(body).hexdigest()[:32]}"'
 
 
+def merge_vary(existing: str | None) -> str:
+    """在既有 `Vary` 上补 `Authorization`（不覆盖，CORS 会加 `Origin`）。
+
+    **这一条是正确性所必需，不是优化。** 同一个 URL 常常既服务于匿名公开页，
+    也服务于已登录的后台（`/api/v1/categories`、`/api/v1/tags`、`/api/v1/site/profile`
+    都是这样）。没有 Vary 时浏览器缓存只按 URL 匹配：
+
+    1. 匿名访问公开页 → 响应带 `public, max-age=60` 被存下；
+    2. 站长登录后新建一个分类，列表重新拉同一个 URL → **命中那份匿名缓存**，
+       新分类不在列表里 —— 表现为"后台新建成功但列表里没有"。
+
+    这个 bug 是被浏览器端到端脚本抓到的（`full-check` 的 A5b）：单测里 API 层
+    被 spy 掉了，永远看不见缓存这一层。加上 `Vary: Authorization` 之后，
+    匿名那份缓存不再匹配带凭证的请求，后台永远是新鲜数据；
+    而匿名访客之间照样共享缓存 —— 收益保留，正确性回来。
+    """
+    values = [part.strip() for part in (existing or "").split(",") if part.strip()]
+    if "Authorization" not in values:
+        values.append("Authorization")
+    return ", ".join(values)
+
+
 def if_none_match_hits(header: str | None, etag: str) -> bool:
     """`If-None-Match` 是否命中。
 
@@ -119,6 +141,8 @@ class PublicCacheMiddleware(BaseHTTPMiddleware):
         }
         headers[_ETAG_HEADER] = etag
         headers[_CACHE_CONTROL] = f"public, max-age={PUBLIC_MAX_AGE}"
+        # 见 merge_vary 的说明：没有它，"后台新建完再看列表"会命中匿名缓存
+        headers["Vary"] = merge_vary(headers.get("Vary"))
 
         if if_none_match_hits(request.headers.get("if-none-match"), etag):
             # 304 必须**不带响应体**，但 ETag / Cache-Control 要一致，

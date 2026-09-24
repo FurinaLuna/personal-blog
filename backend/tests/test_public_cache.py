@@ -13,7 +13,13 @@ import logging
 import pytest
 from httpx import AsyncClient
 
-from app.api.cache import PUBLIC_MAX_AGE, if_none_match_hits, is_cacheable_request, make_etag
+from app.api.cache import (
+    PUBLIC_MAX_AGE,
+    if_none_match_hits,
+    is_cacheable_request,
+    make_etag,
+    merge_vary,
+)
 from tests.factories import make_article_payload
 
 PUBLIC_LIST = "/api/v1/articles"
@@ -239,3 +245,116 @@ class TestMiddlewareOrder:
         ]
         assert records, "没有捕获到该路径的访问日志"
         assert records[-1].extra_fields["status"] == 304
+
+
+class TestHeadRequests:
+    """HEAD 必须能用，且头部与 GET 完全一致（RFC 9110 对 HEAD 的定义）。
+
+    FastAPI 不会像 Starlette 的 Route 那样给 GET 自动补 HEAD，
+    所以 `HEAD /api/v1/articles` 原本是 **405** —— 而 HEAD 是缓存/CDN 再验证、
+    监控探活与 `curl -I` 的常用手段。
+    """
+
+    async def test_head_on_public_endpoint_returns_200(self, client: AsyncClient) -> None:
+        response = await client.head(PUBLIC_LIST)
+
+        assert response.status_code == 200
+        assert response.content == b""
+
+    async def test_head_headers_match_get(self, client: AsyncClient) -> None:
+        """头部必须与 GET 一致 —— 包括 Content-Length 与 ETag。
+
+        ETag 一致这条尤其重要：它是"HEAD 在 PublicCache 之外"的判据。
+        如果顺序反了，PublicCache 会对**空正文**取哈希，
+        于是所有资源的 ETag 变成同一个值（缓存语义失效）。
+        """
+        get = await client.get(PUBLIC_LIST)
+        head = await client.head(PUBLIC_LIST)
+
+        assert head.headers["etag"] == get.headers["etag"]
+        assert head.headers["content-length"] == get.headers["content-length"]
+        assert head.headers["cache-control"] == get.headers["cache-control"]
+
+    async def test_head_supports_conditional_request(self, client: AsyncClient) -> None:
+        """缓存再验证的常规姿势：HEAD + If-None-Match → 304。"""
+        get = await client.get(PUBLIC_LIST)
+        head = await client.head(PUBLIC_LIST, headers={"If-None-Match": get.headers["etag"]})
+
+        assert head.status_code == 304
+        assert head.content == b""
+
+    async def test_head_on_non_cacheable_path_still_works(self, client: AsyncClient) -> None:
+        """/health 不在缓存白名单里，但 HEAD 同样应该可用（监控常用它探活）。"""
+        response = await client.head("/health")
+
+        assert response.status_code == 200
+        assert response.content == b""
+
+    async def test_head_is_logged_as_head(
+        self, client: AsyncClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """外层看到的必须仍是 HEAD。
+
+        如果把改写做在 RequestContext 之外，访问日志会把 HEAD 记成 GET ——
+        观测数据静默失真，而这正是本轮修掉的那类问题。
+        """
+        with caplog.at_level(logging.INFO, logger="blog"):
+            await client.head(PUBLIC_LIST)
+
+        records = [
+            record
+            for record in caplog.records
+            if getattr(record, "extra_fields", {}).get("path") == PUBLIC_LIST
+        ]
+        assert records, "没有捕获到访问日志"
+        assert records[-1].extra_fields["method"] == "HEAD"
+
+    async def test_get_still_has_body(self, client: AsyncClient) -> None:
+        """别把 GET 一起改坏了：正文必须还在。"""
+        response = await client.get(PUBLIC_LIST)
+
+        assert response.status_code == 200
+        assert len(response.content) > 0
+
+
+class TestVaryAuthorization:
+    """`Vary: Authorization` 是正确性所需，不是优化。
+
+    同一个 URL 往往既服务匿名公开页、也服务已登录后台。没有 Vary 时浏览器
+    只按 URL 匹配缓存：匿名那次存下的 `public, max-age=60` 会被登录后的
+    列表请求命中 —— 表现为"后台新建成功，但列表里没有新东西"（读己之写失效）。
+    这个 bug 由浏览器端到端脚本（full-check 的 A5b）抓到，单测看不见缓存层。
+    """
+
+    @pytest.mark.parametrize(
+        ("existing", "expected"),
+        [
+            (None, "Authorization"),
+            ("", "Authorization"),
+            ("Origin", "Origin, Authorization"),
+            ("Origin, Authorization", "Origin, Authorization"),  # 不重复添加
+            ("Origin,Accept-Encoding", "Origin, Accept-Encoding, Authorization"),
+        ],
+    )
+    def test_merge_vary_keeps_existing_values(self, existing: str | None, expected: str) -> None:
+        assert merge_vary(existing) == expected
+
+    async def test_cached_response_declares_vary(self, client: AsyncClient) -> None:
+        response = await client.get(PUBLIC_LIST)
+
+        assert "Authorization" in response.headers.get("vary", "")
+
+    async def test_uncached_response_does_not_get_vary(
+        self, client: AsyncClient, admin_headers
+    ) -> None:
+        """带凭证的请求本来就不缓存，不该被塞一个多余的 Vary。"""
+        response = await client.get(PUBLIC_LIST, headers=admin_headers)
+
+        assert "Authorization" not in response.headers.get("vary", "")
+
+    async def test_cors_origin_vary_is_preserved(self, client: AsyncClient) -> None:
+        """CORS 会给响应加 `Vary: Origin`，不能被我们覆盖掉（否则跨域缓存会串）。"""
+        response = await client.get(PUBLIC_LIST, headers={"Origin": "http://localhost:5173"})
+
+        vary = response.headers.get("vary", "")
+        assert "Origin" in vary and "Authorization" in vary
