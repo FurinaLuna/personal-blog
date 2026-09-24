@@ -20,6 +20,8 @@
 | 2026-09-21 | `5b52c7f` | `full-check` 适配「登出真吊销」（登出后重新取令牌再清理）；临时账号命名统一为 `/^e2e[_-]/i` |
 | 2026-09-21 | `d0ea85f` `945bea1` | `tools/e2e_live` 打通 **PostgreSQL 方言**：修复 psql 结果解析（NULL 哨兵、记录分隔符、尾部换行、行数脚注），SQLite 62/62 之外多出 PG 61 条防线 |
 
+| 2026-09-22（续） | `31989a9`…`e84d58c` | views 层补齐到 12 个视图 / 333 条；HEAD 全线 405 与公开读缓存的读己之写；刷新令牌轮换 + 复用检测；标签云体积封顶；CSS 复查结论为**无需优化**（gzip 10.8KB，实测证据见日志批次 11） |
+
 > **已完成（当初列在「未做」里）**：第三波功能项 1.1 草稿自动保存、1.2 系列文章、
 > 1.4 访问趋势统计、1.5 评论邮件通知、1.6 多尺寸图片（AVIF/WEBP），
 > 以及 4.5 请求 ID + 结构化日志、4.6 限流、4.8 前端类型按领域拆分。
@@ -35,13 +37,13 @@
 
 | 维度 | 现状 |
 |---|---|
-| 规模 | 45 个 Vue 组件 + 67 个 TS 文件（前端 src 约 12.4k 行）；后端 83 个 Python 源文件（8.8k 行）+ 32 个测试文件（8.1k 行） |
+| 规模 | 45 个 Vue 组件 + 67 个 TS 文件 + 42 个 spec；后端源文件与测试文件见 README 基线表 |
 | 前端产物 | vendor 111KB、markdown 90KB + 60KB、主包 82KB、CSS 60KB（gzip 后 43/31/18/31/11 KB），dist 合计 644KB |
-| 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；**10 条迁移 / 12 张业务表**（+ FTS5 影子表；PG 上另有 pg_trgm 与 3 条 GIN 索引）；**546 个 pytest**（SQLite 541 passed/5 skipped，覆盖率 82.51%，门槛 80%），ruff 全绿 |
-| 前端 | **438 个 vitest 用例 / 27 个 spec**（含新增的 views 层 216 条 / 7 个视图）；vue-tsc 0 error、eslint 干净 |
+| 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；**10 条迁移 / 12 张业务表**（+ FTS5 影子表；PG 上另有 pg_trgm 与 3 条 GIN 索引）；**547 个 pytest**（SQLite 542 passed/5 skipped，覆盖率 82.61%，门槛 80%），ruff 全绿 |
+| 前端 | **666 个 vitest 用例 / 42 个 spec**（22 个视图全部有 spec / 333 条）；vue-tsc 0 error、eslint 干净 |
 | 端到端 | `tools/e2e_live` 两套方言：SQLite **62/62**（已进 CI）、PostgreSQL **60 pass + 1 skip**；另有 smoke 34 / interaction 22 / full-check 41 三项浏览器脚本（**首个浏览器脚本此前写死 Windows 路径导致 CI 必挂，已修**） |
 | 已有能力 | 分页排序全入 URL、JWT 双 Token 静默续期 + 登出真吊销、RSS/sitemap/OG meta、主题三态、移动端目录、代码块复制、阅读进度条、系列文章、图片多尺寸 srcset、访问趋势 PV/UV、评论邮件通知 |
-| 缺口 | ~~views 层零测试~~（已补 7 个 view / 216 条，其余 15 个 view 仍无 spec）；远程 CI 因账号账单锁从未真正执行（**本地等价验证已全部跑通，且 CI 里三个浏览器脚本已跨平台化**，见 2026-09-22 日志）；无 ETag / 缓存；PG 上的检索在 3 字以内关键词仍走顺序扫描（三元组索引的固有粒度） |
+| 缺口 | ~~views 层零测试~~（**已关闭**：22 个视图全部有 spec / 333 条）；远程 CI 因账号账单锁从未真正执行（**本地等价验证已全部跑通，且 CI 里三个浏览器脚本已跨平台化**，见 2026-09-22 日志）；无 ETag / 缓存；PG 上的检索在 3 字以内关键词仍走顺序扫描（三元组索引的固有粒度） |
 
 ---
 
@@ -55,7 +57,7 @@
 | 1.4 | 站点统计加时间序列：新增访问日志表（或按天聚合视图），后台仪表盘出近 30 天曲线 | 现在只有累计计数，看不出趋势 | 中 |
 | 1.5 | 评论通知：被回复时给评论者发邮件（含退订链接），站长回复优先 | 评论区从「死胡同」变成对话 | 中 |
 | 1.6 | 上传时生成多尺寸 + AVIF：Pillow 已在依赖里，`attachment_service` 生成封面时顺带出 480/800/1600 三档 | 移动端流量减半；列表页不会为缩略图下载原图 | 中 |
-| 1.7 | 标签/归档分页：现在一次取全量标签，标签上百后首屏白等 | 标签页 TTFB 与首屏时间 | 低 |
+| 1.7 | ~~标签/归档分页~~（**部分完成 2026-09-22**：标签云改为服务端过滤 `minCount=1` + 上限 200，首屏体积已封顶；真正的分页未做，因为标签云没有合适的分页切法） | 标签页 TTFB 与首屏时间 | 低 |
 | 1.8 | 文章版本历史（`article_revisions` 表 + 后台 diff 回滚） | 误删段落可恢复 | 高 |
 
 > 取舍说明：**不在**此列的是 SSO/OAuth、多语言、评论盖楼三级以上、实时协作——
@@ -89,6 +91,8 @@
 | 3.4 | 主页首屏三请求合并：`articles` + `tags` + `categories` → 一个 `/home` 聚合接口（或并行但让 `site/profile` 走 store 缓存，已有 store） | 首屏往返从 3 次降到 1–2 次 | 低 |
 | 3.5 | 公开 GET 加 `ETag` / `Cache-Control: public, max-age=60`（文章列表、详情、标签） | 二次访问与 CDN 命中；注意区分后台接口 | 低 |
 | 3.6 | CSS 52KB 复查：检查 Tailwind `content` 是否扫到全部路径、`@tailwindcss/typography` 是否可按需裁剪 | 可能砍掉 10–20KB | 低 |
+
+> **3.6 结论（2026-09-22 实测）**：不做优化。CSS gzip 后 **10.8KB**（未压缩 60.5KB），构成见 `docs/devlog/2026-09-22.md` 批次 11；nginx 已开 gzip。另实测：把 `*.spec.ts` 排除出 Tailwind content 后产物**一个字节都不差**。
 | 3.7 | 归档页按年折叠 + 懒加载月份条目（现在一次性展开多组） | 文章过千后的归档页 | 低 |
 | 3.8 | 后端列表加轻量缓存层（进程内 LRU 或 Redis），热点是首页前两页 | 数据库压力；SQLite 单机的并发上限 | 中 |
 
@@ -152,6 +156,8 @@
 |---|---|---|
 | **给公开 GET 加缓存 / ETag** | `/admin/**`、`/auth/me`、写接口一旦被缓存，用户会看到别人或过期的数据；Vite 与 nginx 各有一层 | 只给前台只读接口加；`Cache-Control: no-store` 显式标注后台与鉴权接口；nginx 按 location 分别设置 |
 | **拆 `ArticleService`（4.4）** | 442 个 pytest 里相当一部分打在文章路径上；`/articles/{slug_or_id}` 的数字/字符串双解析、`set_tags` 的异步惰性加载陷阱都在这条链路上（文件已从 412 行长到 642 行，拆分的紧迫度比当初更高） | 只做「搬移」不做「改写」；测试**只增不改**，跑通后再动实现；`git mv` 保持历史 |
+
+> **4.4 已完成（2026-09-22）**：`article_service.py`(642) → `article_query_service.py`(432) + `article_command_service.py`(245)；`article_repository.py`(697) → `article_query_repository.py`(641) + `article_write_repository.py`(80)。方法体逐字搬移（子代理用 AST 比对 66/66 零差异，我也独立复核过），测试零改动。**没解决**：读侧 641 行仍偏大（若继续拆应按查询族分文件）；写路径为了复用详情装配会调用只读服务的私有 `_build_detail`。
 | **改路由 / 布局（任何触碰 `router/index.ts` 的改动）** | 历史 bug：`/admin` 父路由同时写 `component` 与 `meta.layout`，导致布局嵌套两层、子页面完全不渲染。单元测试和类型检查**都发现不了** | 改完必须跑 `make smoke`（34 项真实浏览器冒烟）；新增路由时布局只走 meta 一处 |
 | **改 `vite.config.ts`（加 Vitest / 改分包）** | `vitest` 与 `vue-tsc`、`@vitejs/plugin-vue` 版本组合易冲突；改 `manualChunks` 可能让 markdown 包被重复打进主包 | 先 `npm run type-check && npm run build` 确认基线体积，改完对比；锁小版本 |
 | **图片多尺寸 / AVIF（1.6）** | `Attachment` 表与上传响应字段变化；老文章正文里的封面是硬编码 URL（`/media/...` 相对路径），字段改名会导致 404 | 只增字段不改名；`cover_image` 保持原值，新尺寸放 `variants`；写一次性脚本回填 |

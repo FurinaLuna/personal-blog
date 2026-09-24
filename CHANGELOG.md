@@ -14,6 +14,27 @@
 
 ### 新增
 
+- **views 层补齐到「每个视图都有 spec」**：本轮新增 15 个 spec / 222 条
+  （LoginView 20、SearchView 23、ArchiveView 12、CategoriesView 10、SeriesView 11、
+  SeriesDetailView 15、UnsubscribeView 15、AboutView 16、NotFoundView 3、PlaceholderView 5、
+  admin：SettingsView 22、CommentListView 24、SeriesView 23、DashboardView 18、TagsView 9），
+  累计 **22 个视图全部有测试**（216 + 222 条）。审计里排第一的前端覆盖空洞就此关闭
+- **article 域按读写拆分**（ROADMAP 4.4，只搬移不改写）：
+  `article_service.py`（642 行）→ `article_query_service.py`（432）+ `article_command_service.py`（241）；
+  `article_repository.py`（697 行）→ `article_query_repository.py`（641）+ `article_write_repository.py`（80）。
+  方法体逐字照搬、公开签名不变、测试零改动（541 → 666 passed 是另一批测试新增的结果）。
+  保留 13 行的 `article_service.py` 只为一个纯函数 —— 有一条测试直接 import 它，
+  而本次约束是不动测试；理由写在模块 docstring 里
+- **标签云不再拉全量**（ROADMAP 1.7 的实质问题）：`TagsView` 此前一次取回**全部**标签
+  （含每条的篇数计数），再在浏览器里 `filter(count > 0)` —— 没有文章的标签白白下载，
+  也白白让后端做一轮计数子查询。现把过滤交给服务端（`minCount=1`）并带上上限
+  （后端 `limit` 上限 200），触顶时页面明确说明"只显示最常用的 200 个"
+- **回填变体接口返回 `remaining`**：前端以前只能固定说"还剩待处理可再次运行"，
+  已经跑完时那句话是错的；或者拿 `processed` 去猜后端的分批上限（改一次上限就说谎）。
+  现在由后端给出真实剩余数，前端据此说"还剩 N 张"或"已全部处理完"
+- `frontend/src/views/TagsView.spec.ts`（9 条）：请求参数（服务端过滤 + 上限）、
+  标签云渲染与链接、隐藏篇数、零篇标签不渲染、空态、骨架屏、失败态与重试、
+  触顶与未触顶两种提示
 - **刷新令牌轮换 + 复用检测 + 按会话吊销**（`refresh_sessions` 表，迁移 `b8d2f5a1c3e9`）：
   此前 refresh token 是**完全无状态**的（`jti` 生成了却从不落库），"吊销"只能靠
   `token_version += 1`（全端下线）。两个后果：泄露后在 7 天有效期内可反复换出
@@ -184,6 +205,37 @@
 
 ### 已修复
 
+- **登录开放重定向（协议相对地址）**：`redirect` 用 `startsWith('/')` 校验，
+  `//evil.example/phish` 能通过，而浏览器把它解析成 `https://evil.example/phish` ——
+  history 模式 pushState 到跨源地址会抛 `SecurityError`，表现是**登录成功却停在登录页**
+  外加一条没人处理的 rejection。改用 `/^\/(?!\/)/` 一次排掉外站与伪协议
+- **站点设置页的静默数据丢失（最危险的一条）**：档案接口失败时 store 回落默认值、
+  `loaded` 永远为 false，表单是空的、**没有错误提示也没有重试**，而保存按钮照常可用 ——
+  站长随手一点就把站点名、签名、关于页、邮箱、备案号、评论策略整片覆盖成默认值，
+  界面还提示"保存成功"。现在 store 如实暴露 `error`（前台仍优雅降级），
+  后台显示错误条 + 重试，并在 `loaded === false` 时**禁用保存**
+- **系列详情不跟随路由参数**：只绑 `onMounted`，`/series/a → /series/b` 是同一条路由记录、
+  组件实例被复用 → 页面停在旧系列的标题与列表且不报错。现 `watch` slug（与文章详情同一口径）
+- **系列详情硬编码 50 篇且无分页**：60 篇的系列只列前 50 条，第 51 篇起**没有任何入口**，
+  而头部还写着"60 篇"。现按 URL 分页（`?page=`），并渲染分页器
+- **搜索页页码口径与首页不一致**：分页器读 URL 的 `page` 而不是接口返回的，
+  `?page=99` 被后端收敛到末页时会出现「981–42 / 共 42 条」这种自相矛盾的数字
+- **评论管理页两处插值写成了字面量**：`#{item.article_id}` / `#{item.parent_id}`
+  少了一层花括号，Vue 不插值 → 每一行都显示调试风格的 `#{...}` 文本
+- **评论管理页删掉当前页最后一条后停在空页**：空态分支里没有分页器、`total` 仍大于 0，
+  用户没有任何入口回到上一页；现在删除后会把页码收敛回上一页
+- **系列编辑允许空名称**：新建有非空校验而编辑没有，清空名字会把 `name: ''` 发给后端
+  （只能靠 422 兜底）；现与新建同一道校验
+- **系列删除的权限判定靠正则匹配后端文案**：`/403|站长/.test(String(error))` ——
+  后端换文案就静默退化，任何含"站长"的错误也会被误判成权限问题。改用 `error.isForbidden`
+- **归档 / 分类 / 系列 / 系列详情失败态没有重试入口**：只有一行文案，
+  用户只能自己猜"刷新一下试试"；现统一 `role="alert"` + 重试按钮
+- **评论管理页把插值写成了字面量**：`CommentListView.vue` 两处用了单花括号
+  （`查看文章 #{item.article_id}`、`回复 #{item.parent_id}`），Vue 不插值 ——
+  每一行都显示 `#{item.article_id}` 这种调试风格的字面量。现改为 `#{{ ... }}`
+- **用户管理的字段错误不随输入清除**：改完用户名后红字还挂在那里，
+  用户以为"还是不对"。现与 `ArticleEditView` 同一口径：一改输入就清掉对应那条
+  （只清自己那条，其它字段的错误保留）
 - **`refresh_sessions` 的时间字段在 SQLite 上比较即抛异常**：SQLite 存的时间取出来是
   **naive**，而 PG 的 `timestamptz` 取出来是 aware，`naive <= aware` 直接
   `TypeError: can't compare offset-naive and offset-aware datetimes`。
