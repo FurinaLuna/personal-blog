@@ -14,6 +14,21 @@
 
 ### 新增
 
+- **支持 HEAD 请求**（此前 `HEAD /api/v1/articles` 是 **405**）：FastAPI 不像 Starlette 的
+  `Route` 那样给 GET 自动补 HEAD（`starlette/routing.py` 有 `if "GET" in methods: add("HEAD")`，
+  `APIRoute` 没跟这条）。而 HEAD 是缓存/CDN 再验证、监控探活与 `curl -I` 的常用手段。
+  `HeadMethodMiddleware` 的做法是：只把**内层** scope 的方法名改写成 GET，外层
+  （日志/限流/CORS）看到的仍是 HEAD；正文一律丢掉但**头部原样保留**（含
+  `Content-Length`，这正是 HEAD 的语义）。位置很关键 —— 必须在 PublicCache
+  **外层**，否则 ETag 会对"空正文"取哈希，所有资源的 ETag 变成同一个值
+- **前端 views 层测试第二梯队**：`ArticleListView`（32 条）、`MediaView`（30 条）、
+  `TaxonomyView`（33 条）、`UsersView`（23 条），共 **118 条**；
+  加上第一梯队共 7 个 view / 216 条
+- `tests/test_public_cache.py` 扩到 **55 条**：新增 `Vary` 契约、
+  HEAD 的头部一致性/条件请求/日志方法名、`merge_vary` 的合并规则
+- `tools/full-check.mjs` 的 A5b 用例改为**失败会自证**：找不到行 / 找不到编辑按钮 /
+  编辑器没打开分别返回不同 reason，并带上当时的列表文案与条目 ——
+  这条用例此前失败时只有一个空 detail（正是它让我多花了一轮才定位到缓存问题）
 - **公开读接口的 HTTP 缓存**（`api/cache.py`）：前台所有只读接口此前没有任何缓存头，
   浏览器每次二次访问、每次前进后退都要重新全量查库，中间任何一层缓存也无从判断
   内容有没有变。现补 `ETag`（对响应体取 sha256，弱验证器）+ `Cache-Control: public,
@@ -153,6 +168,40 @@
 
 ### 已修复
 
+- **公开读缓存击穿了"读己之写"（自己引入、被浏览器端到端抓到）**：
+  加上 `Cache-Control: public, max-age=60` 之后，同一个 URL 既服务匿名公开页、
+  也服务已登录后台（`/categories`、`/tags`、`/site/profile` 都是这样），
+  而浏览器缓存**只按 URL 匹配**：匿名那次存下的响应会被登录后的列表请求命中 →
+  表现为「后台新建分类成功，但列表里看不到新分类」。
+  修法是在被缓存的响应上声明 `Vary: Authorization`（与 CORS 的 `Vary: Origin`
+  合并而不是覆盖）。**单测看不见这一层**（API 被 spy 掉），是 `full-check` 的 A5b
+  把它抓出来的 —— 这也是为什么浏览器脚本不能省
+- **删除成功后确认框不关、列表不刷新（UsersView 真机必现）**：
+  `useConfirmDelete` 拿 `action.run()` 的返回值判成败，而 `if (done === undefined) return`
+  撞上了 `api.delete` 的默认泛型 `void` —— **成功**时 resolve 出来就是 `undefined`，
+  恰好等于 useAction 表示失败的哨兵。于是绿色 toast 已经弹了「已删除」，
+  而对话框不关、被删的行还在。UsersView 必现（store 的 `removeUser` 是 async void），
+  另三个视图只是潜伏（204 → `''`、JSON → 真值）。现改为让任务显式返回 `true`，
+  成败只由"有没有抛异常"决定 —— 一处修好四个视图
+- **编辑页竞态：迟到的详情响应会覆盖表单（静默数据丢失）**：`loadArticle` 在
+  `await articleApi.detail()` 后直接写 `form.value`，没有代次守卫。在两个编辑页之间
+  快速切换（改地址栏 id、或前进/后退 —— 路由记录相同、实例复用）时，先发后到的
+  响应会把表单改成**上一篇**的内容，而保存 PATCH 的是当前 id：用户以为在改 B，
+  实际把 A 的内容写进了 B。现加加载代次，迟到的成功/失败一律丢弃
+  （失败也丢：否则一篇 404 会把另一篇标成"加载失败"）
+- **后台文章列表的筛选状态只活在内存里**：`?status=draft` 只在进入时读一次，
+  之后切筛选/翻页/搜索都不回写地址栏 —— 刷新或分享出去的链接与屏幕上看到的不一致；
+  非法 `?status=hacked` 还会原样发给后端。现与前台列表同一口径：**URL 是筛选状态的
+  唯一来源**（回写用 `replace`，第 1 页不进 URL），并加白名单校验与非法 page 兜底
+- **分类/标签接口失败被伪装成"空"**：`TaxonomyView` 从不消费 `categories.error` /
+  `tags.error`，500 时页面显示「还没有分类。」—— 站长会以为分类被清空了。
+  现失败给错误文案 + 重试入口，加载中给骨架屏（不再先闪一下空态）
+- **重命名分类不校验空名称**：`createCategory` 有非空校验而 `saveCategory` 没有，
+  清空名字仍会发出 `update(id, {name: ''})`，只能靠后端 422 兜底。现已对齐
+- **列表失败态没有重试入口**：`ArticleListView` / `MediaView` 此前只有一行错误文案，
+  用户只能自己猜"刷新一下试试"；现补 `role="alert"` + 重试按钮
+- **第 3 页删一条会被弹回第 1 页**：删除走 `reload()`（默认重置页码），
+  与切换状态的 `reload(false)` 口径不一致；现统一保留当前页
 - **`APP_ENV` 写错就让生产门禁静默失效**：`is_production` 的判据是
   `app_env.lower() == "production"`，于是 `APP_ENV=prod`、`prd`、`production `
   （末尾空格）都会让整套安全门禁（默认密钥 / 默认口令 / DEBUG / DB_AUTO_CREATE /
