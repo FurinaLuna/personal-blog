@@ -14,6 +14,17 @@
 
 ### 新增
 
+- **刷新令牌轮换 + 复用检测 + 按会话吊销**（`refresh_sessions` 表，迁移 `b8d2f5a1c3e9`）：
+  此前 refresh token 是**完全无状态**的（`jti` 生成了却从不落库），"吊销"只能靠
+  `token_version += 1`（全端下线）。两个后果：泄露后在 7 天有效期内可反复换出
+  新 access token 且服务端看不见；每刷新一次就多一枚可用凭证（泄露面单调增长）。
+  现在每次签发登记一条会话（**只存 jti 的 SHA-256**），刷新即轮换旧令牌；
+  已轮换的令牌再次出现即判定盗用并**吊销整族**（OAuth 2.0 的标准处理），
+  30 秒宽容窗口内例外（容忍两个标签页同时刷新 —— 前端的单飞锁只在单页内生效）；
+  过期会话在启动时清理（与访问日志同一取舍）
+- `tests/test_refresh_rotation.py`（13 条）：会话登记与只存哈希、轮换后旧令牌失效、
+  宽容窗口内外两种重放处理、未知令牌（升级前签发的）被拒、登出/改密码吊销会话、
+  过期清理只删该删的
 - **支持 HEAD 请求**（此前 `HEAD /api/v1/articles` 是 **405**）：FastAPI 不像 Starlette 的
   `Route` 那样给 GET 自动补 HEAD（`starlette/routing.py` 有 `if "GET" in methods: add("HEAD")`，
   `APIRoute` 没跟这条）。而 HEAD 是缓存/CDN 再验证、监控探活与 `curl -I` 的常用手段。
@@ -90,6 +101,11 @@
   `onProgress`，但此前没有任何调用方传过
 
 ### 已变更
+
+> **升级须知（1.0.0 之前）**：本次引入了刷新会话表。**此前签发的 refresh token
+> 在库里没有对应记录，会一律被拒** —— 也就是升级后需要重新登录一次。
+> access token 不受影响（它不查这张表），会在 120 分钟内自然过期。
+> 若将来变成多用户系统，这里需要一个"识别为旧令牌则放行一次并补登记"的过渡逻辑。
 
 - `useAction` 的 `success` 支持传函数（成功那一刻才求值）。原因是一个真实缺陷：
   `success: `欢迎回来，${auth.displayName}`` 是**调用前**求值的，
@@ -168,6 +184,11 @@
 
 ### 已修复
 
+- **`refresh_sessions` 的时间字段在 SQLite 上比较即抛异常**：SQLite 存的时间取出来是
+  **naive**，而 PG 的 `timestamptz` 取出来是 aware，`naive <= aware` 直接
+  `TypeError: can't compare offset-naive and offset-aware datetimes`。
+  第一次跑测试就撞上了（refresh 的过期判断）。改用仓库里早就为此准备的
+  `db/types.py::UTCDateTime`（读出来统一补 UTC）
 - **公开读缓存击穿了"读己之写"（自己引入、被浏览器端到端抓到）**：
   加上 `Cache-Control: public, max-age=60` 之后，同一个 URL 既服务匿名公开页、
   也服务已登录后台（`/categories`、`/tags`、`/site/profile` 都是这样），

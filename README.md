@@ -10,7 +10,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 533 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
+**写出来能跑、改起来可验证** —— 546 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
 438 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
 与两套数据库方言的真实链路端到端（SQLite 62 条 / PostgreSQL 61 条）。
 
@@ -78,7 +78,8 @@
 
 - FastAPI + SQLAlchemy 2.0（全异步）+ Pydantic v2，严格分层
   （`api` / `services` / `repositories` / `models` / `schemas`）
-- JWT 双 Token（access 120 分钟 / refresh 7 天），401 静默续期（带单飞锁防并发重复刷新）
+- JWT 双 Token（access 120 分钟 / refresh 7 天），401 静默续期（带单飞锁防并发重复刷新）；
+  refresh token **落库轮换**（只存 jti 哈希，已轮换的令牌再次出现即判定盗用并吊销整族，30 秒宽容窗口容忍多标签页同时刷新）
 - 三级角色：访客 / 作者 / 站长；三层防护：依赖注入门禁 → 资源归属校验 → Schema 层防提权
 - 上传安全：Pillow 真实解码判型（不信任客户端声明的 `Content-Type`）、流式限流读、
   扩展名白名单（默认禁 SVG / HTML）、服务端生成文件名
@@ -119,7 +120,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 533 例（SQLite + PostgreSQL 双方言）、前端 438 例 |
+| 测试 | pytest / Vitest | 后端 546 例（SQLite + PostgreSQL 双方言）、前端 438 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -200,7 +201,7 @@ personal-blog/
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 533 个 pytest 用例（SQLite / PostgreSQL 双方言）
+│   ├── tests/                      # 546 个 pytest 用例（SQLite / PostgreSQL 双方言）
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -336,12 +337,12 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **528 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.73%（门槛 80%） |
+| `pytest`（默认 SQLite） | **541 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.51%（门槛 80%） |
 | `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **518 passed, 1 skipped**（实测于 postgres:16；本轮改动后未复跑，按 +53 推算，下次跑 PG 作业时以实测为准） |
 | `vue-tsc --noEmit` | 0 报错 |
 | `vitest run` | **438 passed** |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 9 条迁移升至 head = 11 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
+| `alembic upgrade head` / `downgrade base` | 10 条迁移升至 head = 12 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 | `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
