@@ -57,17 +57,26 @@ def upgrade() -> None:
         # 用户被删时会话必须跟着走（表里存的是凭证状态，孤儿行没有意义）
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        # jti_hash 唯一：同一枚令牌不可能有两条会话记录
-        sa.UniqueConstraint("jti_hash", name="uq_refresh_sessions_jti_hash"),
     )
-    # 三条查询路径各有索引：按 jti 找（每次刷新）、按用户吊销（登出/改密码）、
-    # 按过期时间清理（启动时）
+    # 四条索引，各自对应一条真实查询路径：
+    #   按 jti 找（每次刷新）/ 按用户吊销（登出、改密码）/ 按过期时间清理（启动时）/
+    #   按创建时间（TimestampMixin 声明了 index=True，这里必须跟着建）
+    #
+    # jti_hash 用 **唯一索引** 而不是 `UniqueConstraint + 普通索引`：
+    # 模型里写的是 `unique=True, index=True`，SQLAlchemy 据此生成的是**一条**唯一索引；
+    # 迁移若改写成约束+索引，PostgreSQL 上就会出现两条功能重叠的索引
+    # （约束自带索引），既浪费写入又让 `compare_metadata` 永远报漂移。
+    # 全库统一口径：unique + index ⇒ 一条唯一索引。
     op.create_index("ix_refresh_sessions_user_id", "refresh_sessions", ["user_id"])
-    op.create_index("ix_refresh_sessions_jti_hash", "refresh_sessions", ["jti_hash"])
+    op.create_index(
+        "ix_refresh_sessions_jti_hash", "refresh_sessions", ["jti_hash"], unique=True
+    )
     op.create_index("ix_refresh_sessions_expires_at", "refresh_sessions", ["expires_at"])
+    op.create_index("ix_refresh_sessions_created_at", "refresh_sessions", ["created_at"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_refresh_sessions_created_at", table_name="refresh_sessions")
     op.drop_index("ix_refresh_sessions_expires_at", table_name="refresh_sessions")
     op.drop_index("ix_refresh_sessions_jti_hash", table_name="refresh_sessions")
     op.drop_index("ix_refresh_sessions_user_id", table_name="refresh_sessions")
