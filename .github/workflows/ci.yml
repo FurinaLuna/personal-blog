@@ -264,6 +264,56 @@ jobs:
       - name: pytest（PostgreSQL 方言）
         run: pytest -q
 
+  deploy:
+    # 为什么需要这个作业：本仓库此前**所有**自动化跑的都是源码 ——
+    # uvicorn 直接跑 app/、Vite dev server 直接跑 src/、SQLite 文件库。
+    # 而线上跑的是两个镜像 + nginx + PostgreSQL，那一层里有一整类
+    # "源码模式永远不会经过"的路径：Dockerfile 的 COPY 目标是否存在、
+    # compose 的变量插值、容器入口的 alembic upgrade、
+    # nginx 的 location 与安全响应头、定时备份到底产不产得出可恢复的 dump、
+    # 以及自管证书那套（HTTP→HTTPS 跳转与 ACME 续期挑战）。
+    #
+    # 本仓库真实吃过这个亏：`COPY deploy/nginx.conf` 在构建上下文之外，
+    # 前端镜像**根本构建不出来**，而因为镜像从没被构建过，一直没人发现。
+    #
+    # runner 自带 docker + compose v2，脚本自己建临时目录、自己起栈、自己清理，
+    # 因此这里不需要任何 service 或预装步骤（与 e2e-live 作业同样的思路：
+    # 把"一条命令可复现"的验证固化进流水线，而不是写一段只有 CI 才有的逻辑）。
+    name: 部署 · 镜像构建与容器化冒烟
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 49 条断言：compose 静态校验（含"缺必填变量必须失败"的负向验证）、
+      # 镜像构建、起栈后的 HTTP 行为（含首页 CSP 与内联脚本哈希、HSTS 的条件式行为、
+      # 匿名读缓存与 Vary: Authorization）、容器内的生产形态与迁移 head、
+      # 备份的"真恢复演练"与轮转、以及 TLS 覆盖文件那套。
+      - name: 部署产物验证
+        run: node tools/deploy-check.mjs
+
+      # 报告里含逐条断言与失败时的四个容器日志，比流水线日志好读
+      - name: 上传报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-report
+          path: shots/deploy/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: 失败时输出容器日志
+        if: failure()
+        run: |
+          for service in db backup backend frontend; do
+            echo "----- $service -----"
+            docker compose -p blog-deploycheck -f docker-compose.yml logs --no-color --tail 60 "$service" || true
+          done
+
   audit:
     # 依赖漏洞是"上线时才发现、但上线前就能查出来"的典型。前端有 npm audit
     # 的记录，后端此前完全没有 —— 这个 job 补上那半边。

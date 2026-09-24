@@ -26,7 +26,7 @@ LINT_IMPORTS := $(abspath $(VENV_PY)) scripts/lint_imports.py
         test test-frontend test-all test-cov lint lint-frontend fmt fmt-check check typecheck \
         smoke interaction full-check e2e-live \
         migrate migration migrate-down seed backup backup-list build build-preview \
-        docker-config docker-up docker-down docker-logs docker-migrate clean
+        docker-config docker-up docker-down docker-logs docker-migrate deploy-check clean
 
 help: ## 显示所有可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -156,6 +156,9 @@ docker-logs: ## 跟随查看容器日志
 
 docker-migrate: ## 手动补跑数据库迁移（正常由容器入口自动执行，这里是应急/重跑用）
 	docker compose exec backend alembic upgrade head
+
+deploy-check: ## 部署产物验证：真构建镜像 + 真起一套栈逐条断言（需 Docker，约 3~5 分钟）
+	node tools/deploy-check.mjs
 
 # ---------------------------------------------------------------- 清理
 
