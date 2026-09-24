@@ -244,6 +244,30 @@ function collectDiagnostics() {
   return sections.join('\n\n')
 }
 
+/**
+ * compose 的 backend 服务有 `env_file: ./.env`，而 `.env` 是 gitignore 的 ——
+ * CI 上不存在这个文件，于是 `docker compose config` 会直接失败在
+ * "env file not found" 上，跟被测的东西毫无关系。
+ *
+ * 处理方式：**缺失时**由脚本临时造一份（用本脚本自带的一次性密钥），跑完删掉；
+ * 已存在时一个字节都不碰（开发者本地的 .env 里有他自己的配置与数据）。
+ * 这样"本地跑通"与"CI 跑通"用的是同一套输入，不再依赖谁的机器上恰好有什么文件。
+ */
+function ensureEnvFile() {
+  const path = join(ROOT, '.env')
+  if (existsSync(path)) return null
+  const lines = [
+    '# 由 tools/deploy-check.mjs 临时生成（CI 上没有 .env，而 compose 的 env_file 指向它）',
+    ...Object.entries(SECRETS).map(([key, value]) => `${key}=${value}`),
+    'SITE_BASE_URL=http://localhost:8080',
+    'CORS_ORIGINS=http://localhost:8080',
+    'SMTP_ENABLED=false',
+    'RUN_MIGRATIONS_ON_STARTUP=true',
+  ]
+  writeFileSync(path, lines.join('\n') + '\n')
+  return path
+}
+
 function cleanup() {
   for (const tls of [true, false]) {
     compose(['down', '-v', '--remove-orphans'], { tls })
@@ -266,10 +290,14 @@ function staticChecks() {
   const emptyEnvFile = join(TMP, 'empty.env')
   writeFileSync(emptyEnvFile, '')
   for (const variable of ['POSTGRES_PASSWORD', 'JWT_SECRET_KEY', 'ADMIN_PASSWORD']) {
+    // ⚠️ 必须把**其余**密钥显式给足（这里的 SECRETS 是本脚本自带的临时值）。
+    // 第一版只写了 `{ ...process.env, [variable]: '' }`：本地有 `.env` 兜着，
+    // 另外两个变量照样有值；而 CI 的 runner 上根本没有 `.env`，于是三个变量一起缺失，
+    // compose 只报其中一个 —— 另外两条断言就被自己的环境依赖搞挂了（远端 CI 实测）。
     const r = run(
       'docker',
       ['compose', '-p', PROJECT, '-f', 'docker-compose.yml', '--env-file', emptyEnvFile, 'config', '-q'],
-      { env: { ...process.env, [variable]: '' } },
+      { env: { ...process.env, ...SECRETS, [variable]: '' } },
     )
     const mentioned = `${r.err}${r.out}`.includes(variable)
     record(`缺少 ${variable} 时 compose 拒绝启动（fail fast）`, r.code !== 0 && mentioned)
@@ -678,6 +706,9 @@ async function main() {
   console.log(`部署产物验证 · 项目 ${PROJECT} · Docker ${version.out.trim()}`)
   console.log(`临时目录 ${TMP}（备份 ${BACKUP_DIR}，证书 ${CERTS_DIR}）`)
 
+  const createdEnvFile = ensureEnvFile()
+  if (createdEnvFile) console.log('（本机没有 .env：已临时生成一份，跑完删除）')
+
   let crashed = null
   try {
     staticChecks()
@@ -695,6 +726,8 @@ async function main() {
     if (!KEEP) {
       cleanup()
       rmSync(TMP, { recursive: true, force: true })
+      // 只删自己生成的那份；本来就有 .env 的话上面返回 null，这里什么都不做
+      if (createdEnvFile) rmSync(createdEnvFile, { force: true })
     } else {
       console.log(`\n保留了现场（KEEP=1）：${TMP}`)
       console.log(`查看日志：docker compose -p ${PROJECT} -f docker-compose.yml logs --tail 50`)
