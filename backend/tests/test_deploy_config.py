@@ -69,7 +69,17 @@ def _compose() -> dict[str, Any]:
 
 
 def _interpolated_vars() -> set[str]:
-    text = _without_comments(COMPOSE_PATH.read_text(encoding="utf-8"))
+    """所有 compose 文件里 ``${VAR}`` 形式的变量。
+
+    **必须扫全部 compose 文件，不能只扫主文件**：``docker-compose.tls.yml``
+    是自管证书那条部署路径的入口，它引用的 ``TLS_CERTS_DIR`` 同样属于
+    "运维得知道它存在"的变量。只扫主文件的话，覆盖文件里新增的变量会
+    同时绕过两条测试（既不用写进 .env.example，也不会被判为"没人读"）。
+    """
+    text = "\n".join(
+        _without_comments(path.read_text(encoding="utf-8"))
+        for path in sorted(REPO_ROOT.glob("docker-compose*.yml"))
+    )
     return set(_INTERPOLATION_RE.findall(text))
 
 
@@ -296,7 +306,12 @@ class TestEntrypointScript:
         `https` → 有值，其余 → 空串（nginx 对空值的 add_header 不会发出该头）。
         这里同时钉住 map 的两个分支与 add_header 用的是变量而不是字面量。
         """
+        # 配置拆成了「两套外壳 + 一份共享 server 体」：
+        # map 在外壳（nginx.conf / nginx.https.conf，两套的条件不同），
+        # 而真正发头的 add_header 在共享的 security-headers.inc 里。
+        # 所以这条断言要跨两个文件读 —— 只读 nginx.conf 会在重构后误报。
         conf = (REPO_ROOT / "deploy" / "nginx.conf").read_text(encoding="utf-8")
+        headers = (REPO_ROOT / "deploy" / "security-headers.inc").read_text(encoding="utf-8")
 
         map_block = re.search(
             r"map\s+\$http_x_forwarded_proto\s+\$hsts_header\s*\{(?P<body>[^}]*)\}",
@@ -308,8 +323,21 @@ class TestEntrypointScript:
         assert re.search(r"https\s+\"max-age=\d+", body), "https 分支缺少 max-age"
 
         assert re.search(
-            r"add_header\s+Strict-Transport-Security\s+\$hsts_header\s+always\s*;", conf
+            r"add_header\s+Strict-Transport-Security\s+\$hsts_header\s+always\s*;", headers
         ), "add_header 必须用 $hsts_header 变量，而不是写死的字面量"
+
+        # 另一半：自管证书那套**自己就是 TLS 终点**，HSTS 必须是**无条件**的。
+        # 把这条也钉住，是因为反过来（HTTPS 版也靠 X-Forwarded-Proto 判断）意味着
+        # 直连 443 的访客永远收不到 HSTS —— 一个不会报错的静默失效。
+        https_conf = (REPO_ROOT / "deploy" / "nginx.https.conf").read_text(encoding="utf-8")
+        https_map = re.search(
+            r"map\s+\$http_x_forwarded_proto\s+\$hsts_header\s*\{(?P<body>[^}]*)\}",
+            https_conf,
+        )
+        assert https_map, "nginx.https.conf 缺少 HSTS 的 map"
+        assert re.search(r"default\s+\"max-age=\d+", https_map.group("body")), (
+            "自管证书那套的 HSTS default 必须是非空值（它是 TLS 终点，不依赖 X-Forwarded-Proto）"
+        )
 
     def test_nginx_conf_is_included_into_http_context(self) -> None:
         """`map` / `upstream` 都是 http 级指令，这个文件必须被 include 进 http{}。
@@ -321,9 +349,29 @@ class TestEntrypointScript:
         直接 `COPY deploy/nginx.conf` 会因跨上下文而构建失败。
         """
         dockerfile = (REPO_ROOT / "deploy" / "Dockerfile.frontend").read_text(encoding="utf-8")
+        # 主配置由构建参数 NGINX_CONF 选（默认 nginx.conf，TLS 部署传 nginx.https.conf），
+        # 所以这里要同时认「写死的 nginx.conf」与「${NGINX_CONF}」两种写法 ——
+        # 钉住的是**目标路径**这个不变量，不是某个具体文件名。
         assert re.search(
-            r"COPY\s+(?:--from=\S+\s+)?nginx\.conf\s+/etc/nginx/conf\.d/", dockerfile
+            r"COPY\s+(?:--from=\S+\s+)?(?:nginx\.conf|\$\{NGINX_CONF\})\s+/etc/nginx/conf\.d/",
+            dockerfile,
         ), (
-            "nginx.conf 必须落到 /etc/nginx/conf.d/（那里被 include 进 http{}）；"
+            "nginx 主配置必须落到 /etc/nginx/conf.d/（那里被 include 进 http{}）；"
             "落成 /etc/nginx/nginx.conf 会让 map/upstream 变成非法指令"
+        )
+
+        # 片段（.inc）被主配置用**绝对路径** include，所以它们也必须进 conf.d/，
+        # 而且引用的名字与拷进去的名字必须对得上。这两处一旦不一致，
+        # 症状是 nginx 起不来（unknown directive / open() failed），只在容器里可见。
+        copied = set(re.findall(r"([\w.-]+\.inc)", dockerfile))
+        assert {"nginx-common.inc", "nginx-server.inc", "security-headers.inc"} <= copied, (
+            f"nginx 主配置 include 的三个片段必须一起拷进镜像：实际只看到 {sorted(copied)}"
+        )
+
+        referenced: set[str] = set()
+        for name in ("nginx.conf", "nginx.https.conf", "nginx-server.inc", "security-headers.inc"):
+            text = (REPO_ROOT / "deploy" / name).read_text(encoding="utf-8")
+            referenced |= set(re.findall(r"include\s+/etc/nginx/conf\.d/([\w.-]+\.inc)\s*;", text))
+        assert referenced <= copied, "配置里 include 了镜像里不存在的片段：" + ", ".join(
+            sorted(referenced - copied)
         )

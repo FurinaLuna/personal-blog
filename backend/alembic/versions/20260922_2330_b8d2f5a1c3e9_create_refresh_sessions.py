@@ -68,9 +68,7 @@ def upgrade() -> None:
     # （约束自带索引），既浪费写入又让 `compare_metadata` 永远报漂移。
     # 全库统一口径：unique + index ⇒ 一条唯一索引。
     op.create_index("ix_refresh_sessions_user_id", "refresh_sessions", ["user_id"])
-    op.create_index(
-        "ix_refresh_sessions_jti_hash", "refresh_sessions", ["jti_hash"], unique=True
-    )
+    op.create_index("ix_refresh_sessions_jti_hash", "refresh_sessions", ["jti_hash"], unique=True)
     op.create_index("ix_refresh_sessions_expires_at", "refresh_sessions", ["expires_at"])
     op.create_index("ix_refresh_sessions_created_at", "refresh_sessions", ["created_at"])
 
