@@ -223,6 +223,10 @@ const action = useAction()
 | 让新的公开读接口吃到缓存 | 把路径加进 `api/cache.py` 的 `CACHEABLE_PREFIXES`（自动获得 ETag + `max-age=60` + `Vary: Authorization`，并支持条件请求 304）。后台路径用 `/manage` 或 `/revisions` 命名即可自动排除 |
 | 校验用户可控的 URL | 一律用 `utils/url.py::normalize_http_url`（**唯一实现**，评论 / 友链 / 将来的留言板共用）。自己写正则或 `urlsplit` 迟早在某个入口漏掉一种伪协议，而那是存储型 XSS |
 | 替换/升级认证 | JWT 逻辑全在 `utils/security.py` + `api/deps.py`，业务层只见 `User` 对象 |
+| 改 nginx（加 location、改缓存、改安全头） | 站点内容全在 `deploy/nginx-server.inc`（HTTP 与 HTTPS 两套外壳共用它，改一处两边都生效）。**自己写了 `add_header` 的 location 必须 include `/etc/nginx/conf.d/security-headers.inc`** —— nginx 的 `add_header` 不继承，漏了就是静默丢掉 CSP（首页文档曾经就是这样，见 CHANGELOG）。改完跑 `make deploy-check` |
+| 改部署形态（端口、卷、新服务） | `docker-compose.yml` 是默认形态；可选能力（TLS）用覆盖文件（`docker-compose.tls.yml`）而不是往默认文件里塞 —— 默认文件必须保持"克隆下来就能起"。凡是回归脚本需要隔离的路径都做成可覆盖变量（`APP_PORT` / `BACKUP_HOST_DIR` / `CERTBOT_WEBROOT` / `TLS_CERTS_DIR`），验证才不会污染真实数据 |
+| 加一个常驻 sidecar（备份、清理…） | 优先复用**已有的镜像**（备份用 `postgres:16-alpine`：`pg_dump` 必须 >= 服务端，同镜像让这条约束天然成立），脚本放 `deploy/` 并用卷挂进容器（改脚本不必重新 build），`restart: unless-stopped` + 循环体自己控节奏。失败要留在日志里而不是让容器退出重启——"一直在重启"比"活着但日志写着失败"更难查 |
+| 让一件事在 CI 里被验证 | 优先写成 `tools/*.mjs`，让本地与 CI **跑同一个入口**（`deploy-check` 就是这样：CI 那一步只有一行 `node tools/deploy-check.mjs`），而不是在 workflow 里堆一段只有 CI 才有的 shell。`tools/` 下脚本的约定：只用 Node 内置模块、跨平台、自带清理、退出码 0/1、失败时打印可复现的命令 |
 
 ## 六、验证清单（重构完成的判据）
 

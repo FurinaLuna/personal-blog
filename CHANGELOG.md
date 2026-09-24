@@ -14,6 +14,28 @@
 
 ### 新增
 
+- **部署产物验证 `tools/deploy-check.mjs`（`make deploy-check`，已接入 CI）**：这个仓库
+  此前**所有**自动化跑的都是源码（uvicorn 跑 `app/`、Vite dev server 跑 `src/`），
+  而线上跑的是两个镜像 + nginx + PostgreSQL。新脚本真的构建镜像、真的用 compose 起一套栈，
+  逐条断言那一层里的东西：compose 插值（含"缺必填变量必须失败"的**负向**验证）、
+  起栈后的 HTTP 行为、容器内的生产形态与迁移 head、**备份的真恢复演练与轮转**、
+  以及 TLS 覆盖文件那套。用独立项目名与临时目录，不碰开发者的 `.env`、
+  已有 compose 项目、`./backups` 与 `./deploy/certs`，跑完自清理；报告写入 `shots/deploy/`
+- **定时备份 sidecar**：compose 新增 `backup` 服务（`deploy/backup.sh`），用与数据库
+  **同一个镜像**（`pg_dump` 版本必须 >= 服务端，同镜像让这条约束天然成立）每天落一份
+  custom 格式 dump 到宿主 `./backups/`。每份先写 `.part`、再用 `pg_restore -l` 校验归档
+  可读、通过才改名；失败改走 300s 短重试而不是等满一天；轮转只保留 `BACKUP_KEEP` 份
+  （与 `backup_db.py` 的 `--keep` 同语义、同命名）。`BACKUP_ONCE=1 docker compose run --rm backup`
+  可手动触发一次
+- **自管证书的 TLS 模板**（`deploy/nginx.https.conf` + `docker-compose.tls.yml`）：
+  把 README 里"自己在 nginx 加个 443 server 块"变成可直接用的配置 —— 80 端口只做
+  ACME 挑战与跳转、443 承载站点、HSTS 无条件、certbot 的 webroot 与证书目录都已就位，
+  覆盖文件一叠即用（`docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build`），
+  退回纯 HTTP 不需要改文件
+- **compose 的可覆盖项**：`APP_PORT`（8080 被占用时换端口）、`BACKUP_HOST_DIR`
+  （备份落到别的盘）、`CERTBOT_WEBROOT`、`TLS_CERTS_DIR` —— 前两个是给部署用的，
+  后两个同时让回归脚本能在临时目录里跑完整流程而不污染真实文件
+- `docs/MODULES.md` 扩「部署相关改动落在哪」一节点名了这几个文件的分工
 - **友情链接（`/links` 从占位页变成真功能）**：完整垂直切片 —— `friend_links` 表（迁移
   `c1f4b8e2d6a3`，`url` 唯一 + `sort_order`/`is_active` 索引）、仓储/服务/Schema/API、
   前台页面与后台管理页（`/admin/links`）、3 条演示数据。
@@ -144,6 +166,23 @@
 
 ### 已变更
 
+- **nginx 配置拆成"两套外壳 + 一份共享 server 体"**：新增 `deploy/nginx-common.inc`
+  （http 上下文的 upstream）、`deploy/nginx-server.inc`（站点 location 与缓存策略）、
+  `deploy/security-headers.inc`（安全响应头）。`nginx.conf` 与 `nginx.https.conf`
+  只在"外壳"上不同（listen、证书、跳转）。抄成两份的代价是"改了 HTTP 版、HTTPS 版没改"
+  不会有任何报错，只会行为不同 —— 这正是 nginx 上最难发现的那类漂移
+  - 文件名刻意用 `.inc`：官方镜像的主配置里有 `include /etc/nginx/conf.d/*.conf;`，
+    叫 `.conf` 的片段会被当成第二个 server 加载
+  - 前端镜像新增 `NGINX_CONF` 构建参数来选主配置（默认 `nginx.conf`），
+    声明在该 ARG 之后的层才会失效，所以切换 TLS 时 npm ci 与 vite build 仍走缓存
+- **静态缓存的写法统一**：`/assets/` 与 `/media/` 改为显式 `Cache-Control`
+  （不再用 `expires` 再叠一条 `add_header Cache-Control`）—— 此前响应里会出现
+  两条 `Cache-Control`，合法但排查缓存问题时极难读
+- **`/feed.xml` 与 `/sitemap.xml` 合并为一个正则 location，并删掉两条死配置**：
+  原先写着 `proxy_cache_valid 200 1h` 却没有定义 `proxy_cache`，那是**空操作**，
+  读起来却像"已经缓存了"。当前由应用侧的 `Cache-Control` + `ETag` 负责，
+  注释里写明了为什么不在这里做 micro-cache（`Vary` 的处理，见缓存那一节踩过的坑）
+
 > **升级须知（1.0.0 之前）**：本次引入了刷新会话表。**此前签发的 refresh token
 > 在库里没有对应记录，会一律被拒** —— 也就是升级后需要重新登录一次。
 > access token 不受影响（它不查这张表），会在 120 分钟内自然过期。
@@ -226,6 +265,28 @@
 
 ### 已修复
 
+- **生产环境的 CSP 实际上从未生效（首页文档一个安全响应头都没有）**：nginx 的
+  `add_header` **不继承** —— 只要某一层自己写了哪怕一条，父层的全部失效。
+  而 `location = /index.html` 为了加 `Cache-Control: no-cache` 写了一条，
+  于是首页 HTML 文档（唯一会被浏览器当文档解析、也是 XSS 唯一有意义的落点）
+  丢掉了 CSP、`nosniff`、`X-Frame-Options`、`Referrer-Policy` 与 HSTS；
+  而 `/assets/`、`/media/` 上的 CSP 挂在 JS/图片响应上，浏览器根本不会应用。
+  实测（修复前）：`curl -sI http://localhost:8080/` 没有任何 CSP 头。
+  现在安全头抽成 `deploy/security-headers.inc`，每个自己写了 `add_header` 的
+  location 都 include 它，`tools/deploy-check.mjs` 里有一条断言盯着首页 CSP
+- **CSP 修好后会拦掉首页的内联主题脚本**（这是修上面那条时才暴露的连带问题）：
+  `frontend/index.html` 里那段"在样式加载前给 `<html>` 打 dark 类"的脚本是内联的，
+  而 `script-src 'self'` 不允许内联 —— 一旦 CSP 真正作用到文档上，症状是
+  **暗色模式白闪回归 + 控制台报 CSP 违规**，页面其余部分完全正常，很容易被当成
+  CSS 问题去查。现把它的 sha256 写进 `script-src`；改那段脚本后
+  `make deploy-check` 会把该填的哈希直接打出来
+- **`refresh_sessions` 迁移的两处漂移**（在真 PostgreSQL 上跑迁移 + 比对
+  `compare_metadata` 时暴露，两条都是我写的）：① `jti_hash` 同时建了
+  `UniqueConstraint` 与普通索引，而模型写的是 `unique=True, index=True`
+  （SQLAlchemy 据此只生成一条唯一索引）—— PG 上就是两条功能重叠的索引，
+  既浪费写入又让元数据比对永远报差异；② 漏了 `ix_refresh_sessions_created_at`
+  （`TimestampMixin` 声明了 `created_at index=True`）。该迁移**从未被任何环境执行过**，
+  所以直接改它而不是追加补丁：追加只会把一段本可以干净的历史留成两截
 - **`full-check` 的友链用例会把后续用例连带打挂**（我在扩展脚本时自己引入的）：
   A5c 切到 `/admin/links` 后没有切回分类页，而紧随其后的 A6/A7 都假设停留在
   `/admin/taxonomy` —— 结果一次连带 4 条用例失败，且 A6 创建的标签漏登记、
