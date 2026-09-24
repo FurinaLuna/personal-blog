@@ -6,6 +6,12 @@
 #
 #   前端 http://localhost:8080  （后端只经它反代，见文末「不发布 8000」那段）
 #
+# 起起来之后会有四样东西：db（不对宿主暴露）、backup（每天往 ./backups 落一份
+# dump）、backend（不发布端口）、frontend（唯一对外的入口）。
+#   APP_PORT=18080 docker compose up -d     # 8080 被占用时换端口
+#   docker compose logs -f backup           # 看备份有没有在跑
+#   -f docker-compose.tls.yml               # 叠上 TLS（自管证书），见该文件顶部
+#
 # ── 为什么配置源是**项目根目录**的 .env ─────────────────────────────
 # compose 的 ${VAR} 变量插值只读「项目根目录的 .env」和当前 shell 环境，
 # **不读**服务的 env_file。所以把配置写在 backend/.env 里，
@@ -40,6 +46,57 @@ services:
     # 数据库不对公网暴露，只在 compose 网络内可达
     expose:
       - "5432"
+
+  backup:
+    # 定时备份：每 BACKUP_INTERVAL_SECONDS 秒 pg_dump 一次到宿主 ./backups。
+    #
+    # 用 db 那**同一个镜像**（而不是新建一个小镜像）：pg_dump 的版本必须 >= 服务端
+    # 版本，同镜像让这条约束天然成立，也省掉一次构建。
+    # 脚本是挂载进去的（不是 COPY 进镜像），所以改备份逻辑不需要重新 build，
+    # 且 compose 之外也能单独 shellcheck 它。
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # 覆写 entrypoint：镜像自带的 docker-entrypoint.sh 会在 CMD 是 postgres 时
+    # 初始化一个数据库集群 —— 这里要的只是一个 pg_dump 客户端，不是第二个数据库。
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    # 清空镜像自带的 CMD（"postgres"）：不清的话它会作为参数追加到 entrypoint 后面，
+    # 脚本虽然不读参数，但 `docker inspect` 里会留下一段像是"要起数据库"的配置。
+    command: []
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-blog}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?请在项目根目录 .env 中设置 POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-blog}
+      BACKUP_DIR: /backups
+      # 与 backup_db.py 的 --keep 默认值保持一致
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      TZ: Asia/Shanghai
+      # 想手动触发一次（不启动常驻循环）：BACKUP_ONCE=1 docker compose run --rm backup
+    volumes:
+      # 必须绑到宿主：备份留在 docker 卷里等于"备份和库一起丢"，
+      # 而且没法 scp 到别的机器。目录内容已在 .gitignore 里排除。
+      # 路径可覆盖（BACKUP_HOST_DIR=/mnt/backup/blog），也正是让回归脚本
+      # 能在临时目录里跑完整备份+恢复演练、而不污染真实备份目录的办法。
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+      - ./deploy/backup.sh:/backup.sh:ro
+    depends_on:
+      db:
+        # 库没起来时 pg_dump 只会失败一堆，等健康检查通过更省事
+        condition: service_healthy
+      backend:
+        # 还要等 **backend 健康**：它的入口会先跑 `alembic upgrade head`，
+        # 健康检查通过就等于"结构已经建好"。只等 db 的话，全新部署的第一份备份
+        # 会赶在迁移之前落盘 —— 那是一个**结构为空但格式合法**的 dump
+        # （实测 0.8 KB、恢复出来 0 张表），比备份失败更危险：
+        # 它静静地躺在备份目录里，看起来"有备份"。
+        #
+        # 这与 backup.sh 里那道"没有 alembic_version 就跳过本轮"的检查是**双保险**：
+        # 后者覆盖"后端先起来、迁移稍后才做"的部署方式
+        # （RUN_MIGRATIONS_ON_STARTUP=false 时健康检查会先通过）。
+        condition: service_healthy
+    # 刻意不发布任何端口：它不在请求路径上，只需要能连到 db。
+    # 对 backend 的依赖只用于**启动顺序**（等迁移完成），起来之后两者互不影响。
 
   backend:
     build:
@@ -122,11 +179,24 @@ services:
         deploy: ./deploy
       args:
         VITE_API_BASE_URL: /api/v1
+        # 选哪套 nginx 主配置：默认纯 HTTP；TLS 部署由 docker-compose.tls.yml 覆盖。
+        # 两套共用同一份 server 体（deploy/nginx-server.inc），不会漂移。
+        NGINX_CONF: ${NGINX_CONF:-nginx.conf}
     restart: unless-stopped
     depends_on:
       - backend
+    volumes:
+      # ACME HTTP-01 的 webroot：自管证书时 certbot 往这里写挑战文件，
+      # 由 nginx-server.inc 里的 /.well-known/acme-challenge/ 吐出去。
+      # 纯 HTTP 与 TLS 两种部署都用它（TLS 版的 80 端口只做挑战与跳转），
+      # 平时是个空目录，留着免得启用证书时还得回头改 compose。
+      - ${CERTBOT_WEBROOT:-./certbot-webroot}:/var/www/certbot
     ports:
-      - "8080:80"
+      # APP_PORT 可覆盖：既为了"宿主 8080 已被别的服务占用"这种情况，
+      # 也让回归脚本能在不干扰开发者本地已跑起来的那套栈的前提下另起一套
+      # （tools/deploy-check.mjs 用 18080）。改了端口记得同步 .env 里的
+      # SITE_BASE_URL / CORS_ORIGINS，否则 RSS 与 sitemap 里的绝对地址会指错。
+      - "${APP_PORT:-8080}:80"
 
 volumes:
   pgdata:

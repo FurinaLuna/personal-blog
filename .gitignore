@@ -77,6 +77,13 @@ blog.db.bak-*
 backend/blog.db.bak-*
 # scripts/backup_db.py 的输出目录：里面是完整数据库快照，绝不能入库
 backend/backups/
+# compose 里 backup 服务的输出目录（绑定挂载到宿主，见 docker-compose.yml）。
+# 与 backend/backups/ 同理：完整库快照，且会随每次备份 churn。
+backups/
+# 自管 TLS：证书与私钥（deploy/certs 就是 certbot 的 /etc/letsencrypt）
+deploy/certs/
+# ACME HTTP-01 的 webroot：挑战文件是运行期临时产物
+certbot-webroot/
 playwright-report/
 test-results/
 # 样式基线的采集体（本地比对用，比对完即弃）

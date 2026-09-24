@@ -34,7 +34,18 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # 排查代价很高（nginx 自己的日志里什么都不会说）。
 # 因此：**本镜像要经 `docker compose build` 构建**，直接
 # `docker build frontend/` 会因为缺少这个上下文而报错。
-COPY --from=deploy nginx.conf /etc/nginx/conf.d/default.conf
+#
+# 三个片段文件（.inc）是无条件拷进去的，主配置则由 NGINX_CONF 选：
+# 默认 nginx.conf（纯 HTTP），TLS 部署用 docker-compose.tls.yml 传
+# nginx.https.conf 进来。两套主配置共用同一份 server 体，所以不会漂移。
+#
+# 名字带 .inc 而不是 .conf，是因为官方镜像的主配置里有
+# `include /etc/nginx/conf.d/*.conf;` —— 叫 .conf 的片段会被当成第二个 server 加载，
+# 站点就被发布两遍（而且 first-win 的那个还会盖掉另一个的行为）。
+COPY --from=deploy nginx-common.inc nginx-server.inc security-headers.inc /etc/nginx/conf.d/
+
+ARG NGINX_CONF=nginx.conf
+COPY --from=deploy ${NGINX_CONF} /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

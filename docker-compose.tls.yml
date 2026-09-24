@@ -1,0 +1,40 @@
+# 个人博客 · TLS 覆盖文件（自管证书的 HTTPS）
+#
+#   证书准备好之后（步骤见 deploy/nginx.https.conf 顶部）：
+#
+#     docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+#
+#   之后所有命令都要带上这两个 -f，否则会以纯 HTTP 的形态操作同一套容器，
+#   表现为"改了配置没生效"。想彻底退回去：`docker compose down` 再
+#   `docker compose up -d --build`（镜像里的 nginx 配置是构建期决定的，
+#   所以换配置必须重新 build，光 restart 不生效）。
+#
+# ── 为什么用覆盖文件，而不是把 TLS 写进主文件 ────────────────────────
+# 证书与域名属于部署环境，不是代码。写进主文件的话，一个没有证书的克隆
+# 会在 `docker compose up` 时直接启动失败（nginx 找不到证书文件就退出），
+# 也就是"没配 TLS 的人连 HTTP 都起不来"。覆盖文件让默认路径保持零依赖，
+# 想上 TLS 的人显式加一个 -f。
+#
+# 也刻意不把 nginx.conf 整份复制成 nginx.https.conf：两套配置共用
+# deploy/nginx-server.inc 里的站点内容，差别只在"外壳"（listen、证书、跳转）。
+#
+# ── 需要宿主准备的东西 ──────────────────────────────────────────────
+#   deploy/certs/live/<你的域名>/{fullchain.pem,privkey.pem}   证书（只读挂入）
+#   certbot-webroot/                                           ACME 挑战目录（主文件已挂）
+# 两者都在 .gitignore 里：证书私钥绝不能进仓库。
+
+services:
+  frontend:
+    build:
+      args:
+        NGINX_CONF: nginx.https.conf
+    volumes:
+      # 只读：nginx 只需要读证书；写权限没有意义，只是把私钥暴露给一个
+      # 被攻破后可以篡改证书的进程（那等于中间人）。
+      # 路径可覆盖（TLS_CERTS_DIR=/etc/letsencrypt）：让回归脚本用自签证书
+      # 在临时目录里验证这套配置，而不会覆盖真实证书。
+      - ${TLS_CERTS_DIR:-./deploy/certs}:/etc/nginx/certs:ro
+    ports:
+      # 与主文件的 "${APP_PORT:-8080}:80" **并存**（compose 对 ports 是追加合并）：
+      # 80 那一路不能少 —— 80→443 的跳转与 ACME 续期挑战都还在它上面。
+      - "${TLS_PORT:-443}:443"

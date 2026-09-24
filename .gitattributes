@@ -29,6 +29,13 @@ Makefile    text eol=lf
 .editorconfig text eol=lf
 LICENSE     text eol=lf
 Dockerfile* text eol=lf
+# nginx 配置与它 include 的片段（deploy/*.conf、deploy/*.inc）一律 LF。
+# 容器里跑的是 Linux nginx，而 Windows 检出默认可能是 CRLF：nginx 大多数情况下
+# 能容忍 \r，但一旦它落进某个指令的**取值**里（例如多行 add_header 的安全头），
+# 就会变成响应头里的一个真实字符 —— 症状只是"某个头看起来怪怪的"，极难归因，
+# 与上面 *.sh 那条是同一类问题：行尾在容器里变成了语义。
+*.conf      text eol=lf
+*.inc       text eol=lf
 .dockerignore text eol=lf
 
 # Windows 专属脚本保持 CRLF
