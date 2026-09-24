@@ -96,9 +96,8 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/guestbook',
     name: 'guestbook',
-    component: () => import('@/views/PlaceholderView.vue'),
+    component: () => import('@/views/GuestbookView.vue'),
     meta: { title: '留言板' },
-    props: { heading: '留言板', hint: '想说什么都可以，不限于文章内容。' },
   },
 
   // 退订页：从邮件里的链接进入（/unsubscribe?token=xxx），导航里没有入口。
@@ -185,6 +184,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-links',
         component: () => import('@/views/admin/LinksView.vue'),
         meta: { title: '友链管理', requiresAuth: true, requiresAdmin: true, layout: 'admin' },
+      },
+      {
+        path: 'guestbook',
+        name: 'admin-guestbook',
+        component: () => import('@/views/admin/GuestbookView.vue'),
+        meta: { title: '留言板管理', requiresAuth: true, requiresAdmin: true, layout: 'admin' },
       },
       {
         path: 'users',

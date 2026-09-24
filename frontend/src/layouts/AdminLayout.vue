@@ -28,6 +28,7 @@ const NAV = [
   { to: '/admin/series', label: '系列', icon: 'list' },
   { to: '/admin/media', label: '媒体库', icon: 'image' },
   { to: '/admin/links', label: '友链', icon: 'link' },
+  { to: '/admin/guestbook', label: '留言板', icon: 'chat' },
   { to: '/admin/users', label: '用户', icon: 'users', adminOnly: true },
   { to: '/admin/settings', label: '站点设置', icon: 'cog', adminOnly: true },
 ]

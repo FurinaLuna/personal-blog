@@ -9,6 +9,11 @@
  * 一旦后端 schema 变更，对应领域文件必须同步改——这是唯一的维护成本。
  */
 export type { FriendLink, FriendLinkPayload, FriendLinkUpdatePayload } from './link'
+export type {
+  GuestbookMessage,
+  GuestbookMessageAdmin,
+  GuestbookMessagePayload,
+} from './guestbook'
 export type { Message, Page, ValidationIssue } from './common'
 export type {
   ArticleDetail,
