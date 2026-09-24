@@ -14,6 +14,14 @@
 
 ### 新增
 
+- **远端 CI 第一次真实执行并全绿**（run #53，2026-09-24）：8 个作业全部通过 ——
+  在此之前（run #42~#47）所有作业都是 `steps=0` 启动即失败（账号级账单锁），
+  也就是说 Linux 侧的迁移升降级、真实浏览器 e2e、PostgreSQL 方言、依赖审计与镜像构建
+  **长期处于零验证状态**。解锁后的第一批反馈抓到 3 个真问题（见「已修复」）。
+  - `tools/deploy-check.mjs` 的失败现在会写成 **GitHub 注解**（`::error::` / `::notice::`）：
+    Actions 的完整日志只有协作者能下载，而注解公开可读 —— 这一层验证恰是最容易
+    「本地绿、CI 挂」的地方，把失败原因放到可读的位置之后，排查不必再靠猜
+  - 环境自检（node / compose / daemon 版本）也以注解形式留在运行记录里
 - **留言板（`/guestbook` 从占位页变成真功能）**：完整垂直切片 —— `guestbook_messages`
   表（迁移 `ec88a7148baa`，`is_approved` 索引 + `replied_by_id` 外键）、仓储 / 服务 /
   Schema / API、前台页面与后台管理页（`/admin/guestbook`）、3 条演示留言、后端 71 条用例、
@@ -291,6 +299,14 @@
 
 ### 已修复
 
+- **部署脚本隐式依赖开发者本机的 `.env`**（远端 CI 实测暴露，三次才挖到底）：
+  ① compose 的 `env_file: ./.env` 在 runner 上不存在 → `docker compose config` 直接失败在
+  "env file not found"，负向验证也靠 `.env` 补齐另外两个密钥 —— 现在**缺失时**由脚本临时造一份、
+  跑完删掉，已存在时一个字节都不碰；② Actions 日志匿名读不到，失败原因不可见 ——
+  现在失败写成公开可读的注解；③ Linux 上 Docker 会以 **root** 创建缺失的绑定挂载源目录，
+  于是宿主用户连往里 mkdir 都不行（`EACCES ... webroot/.well-known/acme-challenge`），
+  Windows 上看不到这个差异 —— 现在启动时先把三个源目录建出来。
+  顺带修掉「Docker 守护进程未就绪就直接 return」这条**不产出报告也不产出注解**的早退路径
 - **上一批部署改动打破了 3 条既有测试，而我当时只跑了前端与部署验证、没跑后端测试**：
   `tests/test_deploy_config.py` 的 `test_every_interpolated_var_is_documented`
   （compose 新增的 7 个变量没写进 `.env.example` —— **这条测试是对的，错的是我**）、

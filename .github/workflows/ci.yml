@@ -1,11 +1,19 @@
 name: CI
 
-# 说明：本仓库的 CI 曾连续 5 次全部失败，排查后发现与代码无关——
+# 说明：本仓库的 CI 曾连续 5 次全部失败（run #35~#47 的 job 全部 steps=0），
+# 排查后发现与代码无关——
 # 注解里写的是 "The job was not started because your account is locked due to a
 # billing issue."，即账号级账单锁，job 在启动前就被拒（steps 为空、2 秒内结束）。
 # 判别方法：`gh api repos/{owner}/{repo}/check-runs/{id}/annotations` 看注解；
 # 若注解提到 billing/locked，先去 Settings → Billing 处理，别改代码。
 # 详细记录见 docs/devlog/2026-09-12.md。
+#
+# **账单锁已于 2026-09-24 解除，CI 从 run #48 起真实执行**：
+#   #48 = 3 个作业失败（ruff 格式 / 测试里的部署配置断言 / 部署产物验证），
+#         前两个当轮修掉（`70fa3aa`）；
+#   #49 = 8 个作业里 7 个通过 —— 这是本项目第一次真正跑通浏览器 e2e 与 PostgreSQL 方言；
+#   #53 = **8 个作业全部通过**（部署作业也在真 CI 上跑通了，耗时 88s）。
+# 远端结果：https://github.com/FurinaLuna/personal-blog/actions
 #
 # CI 不可用时的本地等价验证（缺一不可）：
 #   make check    # ruff + 格式 + 后端测试 + 前端类型 + 前端单测
