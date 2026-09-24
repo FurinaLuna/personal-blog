@@ -328,6 +328,17 @@ async function main() {
     const tags = await evaluate(cdp, `document.querySelectorAll('a[href^="/?"]').length`)
     record('标签云', tags > 0, `${tags} 个标签`)
 
+    // ---------------------------------------------------------- 友链页
+    await navigate(cdp, `${BASE_URL}/links`)
+    const links = await evaluate(cdp, `(() => {
+      const heading = document.querySelector('h1')?.textContent?.trim() ?? ''
+      const cards = document.querySelectorAll('ul > li > a[href^="http"]')
+      return { heading, count: cards.length, first: cards[0]?.textContent?.trim() ?? '' }
+    })()`)
+    record('友链页渲染', links?.heading?.includes('友情链接') === true, links?.heading ?? '')
+    // 演示数据里有 3 条友链；数量为 0 说明 seed 没跑或列表被前端过滤掉了
+    record('友链页显示演示友链', (links?.count ?? 0) >= 1, `卡片 ${links?.count ?? 0} 张：${links?.first ?? ''}`)
+
     // ---------------------------------------------------------- 关于页
     await navigate(cdp, `${BASE_URL}/about`)
     const about = await evaluate(

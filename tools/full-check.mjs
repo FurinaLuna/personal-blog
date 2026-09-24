@@ -38,7 +38,7 @@ const ADMIN = { username: 'admin', password: 'admin123456' }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const results = []
-const registry = { articles: [], categories: [], tags: [], users: [], attachments: [], comments: [] }
+const registry = { articles: [], categories: [], tags: [], users: [], attachments: [], comments: [], friendLinks: [] }
 const uncovered = []
 let token = ''
 
@@ -196,6 +196,8 @@ async function cleanup() {
     await tryDelete(`attachment#${id}`, `/api/v1/attachments/${id}`)
   for (const id of registry.tags.reverse()) await tryDelete(`tag#${id}`, `/api/v1/tags/${id}`)
   for (const id of registry.categories.reverse()) await tryDelete(`category#${id}`, `/api/v1/categories/${id}`)
+  for (const id of registry.friendLinks.reverse())
+    await tryDelete(`friend-link#${id}`, `/api/v1/links/${id}`)
   for (const id of registry.users.reverse()) await tryDelete(`user#${id}`, `/api/v1/auth/users/${id}`)
 
   // 兜底：按命名约定清扫漏登记的附件。
@@ -465,6 +467,76 @@ try {
         ? `${a5update.reason} | 列表=${a5update.listText ?? '-'} | 条目=${JSON.stringify(a5update.items ?? [])}`
         : (a5update?.tail ?? ''),
   )
+
+  // A5c 友链：建 → 前台可见 → 隐藏 → 前台不可见 → 删。
+  //
+  // 这条链路值得进浏览器回归，因为它跨了「后台写 → 前台缓存读」两层：
+  // 公开的 GET /links 带 Cache-Control/ETag，如果 Vary 或缓存口径写错，
+  // 站长改完友链在前台看到的仍是旧结果（本项目在文章列表上踩过同类问题）。
+  const linkName = `E2E 友链 ${RUN}`
+  await goto('/admin/links', 2600)
+  const a5cCreate = await evalJs(`(async () => {
+    const set = (label, value) => {
+      const el = document.querySelector(\`input[aria-label="\${label}"]\`)
+      if (!el) return false
+      el.value = value
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      return true
+    }
+    if (!set('站点名称', ${JSON.stringify(linkName)})) return { ok: false, reason: '找不到站点名称输入框' }
+    if (!set('站点地址', 'https://example.com/e2e-link')) return { ok: false, reason: '找不到站点地址输入框' }
+    const submit = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '添加友链')
+    if (!submit) return { ok: false, reason: '找不到「添加友链」按钮' }
+    submit.click()
+    await new Promise(r => setTimeout(r, 1800))
+    return { ok: true, toast: document.body.innerText.includes('友链已添加') }
+  })()`, true)
+  const linkList = await api('/api/v1/links/manage')
+  const link = (linkList.body ?? []).find((item) => item.name === linkName)
+  if (link) registry.friendLinks.push(link.id)
+  record('A5c-1 新建友链', a5cCreate?.ok && a5cCreate?.toast && Boolean(link), a5cCreate?.reason ?? `id=${link?.id}`)
+
+  const publicShows = await evalJs(`(async () => {
+    const res = await fetch('/api/v1/links', { cache: 'no-store' })
+    const items = await res.json()
+    return { count: items.length, has: items.some(i => i.name === ${JSON.stringify(linkName)}) }
+  })()`, true)
+  record(
+    'A5c-2 前台接口立即可见（写后读不走旧缓存）',
+    publicShows?.has === true,
+    `公开列表 ${publicShows?.count ?? '?'} 条`,
+  )
+
+  const a5cHide = await evalJs(`(async () => {
+    const row = [...document.querySelectorAll('li')].find(el => el.textContent?.includes(${JSON.stringify(linkName)}))
+    const btn = [...(row?.querySelectorAll('button') ?? [])].find(b => b.textContent.trim() === '隐藏')
+    if (!btn) return { ok: false, reason: '找不到「隐藏」按钮' }
+    btn.click()
+    await new Promise(r => setTimeout(r, 1500))
+    return { ok: true, toast: document.body.innerText.includes('已从前台隐藏') }
+  })()`, true)
+  const afterHide = await evalJs(`(async () => {
+    const res = await fetch('/api/v1/links', { cache: 'no-store' })
+    const items = await res.json()
+    return { has: items.some(i => i.name === ${JSON.stringify(linkName)}) }
+  })()`, true)
+  record(
+    'A5c-3 隐藏后前台不可见（后台仍保留）',
+    a5cHide?.ok && a5cHide?.toast && afterHide?.has === false,
+    a5cHide?.reason ?? `前台仍可见=${afterHide?.has}`,
+  )
+
+  // 删除放在 cleanup：这里先确认按钮存在，避免"建了没删"污染基线
+  const a5cDeleteVisible = await evalJs(`(() => {
+    const row = [...document.querySelectorAll('li')].find(el => el.textContent?.includes(${JSON.stringify(linkName)}))
+    return { exists: Boolean([...(row?.querySelectorAll('button') ?? [])].find(b => b.textContent.trim() === '删除')) }
+  })()`)
+  record('A5c-4 删除入口可用（删除动作在 cleanup 执行）', a5cDeleteVisible?.exists === true)
+
+  // ⚠️ 必须切回分类页：紧跟其后的 A6（标签）与 A7（清理空标签按钮）都假设
+  // 当前停留在 /admin/taxonomy。少了这一句，它们会在友链页上找不到元素而失败，
+  // 进而让 A6 创建的标签漏登记、污染数据基线 —— 这是真实踩过的（一次 4 条用例连带失败）。
+  await goto('/admin/taxonomy', 2000)
 
   // A6 标签 增（Enter 提交）/ 删  —— 先建，供 C0 种子文章共用
   const tagName = `E2E 标签 ${RUN}`
