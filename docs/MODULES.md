@@ -213,18 +213,20 @@ const action = useAction()
 
 | 想做的事 | 标准路径 |
 |---|---|
-| 新增业务域（如「友链」） | 后端：models → schemas → repositories（继承 BaseRepository）→ services → api/v1 路由 + 注册到 `api/v1/__init__.py`；前端：`types/` 领域文件 → `api/` 模块 → 视图 |
+| 新增业务域（`friend_links` 就是照这条走的第一例） | 后端：models → schemas → repositories（继承 BaseRepository）→ services → api/v1 路由 + 注册到 `api/v1/__init__.py` + **alembic 迁移**；前端：`types/` 领域文件 → `api/` 模块 → 视图（`@/types`、`@/api` 两个出口要同步导出）。公开读 + 后台写的组合按「`GET /x`（只返回启用项） + `GET /x/manage`（全部）」拆，**别用一个接口兼顾两种视角** |
 | 新增列表接口 | 路由声明 `PageParamsDep` → 服务层收 `PageParams` → 仓储 `list_paged`；**禁止手算 offset** |
 | 换存储后端（如 S3） | 实现 `utils/storage.py` 的 `StorageBackend` 协议，替换 `storage` 实例——`AttachmentService` 不用改 |
 | 换数据库（PostgreSQL） | `db/` 保持方言无关（`db/types.py` 已隔离 SQLite 方言）；模型互引用保持 `TYPE_CHECKING` 守卫 |
-| 新增横切中间件 | `api/middleware.py` 或 FastAPI `add_middleware`，注意注册顺序（请求 ID 在 CORS 之前） |
+| 新增横切中间件 | `api/middleware.py` 或 FastAPI `add_middleware`。**规则是「后注册的在外层」**（实测确认，见 `app/main.py` 的注释）：当前自外向内是 `RequestContext → Head → PublicCache → CORS → 路由`。顺序写错不会报错，只会静默改变行为（例如把 RequestContext 放进内层，被 CORS 拒掉的请求就不会留下任何日志） |
 | 新增后台 CRUD 页 | 按 4.2 骨架；删除必用 `useConfirmDelete`，上传必用 `useUpload` |
 | 加新的限流入口 | `api/deps.py` 的 `rate_limit(name, limit, window)` 工厂 |
+| 让新的公开读接口吃到缓存 | 把路径加进 `api/cache.py` 的 `CACHEABLE_PREFIXES`（自动获得 ETag + `max-age=60` + `Vary: Authorization`，并支持条件请求 304）。后台路径用 `/manage` 或 `/revisions` 命名即可自动排除 |
+| 校验用户可控的 URL | 一律用 `utils/url.py::normalize_http_url`（**唯一实现**，评论 / 友链 / 将来的留言板共用）。自己写正则或 `urlsplit` 迟早在某个入口漏掉一种伪协议，而那是存储型 XSS |
 | 替换/升级认证 | JWT 逻辑全在 `utils/security.py` + `api/deps.py`，业务层只见 `User` 对象 |
 
 ## 六、验证清单（重构完成的判据）
 
 1. `make lint`：ruff + import-linter 分层契约通过（依赖可视化、无循环）。
-2. `make check`：格式 + 类型 + 前后端全量测试（275 pytest / 86 vitest）。
+2. `make check`：格式 + 类型 + 前后端全量测试；**当前基线数字看根目录 `README.md` 的「测试与验证」表**（刻意不在这里写死：文档里的数字必然漂移，一处维护就够）。
 3. 写路由保留显式 commit（`test_write_visibility.py` 是它的回归测试）。
-4. 新 composable 必须带 `.spec.ts`（见 `useConfirmDelete.spec.ts` 风格）。
+4. 新 composable / 新视图必须带 `.spec.ts`（风格见 `useConfirmDelete.spec.ts`、`views/admin/SeriesView.spec.ts`）：**只 spy `@/api` 上的方法，不要 `vi.mock` 业务模块**，并覆盖失败路径与边界。

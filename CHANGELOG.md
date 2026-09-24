@@ -14,6 +14,27 @@
 
 ### 新增
 
+- **友情链接（`/links` 从占位页变成真功能）**：完整垂直切片 —— `friend_links` 表（迁移
+  `c1f4b8e2d6a3`，`url` 唯一 + `sort_order`/`is_active` 索引）、仓储/服务/Schema/API、
+  前台页面与后台管理页（`/admin/links`）、3 条演示数据。
+  - 接口按「公开读 + 后台读」拆开：`GET /api/v1/links`（匿名，只含启用项，按
+    `sort_order`→`id` 稳定排序）与 `GET /api/v1/links/manage`（站长，含未启用）；
+    写操作（POST/PATCH/DELETE）一律限站长
+  - 公开列表自动进入缓存白名单：`ETag` + `Cache-Control: max-age=60` +
+    **`Vary: Authorization`**，`/manage` 因路径约定被自动排除
+  - **URL 校验抽成唯一实现** `utils/url.py::normalize_http_url`：评论的 `author_site`
+    改为调用它，友链的 `url`/`avatar_url` 也用同一套判定（先拒控制字符 → 再识别自带协议
+    → 才决定补不补 `https://` → 最后结构校验）。三处各写一份迟早在某个入口漏掉一种
+    伪协议，而那是存储型 XSS
+  - 后台可原地编辑、一键隐藏/显示（隐藏的条目只对站长可见）、删除带确认
+- **`docs/MODULES.md` 的扩展点表补上这次沉淀的三条**：新业务域的标准路径（含
+  `/manage` 路径约定的理由）、公开读接口如何吃到缓存、用户可控 URL 一律走
+  `utils/url.py`；并修正了两处过期内容（中间件顺序的结论、写死的测试数字）
+- **浏览器回归网覆盖到友链**：`smoke` 加 2 条（页面渲染 + 演示数据可见），
+  `full-check` 加 4 条 **A5c 生命周期**（后台建 → 公开接口立即可见 → 隐藏后前台消失
+  → 删除入口），跨了「后台写 → 前台缓存读」两层
+- `sitemap.xml` 收录 `/series` 与 `/links`（前者是既有遗漏）：有真实内容的聚合页
+  不该只在应用内可达
 - **views 层补齐到「每个视图都有 spec」**：本轮新增 15 个 spec / 222 条
   （LoginView 20、SearchView 23、ArchiveView 12、CategoriesView 10、SeriesView 11、
   SeriesDetailView 15、UnsubscribeView 15、AboutView 16、NotFoundView 3、PlaceholderView 5、
@@ -205,6 +226,11 @@
 
 ### 已修复
 
+- **`full-check` 的友链用例会把后续用例连带打挂**（我在扩展脚本时自己引入的）：
+  A5c 切到 `/admin/links` 后没有切回分类页，而紧随其后的 A6/A7 都假设停留在
+  `/admin/taxonomy` —— 结果一次连带 4 条用例失败，且 A6 创建的标签漏登记、
+  污染了数据基线（基线检查如实报出「tags: 7 → 8；残留 tags: 1」）。
+  现已显式切回，并在注释里写明"为什么必须切回"
 - **登录开放重定向（协议相对地址）**：`redirect` 用 `startsWith('/')` 校验，
   `//evil.example/phish` 能通过，而浏览器把它解析成 `https://evil.example/phish` ——
   history 模式 pushState 到跨源地址会抛 `SecurityError`，表现是**登录成功却停在登录页**

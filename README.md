@@ -10,8 +10,8 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 547 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
-666 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
+**写出来能跑、改起来可验证** —— 599 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
+690 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
 与两套数据库方言的真实链路端到端（SQLite 62 条 / PostgreSQL 61 条）。
 
 ---
@@ -60,6 +60,7 @@
 | 搜索 | **两种方言各有自己的加速路径**：SQLite 走 FTS5（trigram 分词 + bm25 + 高亮片段），PostgreSQL 走 `pg_trgm` + 3 条 GIN 索引；1–2 字的短查询两边都退回 LIKE 兜底（三元组索引的固有限制），端点单独限流 30/分 |
 | 系列 / 合集 | 多篇文章编成一个系列；详情页显示系列导航（上下篇），前台有系列聚合页与系列详情页，后台可增删改；删除系列只解关联，文章保留 |
 | 互动 | 两级评论（先审后发）、点赞、阅读量统计 |
+| 友链 | 独立页面按 `sort_order` 展示（头像/首字占位、介绍、新窗口 + `noopener`）；后台可增删改、启停（隐藏的条目只对站长可见）；地址只接受 http/https（与评论共用同一套校验） |
 | 列表页 | 服务端分页 + 五种排序 + 筛选，**全部状态存在 URL query**，刷新/分享/前进后退都能还原 |
 | 主题 | 亮 / 暗 / 跟随系统三态，首屏无闪烁 |
 | 订阅与分享 | RSS 2.0 与 sitemap，每页独立标题与 Open Graph 卡片 |
@@ -72,6 +73,7 @@
 - **媒体库**：上传、预览、复制 Markdown 片段、删除
 - **用户管理**：分配账号与角色（不开放自助注册）
 - **站点设置**：站点信息、社交链接、关于页内容、评论开关
+- **友链管理**：增删改、排序、一键隐藏/显示（未启用的条目不会出现在前台 `/links`）
 - **全局错误边界**：任一组件抛错渲染兜底页并提供重试，而不是整页白屏
 
 ### 后端与运维
@@ -120,7 +122,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 547 例（SQLite + PostgreSQL 双方言）、前端 666 例 |
+| 测试 | pytest / Vitest | 后端 599 例（SQLite + PostgreSQL 双方言）、前端 690 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -201,7 +203,7 @@ personal-blog/
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 547 个 pytest 用例（SQLite / PostgreSQL 双方言）
+│   ├── tests/                      # 599 个 pytest 用例（SQLite / PostgreSQL 双方言）
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -337,12 +339,12 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **542 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.61%（门槛 80%） |
+| `pytest`（默认 SQLite） | **594 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.81%（门槛 80%） |
 | `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **518 passed, 1 skipped**（实测于 postgres:16；本轮改动后未复跑，按 +53 推算，下次跑 PG 作业时以实测为准） |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **666 passed / 42 files**（22 个视图全部有 spec） |
+| `vitest run` | **690 passed / 44 files**（22 个视图全部有 spec） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 10 条迁移升至 head = 12 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
+| `alembic upgrade head` / `downgrade base` | 11 条迁移升至 head = 13 张业务表（另有 FTS5 虚拟表及其 4 张影子表；PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引）；降回 base 只剩 `alembic_version`，复升结构一致。**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **34/34**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **22/22**（登录失败路径 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
 | `tools/full-check.mjs` | **41/41** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
