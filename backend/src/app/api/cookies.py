@@ -14,6 +14,11 @@ refresh token 以前放在 localStorage 里，任何一次 XSS 都能把它读�
 
 规则集中在这里，是为了让「签发」「刷新」「登出」三处不会各写一份
 set_cookie —— 三份迟早漂移，而漂移的表现是"登出后还能刷新"这种安全洞。
+
+此外还下发一个**非 httpOnly** 的「会话提示」Cookie（``set_session_hint_cookie``）：
+它不含任何秘密，只是给前端一个"这台浏览器可能有会话"的提示位，用来省掉匿名访客
+每次进站那一次多余的刷新请求。它与上面两条规则同处一地，正是为了避免"登出时
+忘了删它"这类漂移。
 """
 
 from __future__ import annotations
@@ -27,9 +32,62 @@ from app.utils.exceptions import PermissionDeniedError, UnauthorizedError
 # Cookie 只发到 API 前缀下：/media 与静态资源没必要带上登录凭证。
 COOKIE_PATH = f"{settings.api_v1_prefix}/auth"
 
+# 会话提示 Cookie 的 path 与 refresh Cookie **刻意不同**。
+#
+# ``document.cookie`` 只暴露「路径是当前页面路径前缀」的 cookie，而 SPA 页面在
+# ``/``。若把提示 Cookie 也收窄到 ``COOKIE_PATH``（``/api/v1/auth``），页面 JS
+# 就**读不到它**——那这个 Cookie 等于白发（前端会永远认为"没有会话"，
+# 公开页面再也不会恢复登录态，反而变成功能回归）。
+# 它的值恒为 ``"1"``、不含任何秘密，放宽 path 的代价只是它会跟着 /media 等请求
+# 一起发出去，无信息价值。
+SESSION_HINT_COOKIE_PATH = "/"
+
+
+def set_session_hint_cookie(response: Response) -> None:
+    """下发「会话提示」Cookie：非 httpOnly、值恒为 ``"1"``、不含任何秘密。
+
+    为什么需要它：access token 只存前端内存后，前端在页面加载时**无法从 JS 侧
+    判断这台浏览器有没有会话**，于是连公开页面也会先打一次
+    ``POST /api/v1/auth/refresh``，匿名访客每次进站白吃一个 401。这个提示位
+    让前端先判断"值不值得去续期"。
+
+    为什么它是安全的：值就是字符串 ``"1"`` —— **不是 token、不含用户标识、
+    不含过期时间**。它只表达"这台浏览器可能有会话"。XSS 攻击者读不读它都没有
+    额外收益：他想验证会话，直接发一个请求就知道了；想伪造会话也伪造不出什么
+    （服务端不认这个 Cookie，只认 httpOnly 里那份 refresh token）。
+
+    风险（必须知道）：hint 与实际会话状态**可能不一致**——例如用户手动删掉了
+    refresh Cookie 而 hint 还在，或反之。所以它**只能用来省一次请求，
+    绝不能用来做任何授权 / 安全决策**。前端受保护路由仍然无条件尝试恢复登录态
+    （见 ``frontend/src/router/index.ts``），就是为了不让 hint 变成"偶发被登出"的判据。
+
+    部署层面的边界：前后端**不同域**且未设 ``COOKIE_DOMAIN`` 时，本 Cookie 落在
+    API 域上，SPA 的 ``document.cookie`` 读不到它 —— 这类部署会退化成"公开页不恢复
+    登录态"（受保护路由不受影响，功能仍正确）。跨子域部署请设
+    ``COOKIE_DOMAIN=example.com``；完全不同的域之间无法共享 Cookie，
+    这个优化在该形态下天然不可用。
+
+    属性与 refresh Cookie 对齐（secure / sameSite / max-age / domain），**只有
+    path 刻意不同**：提示 Cookie 必须是 ``/``，否则页面 JS 读不到它
+    （理由见 ``SESSION_HINT_COOKIE_PATH`` 的注释）。
+    """
+    response.set_cookie(
+        key=settings.session_hint_cookie_name,
+        value="1",
+        max_age=settings.refresh_token_expire_days * 24 * 3600,
+        # 唯一与 refresh Cookie 相反的一项，也正是它存在的理由：JS 要能读到它。
+        httponly=False,
+        secure=settings.cookie_secure_flag,
+        samesite=settings.cookie_samesite,  # type: ignore[arg-type]
+        path=SESSION_HINT_COOKIE_PATH,
+        domain=settings.cookie_domain,
+    )
+
 
 def set_refresh_cookie(response: Response, tokens: Token) -> Token:
     """把 refresh token 写进 httpOnly Cookie，并决定响应体里是否还留一份。
+
+    顺带下发会话提示 Cookie（签发与刷新两条路径共用本函数，所以两条都覆盖到）。
 
     Returns:
         实际应该返回给客户端的 Token。默认把 ``refresh_token`` 抹掉——
@@ -47,21 +105,30 @@ def set_refresh_cookie(response: Response, tokens: Token) -> Token:
         path=COOKIE_PATH,
         domain=settings.cookie_domain,
     )
+    set_session_hint_cookie(response)
     if settings.refresh_token_in_body:
         return tokens
     return Token(access_token=tokens.access_token, expires_in=tokens.expires_in)
 
 
 def clear_refresh_cookie(response: Response) -> None:
-    """登出时删掉 Cookie。
+    """登出时删掉 Cookie（refresh 与提示 Cookie 都要删）。
 
     ``delete_cookie`` 本质上是发一个"已过期"的 Set-Cookie，**path 与 domain
     必须和写入时完全一致**，否则浏览器会把它当成另一个 Cookie，
     结果是"登出后 Cookie 还在"——用户以为下线了，凭证其实还能用。
+
+    提示 Cookie 同理：漏删它的表现是"登出后公开页仍在尝试续期"（每次进站白跑
+    一个注定 401 的请求），而且它会一直挂到 max-age 到期。
     """
     response.delete_cookie(
         key=settings.refresh_token_cookie_name,
         path=COOKIE_PATH,
+        domain=settings.cookie_domain,
+    )
+    response.delete_cookie(
+        key=settings.session_hint_cookie_name,
+        path=SESSION_HINT_COOKIE_PATH,
         domain=settings.cookie_domain,
     )
 

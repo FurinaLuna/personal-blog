@@ -55,6 +55,35 @@ export class ApiError extends Error {
 }
 
 /**
+ * 会话提示 Cookie 的名字。
+ *
+ * 对应后端配置项 `session_hint_cookie_name`（`backend/src/app/config.py`，
+ * `.env.example` 里是 `SESSION_HINT_COOKIE_NAME`，默认 `blog_session`）。
+ * 前端读不到后端配置，只能硬编码这个名字——两边的一致性由
+ * `backend/tests/test_session_hint_cookie.py` 做机器比对（与 `SITE_ARTICLE_PATH`
+ * 对前端路由表那套一样）：后端改名时那条用例会红，而不是这里静默失效。
+ *
+ * 它**不含任何秘密**（值恒为 "1"），只表达"这台浏览器可能有会话"，
+ * 用来让公开页面跳过那次多余的 `POST /auth/refresh`。
+ */
+export const SESSION_HINT_COOKIE_NAME = 'blog_session'
+
+/**
+ * 读「会话提示」Cookie 是否存在。
+ *
+ * 只判断"在不在"，不读值——值恒为 "1"，没有信息量。
+ *
+ * 为什么不能用别的方式判断有没有会话：refresh token 在 httpOnly Cookie 里，
+ * JS 读不到；access token 只在内存里，刷新页面就没了。所以除了这个提示位，
+ * 前端在页面加载时**没有任何**本地信号可用。
+ */
+function readSessionHint(): boolean {
+  return document.cookie
+    .split(';')
+    .some((item) => item.trim().startsWith(`${SESSION_HINT_COOKIE_NAME}=`))
+}
+
+/**
  * Access Token 唯一的存放处：**内存**。
  *
  * 以前 access / refresh 两个令牌都写在 localStorage，XSS 一句话就能全带走。
@@ -67,6 +96,20 @@ let accessToken: string | null = null
 export const tokenStore = {
   get access(): string | null {
     return accessToken
+  },
+  /**
+   * 这台浏览器是否**可能**有会话（读后端下发的非 httpOnly 提示 Cookie）。
+   *
+   * **只用来省一次请求，绝不用于授权 / 安全判断**：hint 与真实会话状态可能不一致
+   * （用户手删了 refresh Cookie、后端已吊销会话但 Cookie 还在效期内……）。
+   * 受保护路由仍然**无条件**尝试恢复登录态（见 `router/index.ts`），
+   * 否则一旦 hint 缺失就会把已登录用户判成未登录，变成"偶发被登出"。
+   *
+   * 部署边界：前后端不同域且后端未设 COOKIE_DOMAIN 时，这个 Cookie 落在 API 域上，
+   * 页面读不到 → 退化成"公开页不恢复登录态"（功能仍正确，只是顶栏慢一步）。
+   */
+  get hasSessionHint(): boolean {
+    return readSessionHint()
   },
   /**
    * 只保存 access token。

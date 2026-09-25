@@ -105,6 +105,16 @@ class Settings(BaseSettings):
     # 配套的取舍：access token 只能存内存（页面刷新即丢），
     # 所以前端每次冷启动都要先拿 refresh cookie 换一枚新的 access token。
     refresh_token_cookie_name: str = "blog_refresh"
+    # 会话提示 Cookie：**非 httpOnly**、值恒为 "1"、不含任何秘密。
+    #
+    # 存在理由：access token 只存前端内存后，前端在页面加载时**无法从 JS 侧判断
+    # 这台浏览器有没有会话**，于是连公开页面也会先打一次 ``POST /api/v1/auth/refresh``，
+    # 匿名访客每次进站白吃一个 401。这个提示位让前端先判断"值不值得去续期"。
+    #
+    # 它的属性（secure / samesite / max_age / domain）与 refresh Cookie 对齐，
+    # 但 **path 刻意不同**（提示 Cookie 用 ``/``，否则页面 JS 读不到）。详见
+    # ``api/cookies.py`` 的 ``set_session_hint_cookie``。
+    session_hint_cookie_name: str = "blog_session"
     # None = 跟着 is_production 走（生产自动 Secure）。显式设 true/false 可覆盖。
     cookie_secure: bool | None = None
     # lax：默认档。跨站 XHR 不会带上它，天然挡住大部分 CSRF；

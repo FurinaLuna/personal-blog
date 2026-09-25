@@ -26,7 +26,16 @@ import axios, {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Token } from '@/types'
-import { ApiError, api, http, onCredentialsCleared, refreshSession, setAuthRequiredProbe, tokenStore } from '@/api/http'
+import {
+  ApiError,
+  SESSION_HINT_COOKIE_NAME,
+  api,
+  http,
+  onCredentialsCleared,
+  refreshSession,
+  setAuthRequiredProbe,
+  tokenStore,
+} from '@/api/http'
 
 type Handler = (config: InternalAxiosRequestConfig) => Promise<AxiosResponse>
 
@@ -85,6 +94,8 @@ beforeEach(() => {
   // token 现在只活在内存里，localStorage.clear() 清不掉它 —— 必须显式清，
   // 否则上一个用例的登录态会串到下一个用例
   tokenStore.clear()
+  // 提示 Cookie 同理：jsdom 的 document.cookie 会跨用例残留
+  document.cookie = `${SESSION_HINT_COOKIE_NAME}=; path=/; max-age=0`
   // 默认按"公开页面"起步：只有需要登录的页面才允许整页跳登录页
   setAuthRequiredProbe(() => false)
   handler = async (config) => ok(config, { ok: true })
@@ -177,6 +188,37 @@ describe('凭证存储（只存内存）', () => {
     tokenStore.save({ access_token: 'at' })
     tokenStore.clear()
 
+    expect(tokenStore.access).toBeNull()
+  })
+})
+
+describe('会话提示 Cookie 的读取（只用来省一次请求）', () => {
+  it('常量与后端配置项的名字一致', () => {
+    // 后端配置项是 `session_hint_cookie_name`（backend/src/app/config.py）。
+    // 这条只是把"前端硬编码的名字"钉在测试里；真正的跨端机器比对在
+    // backend/tests/test_session_hint_cookie.py，后端改名时那里会红。
+    expect(SESSION_HINT_COOKIE_NAME).toBe('blog_session')
+  })
+
+  it('Cookie 存在时 hasSessionHint 为 true，缺失时为 false', () => {
+    expect(tokenStore.hasSessionHint).toBe(false)
+
+    document.cookie = `${SESSION_HINT_COOKIE_NAME}=1; path=/`
+    expect(tokenStore.hasSessionHint).toBe(true)
+
+    document.cookie = `${SESSION_HINT_COOKIE_NAME}=; path=/; max-age=0`
+    expect(tokenStore.hasSessionHint).toBe(false)
+  })
+
+  it('只认这个名字，别的前缀相同 Cookie 不算数', () => {
+    document.cookie = `${SESSION_HINT_COOKIE_NAME}_other=1; path=/`
+    expect(tokenStore.hasSessionHint).toBe(false)
+  })
+
+  it('它只是提示位，不代表已登录（access token 仍是空的）', () => {
+    document.cookie = `${SESSION_HINT_COOKIE_NAME}=1; path=/`
+    expect(tokenStore.hasSessionHint).toBe(true)
+    // 关键：hint 不能被当成授权依据
     expect(tokenStore.access).toBeNull()
   })
 })

@@ -195,13 +195,23 @@ class TestBrowserRefreshPath:
         assert response.status_code == 401
         assert response.json()["code"] == "unauthorized"
 
-    async def test_cookie_is_not_sent_to_unrelated_paths(self, client: AsyncClient) -> None:
-        """``Path=/api/v1/auth`` 的意义：文章列表这类接口不该平白带上登录凭证。"""
-        await client.post(LOGIN_URL, json=_login_body())
+    async def test_refresh_cookie_is_not_sent_to_unrelated_paths(self, client: AsyncClient) -> None:
+        """``Path=/api/v1/auth`` 的意义：文章列表这类接口不该平白带上**登录凭证**。
+
+        注意别把它写成"没有 Cookie 头"：会话提示 Cookie（``blog_session``）的 path
+        是 ``/``，会跟着所有请求发出去——那是**刻意的**（页面 JS 必须读得到它，
+        见 ``test_session_hint_cookie.py``），而且它值恒为 ``"1"``、不含任何秘密。
+        所以这里断言的是"业务接口上没有任何 refresh token"，不是"没有 Cookie"。
+        """
+        logged_in = await client.post(LOGIN_URL, json=_login_body())
+        refresh_token = refresh_cookie_of(logged_in)
 
         listed = await client.get("/api/v1/articles")
         assert listed.status_code == 200, listed.text
-        assert "cookie" not in {key.lower() for key in listed.request.headers}
+        sent = listed.request.headers.get("cookie", "")
+        assert refresh_token not in sent, "refresh token 不该被发到业务接口上"
+        # 反向记录这个刻意的例外：hint Cookie 确实会带上（path=/），但无信息价值
+        assert settings.session_hint_cookie_name in sent
 
 
 class TestSameOriginGuard:

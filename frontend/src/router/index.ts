@@ -14,7 +14,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
-import { setAuthRequiredProbe } from '@/api/http'
+import { setAuthRequiredProbe, tokenStore } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
 declare module 'vue-router' {
@@ -282,8 +282,17 @@ router.beforeEach(async (to) => {
   // 公开页面**绝不等待**身份恢复：它只影响顶栏显示什么，不影响内容渲染。
   // 旧实现是 `await auth.restore()`（只要本地有 token 就等），
   // 于是"带着 token 打开首页"会被一个后台请求堵住首屏。
-  // `restored` 一旦置上就不再重复触发，所以一次页面加载最多只会问一次。
-  if (!auth.restored) {
+  //
+  // 现在多一道判断：**只有 hint Cookie 存在才去恢复**。
+  // access token 只存内存后，前端在页面加载时无从判断有没有会话，于是匿名访客
+  // 每次进站也会先打一次 POST /auth/refresh 白吃一个 401 —— 这就是 hint 要消掉的
+  // 那一次请求。`restored` 一旦置上就不再重复触发，所以一次页面加载最多问一次。
+  //
+  // ⚠️ hint 只是**省请求的优化**，不是授权依据：它可能与真实会话状态不一致
+  // （用户手删了 Cookie 等）。所以只有公开页面用它做短路；受保护路由上面那条
+  // 分支仍然**无条件**尝试恢复，绝不能因为 hint 缺失就把已登录用户判成未登录
+  // （那会变成"偶发被登出"）。
+  if (!auth.restored && tokenStore.hasSessionHint) {
     void auth.restore()
   }
 
