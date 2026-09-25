@@ -316,6 +316,9 @@ try {
 
   await send('Page.enable')
   await send('Runtime.enable')
+  // 登录态现在落在 Cookie 上：脚本要清 Cookie（B3）、查 Cookie（A0 / B1 断言），
+  // 这两个命令都要求 Network 域是启用的。
+  await send('Network.enable')
   // 剪贴板权限：headless Chrome 默认拒绝 navigator.clipboard.writeText，
   // 会让「代码复制」用例测不到成功路径（只能测到降级提示）。显式授权后才是真验证。
   try {
@@ -354,15 +357,82 @@ try {
   await send('Page.navigate', { url: BASE })
   await waitFor(evalJs, `(document.getElementById('app')?.childElementCount ?? 0) > 0`, 30000)
 
-  /** 把站长 token 注入 localStorage，使后台页面直接可用 */
-  const injectToken = async () => {
+  /**
+   * 读取浏览器里的 refresh Cookie。
+   *
+   * 它是这套凭证方案的**根**：后面每一个 /admin 页面都要靠它在应用启动时
+   * 静默续期出 access token。它没种上、或 Path 错了一个字符，A 段会大面积
+   * 401，而报错形态是"登录验证莫名其妙失败"——所以断言要直接钉在它身上，
+   * 而不是等到某个后台页面挂了再倒推。
+   */
+  const readRefreshCookie = async () => {
+    const jar = await send('Network.getAllCookies').catch(() => ({ cookies: [] }))
+    return (jar?.cookies ?? []).find((c) => c.name === 'blog_refresh') ?? null
+  }
+
+  /**
+   * 清掉浏览器侧的全部登录凭证。
+   *
+   * Cookie（httpOnly，JS 碰不到，只能靠 CDP）+ localStorage 里那两个**旧** key
+   * ——后者在新方案里已经不再写入，但清除动作保留着：脚本要能在"前端改造合入
+   * 前后"两种状态下都跑，漏掉它就是给旧状态留一个"以为清干净了"的洞。
+   */
+  const clearCredentials = async () => {
+    await send('Network.clearBrowserCookies').catch(() => {})
     await evalJs(`(() => {
-      localStorage.setItem('blog-access-token', ${JSON.stringify(token)})
-      localStorage.setItem('blog-refresh-token', 'e2e-placeholder')
+      localStorage.removeItem('blog-access-token')
+      localStorage.removeItem('blog-refresh-token')
       return true
     })()`)
   }
-  await injectToken()
+
+  /**
+   * 在**浏览器里**以指定账号登录（走真实登录页）。
+   *
+   * 为什么必须换成这样：refresh token 现在只存在于 httpOnly Cookie、access token
+   * 只在内存里 —— 「Node 里登录拿 token，再用 CDP 塞进 localStorage」这条老路
+   * 已经彻底失效（塞进去的两个 key 前端根本不再读）。
+   *
+   * 为什么选**登录页 UI** 而不是「Node 登录 + CDP 种 Cookie 再刷新」：
+   * 后者依赖"应用启动流程会拿 Cookie 静默续期"这个前端行为，而 access token 是
+   * 在那一步才换出来的——种完 Cookie **不刷新**等于没做，刷新了又要赌续期逻辑
+   * 与时序；走登录页则由应用自己把 Cookie 与内存 token 一次安排好，而且它就是
+   * 真实用户路径。代价是依赖 #username / #password（LoginView.vue），所以每步都
+   * 先轮询等表单出现，失败时把实际落点打出来而不是让调用方拿到 undefined。
+   *
+   * 登录前一定先清凭证：不清的话 /login 会因为"已登录"被直接弹到 /admin，
+   * 表现为填表无效、用例卡在登录页（这个坑脚本注释里已经记过一次）。
+   */
+  const loginAs = async (username, password) => {
+    await clearCredentials()
+    await send('Page.navigate', { url: `${BASE}/login` })
+    if (!(await waitFor(evalJs, `!!document.querySelector('#username') && !!document.querySelector('#password')`, 25000))) {
+      return { ok: false, path: await evalJs(`location.pathname`), reason: '登录页表单未出现' }
+    }
+    await evalJs(`(() => {
+      const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
+      set(document.querySelector('#username'), ${JSON.stringify(username)})
+      set(document.querySelector('#password'), ${JSON.stringify(password)})
+      return true
+    })()`)
+    await sleep(200)
+    await evalJs(`(() => { document.querySelector('#username')?.closest('form')?.requestSubmit(); return true })()`)
+    const landed = await waitFor(evalJs, `location.pathname.startsWith('/admin')`, 25000)
+    const path = await evalJs(`location.pathname`)
+    return { ok: landed, path, reason: landed ? '' : `登录后未进入后台（停在 ${path}）` }
+  }
+
+  const adminLogin = await loginAs(ADMIN.username, ADMIN.password)
+  const refreshCookie = await readRefreshCookie()
+  record(
+    'A0 浏览器登录：种下 httpOnly refresh Cookie',
+    adminLogin.ok &&
+      Boolean(refreshCookie) &&
+      refreshCookie.httpOnly === true &&
+      String(refreshCookie.path ?? '').endsWith('/api/v1/auth'),
+    `落点=${adminLogin.path} cookie=${refreshCookie ? `path=${refreshCookie.path} httpOnly=${refreshCookie.httpOnly} secure=${refreshCookie.secure}` : '未种上'}` +
+      `${adminLogin.reason ? ` 原因=${adminLogin.reason}` : ''}`,
+  )
 
   // ================================================================ A. 后台写操作生命周期
   const articleTitle = `E2E 生命周期 ${RUN}`
@@ -1214,7 +1284,9 @@ try {
   record('B2 主题三态循环与持久化', b2?.ok && labelsOk, `三态=${(b2?.labels ?? []).join(' | ')}`)
 
   // B3 未登录访问后台被重定向
-  await evalJs(`(() => { localStorage.removeItem('blog-access-token'); localStorage.removeItem('blog-refresh-token'); return true })()`)
+  // 「未登录」现在等价于「没有 refresh Cookie」：清掉它，应用启动时就换不出
+  // access token，路由守卫必然把人弹到登录页。
+  await clearCredentials()
   await goto('/admin/articles', 2600)
   const b3 = await evalJs(`(() => ({ path: location.pathname, search: location.search }))()`)
   record(
@@ -1224,24 +1296,36 @@ try {
   )
 
   // B1 登出（重新登录后从后台登出）
-  await injectToken()
+  const b1Login = await loginAs(ADMIN.username, ADMIN.password)
+  if (!b1Login.ok) uncovered.push(`B1 前置条件未满足：${b1Login.reason}`)
   await goto('/admin/articles', 2600)
   const b1 = await evalJs(`(async () => {
     const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '退出')
     if (!btn) return { ok: false, reason: '退出按钮未找到' }
     btn.click()
     await new Promise(r => setTimeout(r, 2400))
-    return {
-      ok: true,
-      path: location.pathname,
-      access: localStorage.getItem('blog-access-token'),
-      refresh: localStorage.getItem('blog-refresh-token'),
-    }
+    return { ok: true, path: location.pathname }
   })()`, true)
+  // 怎么证明"真的登出了"——两个看似显然的信号其实都是**永真**的：
+  //   1. localStorage 里那两个 key 没了：它们在新方案里根本不再被写入，必然是 null；
+  //   2. 页面内 fetch /auth/me 返回 401：access token 只活在 axios 拦截器里，
+  //      裸 fetch 从来带不上它，登没登出都回 401。
+  // 唯一可信的信号是**应用自己的行为**：重新访问受保护的后台页，路由守卫必须
+  // 把人弹回登录页。没弹回，就说明会话还在。
+  await goto('/admin/articles', 2600)
+  const b1guard = await evalJs(`(() => ({ path: location.pathname, search: location.search }))()`)
+  // 第三个信号：服务端下发的删 Cookie 指令确实生效了。Cookie 还留着的话，
+  // 每次刷新请求都会把一枚已作废的 token 送上去。
+  const refreshGone = (await readRefreshCookie()) === null
   record(
-    'B1 登出：清空 token 并回到登录页',
-    b1?.ok && !b1?.access && !b1?.refresh && b1?.path === '/login',
-    `path=${b1?.path} access=${b1?.access ?? 'null'}`,
+    'B1 登出：会话失效（后台页被弹回登录页）+ Cookie 已删',
+    b1?.ok &&
+      b1?.path === '/login' &&
+      b1guard?.path === '/login' &&
+      (b1guard?.search ?? '').includes('redirect=') &&
+      refreshGone,
+    `退出后=${b1?.path} 再访问后台→${b1guard?.path}${b1guard?.search}` +
+      ` refreshCookie=${refreshGone ? '已删除' : '仍存在'}${b1?.reason ? ` 原因=${b1.reason}` : ''}`,
   )
 
   // B1 刚做过登出：服务端已吊销令牌，这里必须换一枚新的，
@@ -1266,28 +1350,10 @@ try {
       `B4 前置条件未设上：重置临时账号为 author 失败（HTTP ${roleReset.status} ${JSON.stringify(roleReset.body).slice(0, 80)}）`,
     )
   }
-  /** 用临时 author 账号换取 token（失败时打印真实响应，便于定位而不是静默跳过） */
-  const authorLoginOnce = async () => {
-    const resp = await fetch(`${BASE}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: userName, password: 'E2ePassw0rd!' }),
-    })
-    const body = await resp.json().catch(() => ({}))
-    return { status: resp.status, token: body?.access_token ?? '', detail: JSON.stringify(body).slice(0, 120) }
-  }
-  let authorLogin = await authorLoginOnce()
-  if (!authorLogin.token) {
-    // 偶发的时序/连接问题重试一次（手动 curl 验证过后端与代理均正常）
-    await sleep(1000)
-    authorLogin = await authorLoginOnce()
-  }
-  if (authorLogin.token) {
-    await evalJs(`(() => {
-      localStorage.setItem('blog-access-token', ${JSON.stringify(authorLogin.token)})
-      localStorage.setItem('blog-refresh-token', 'e2e-author')
-      return true
-    })()`)
+  // 只能**在浏览器里**换身份：access token 不落 localStorage，页面内 fetch 拿不到
+  // 它（Node 侧拿到的那枚也塞不进页面），唯一入口就是登录页。
+  const authorLogin = await loginAs(userName, 'E2ePassw0rd!')
+  if (authorLogin.ok) {
     await goto('/admin/users', 2600)
     const b4users = await evalJs(`(() => ({ path: location.pathname }))()`)
     await goto('/admin/settings', 2600)
@@ -1297,15 +1363,17 @@ try {
       b4users?.path === '/' && b4settings?.path === '/',
       `users→${b4users?.path} settings→${b4settings?.path}`,
     )
-    await injectToken()
   } else {
     record(
       'B4 非站长访问受限后台页',
       false,
-      `临时 author 登录失败：HTTP ${authorLogin.status} ${authorLogin.detail}`,
+      `临时 author 登录失败：${authorLogin.reason}`,
     )
-    uncovered.push(`B4 — 临时 author 登录失败（HTTP ${authorLogin.status}）`)
+    uncovered.push(`B4 — 临时 author 登录失败（${authorLogin.reason}）`)
   }
+  // 这里**不**再切回站长：E 段全是公开页（404 / RSS / sitemap / 标题），
+  // 不需要登录态；省掉这次登录是因为 /auth/login 有 5 次 / 60 秒的限流，
+  // 而 B 段刚连着登了三次，再叠一次就把后面的收尾清理挤成 429。
 
   // ================================================================ E. 站点与元信息
   await goto(`/nope-${RUN}`, 2400)

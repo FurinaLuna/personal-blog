@@ -392,24 +392,46 @@ async function main() {
     // 记录登录前的位置，便于只看 /admin 阶段的请求
     const adminMark = cdp.networkLog.length
 
-    // 通过页面内的 fetch 走完整登录流程，并把 token 写进 localStorage
-    // （等价于用户手动填表提交，只是省略了逐步输入）
-    const loginResult = await evaluate(
+    // 走**真实登录页**提交表单。
+    //
+    // 旧做法是页面内 fetch 登录再把 token 塞进 localStorage，现在这条路已经断了：
+    // refresh token 只存在于 httpOnly Cookie 里（JS 读不到，也就不可能转发），
+    // access token 只留在内存里（写不进 localStorage，写了前端也不认）。
+    // 只有让应用自己走一遍登录页，Cookie 与内存 token 才会被同时安排好。
+    await waitFor(
       cdp,
-      `(async () => {
-        const res = await fetch('/api/v1/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'admin', password: 'admin123456' }),
-        })
-        if (!res.ok) return { ok: false, status: res.status }
-        const data = await res.json()
-        localStorage.setItem('blog-access-token', data.access_token)
-        localStorage.setItem('blog-refresh-token', data.refresh_token)
-        return { ok: true, expiresIn: data.expires_in }
+      `!!document.querySelector('#username') && !!document.querySelector('#password')`,
+      25000,
+      '登录页表单',
+    )
+    await evaluate(
+      cdp,
+      `(() => {
+        const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
+        set(document.querySelector('#username'), 'admin')
+        set(document.querySelector('#password'), 'admin123456')
       })()`,
     )
-    record('登录接口', loginResult.ok, `token 有效期 ${loginResult.expiresIn}s`)
+    await sleep(200)
+    await evaluate(
+      cdp,
+      `(async () => {
+        document.querySelector('#username')?.closest('form')?.requestSubmit()
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      })()`,
+    )
+    // 用轮询等跳转而不是死等：dev server 首次进 /admin 要现编译那一条 chunk，
+    // 冷启动要好几秒，热了只要几十毫秒。
+    const loginResult = await waitFor(
+      cdp,
+      `location.pathname.startsWith('/admin')`,
+      25000,
+      '登录后跳转后台',
+    ).then(
+      () => ({ ok: true }),
+      () => ({ ok: false }),
+    )
+    record('登录接口', loginResult.ok, loginResult.ok ? '已跳转到 /admin' : '提交后未进入后台')
 
     await navigate(cdp, `${BASE_URL}/admin`)
     await waitFor(
@@ -426,13 +448,18 @@ async function main() {
         cards: document.querySelectorAll('.card').length,
         text: document.body.innerText.slice(0, 300),
         hasStats: document.body.innerText.includes('总阅读量'),
-        token: !!localStorage.getItem('blog-access-token'),
+        // 「localStorage 里有 token」已经不能证明登录态了（那两个 key 不再写入）；
+        // 「页面内 fetch /auth/me」也**问不出答案**——access token 只活在 axios
+        // 拦截器里，裸 fetch 带不上它，登没登录都回 401。
+        // 能证明"会话在刷新后恢复成功"的只有页面本身：restore() 拿到 user，
+        // 后台外壳才会渲染出「退出」。
+        hasSession: [...document.querySelectorAll('button')].some(b => b.textContent.trim() === '退出'),
       }))()`,
     )
     record(
       '后台仪表盘',
-      dashboard.url.startsWith('/admin') && dashboard.heading === '仪表盘',
-      `url=${dashboard.url}，标题「${dashboard.heading}」，token=${dashboard.token ? '在' : '无'}`,
+      dashboard.url.startsWith('/admin') && dashboard.heading === '仪表盘' && dashboard.hasSession,
+      `url=${dashboard.url}，标题「${dashboard.heading}」，会话=${dashboard.hasSession ? '已恢复' : '未恢复'}`,
     )
     // 统计数字要等 /site/stats 回来，同样用轮询
     await waitFor(cdp, `document.body.innerText.includes('总阅读量')`, 20000, '统计数字').catch(() => {})

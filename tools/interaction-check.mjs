@@ -476,18 +476,36 @@ try {
 
     // 清理：评论是「立即发布」时把它删掉，保持环境干净（审核模式下不会进公开列表，无需处理）
     if (!posted.needApproval) {
+      // 清理改到 **Node 侧**做。
+      //
+      // 原来是在页面里读 localStorage 的 access token 再发 DELETE。新方案下
+      // access token 只在内存里、页面内 fetch 拿不到它（httpOnly Cookie 也读不到），
+      // 页面里已经凑不出一个带凭证的删除请求。Node 这边登录一枚 access token
+      // （登录响应体里仍然有）即可，与浏览器登录态互不干扰。
+      //
       // 注意：要清理的是「刚才发表评论的那一篇」，不是列表里第一篇
-      const cleaned = await evalJs(`(async () => {
-        const token = localStorage.getItem('blog-access-token')
-        if (!token) return { cleaned: false, reason: '未登录，无法删除' }
-        const list = await fetch('/api/v1/comments/article/${target.id}').then(r => r.json())
-        const target = list.find(c => (c.content ?? '').includes('由 interaction-check 自动生成'))
-        if (!target) return { cleaned: false, reason: '未找到测试评论' }
-        const resp = await fetch('/api/v1/comments/' + target.id, {
-          method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+      const cleaned = await (async () => {
+        const login = await fetch(`${BASE}/api/v1/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'admin', password: 'admin123456' }),
+        })
+          .then((r) => r.json())
+          .catch(() => ({}))
+        if (!login?.access_token) return { cleaned: false, reason: 'Node 侧登录失败' }
+        const list = await fetch(`${BASE}/api/v1/comments/article/${target.id}`)
+          .then((r) => r.json())
+          .catch(() => [])
+        const hit = (Array.isArray(list) ? list : []).find((c) =>
+          (c.content ?? '').includes('由 interaction-check 自动生成'),
+        )
+        if (!hit) return { cleaned: false, reason: '未找到测试评论' }
+        const resp = await fetch(`${BASE}/api/v1/comments/${hit.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${login.access_token}` },
         })
         return { cleaned: resp.ok, status: resp.status }
-      })()`, true)
+      })()
       record('测试评论已清理', Boolean(cleaned?.cleaned), `删除接口 ${cleaned?.status ?? cleaned?.reason ?? '-'}`)
     }
     // 站点默认「评论需审核」，此时列表不增长是正确行为，不能算失败

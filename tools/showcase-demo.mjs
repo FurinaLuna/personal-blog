@@ -15,7 +15,7 @@
  *  7 后台文章列表      → 表格 + 状态徽标
  *  8 文章编辑器        → Markdown 工具栏 + 输入
  *  9 暗色主题切换      → 三态循环 + 持久化
- * 10 登出回前台        → token 清空 + 登录页
+ * 10 登出回前台        → 服务端凭证失效 + 登录页
  *
  * 用法：
  *   node tools/showcase-demo.mjs [baseUrl] [outDir]
@@ -302,9 +302,18 @@ try {
     btn?.click()
   })()`)
   const loggedOut = await waitFor(cdp, 'location.pathname === "/login"', 8000)
-  const tokenGone = await evaluate(cdp, 'localStorage.getItem("blog-access-token") === null')
+  // 「localStorage 里那个 key 没了」在新方案下是**永真**断言（它不再被写入）；
+  // 「页面内 fetch /auth/me 返回 401」同样永真——access token 只活在内存里，
+  // 由 axios 拦截器附加，裸 fetch 带不上它。真信号是应用自己的行为：重新访问
+  // 受保护的后台页，守卫必须把人弹回登录页。
+  await navigate(cdp, '/admin')
+  const bounced = await waitFor(cdp, 'location.pathname === "/login"', 8000)
   await capture(cdp, '09-logout')
-  step('登出（清空 token + 回到登录页）', loggedOut && tokenGone, tokenGone ? 'token 已清空' : 'token 残留')
+  step(
+    '登出（会话失效：后台页被弹回登录页）',
+    loggedOut && bounced,
+    bounced ? '/admin → /login' : '登出后仍能进后台',
+  )
 
   const runtimeErrors = cdp.errors
   if (runtimeErrors.length === 0) {
