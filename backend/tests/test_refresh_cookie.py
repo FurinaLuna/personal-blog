@@ -99,7 +99,7 @@ class TestBodyNoLongerCarriesRefreshToken:
         """刷新是**频率最高**的入口（access token 只有 120 分钟），漏了它等于没改。"""
         await client.post(LOGIN_URL, json=_login_body())
 
-        refreshed = await client.post(REFRESH_URL, json={})
+        refreshed = await client.post(REFRESH_URL)
         assert refreshed.status_code == 200, refreshed.text
         assert refreshed.json()["access_token"]
         assert refreshed.json()["refresh_token"] is None
@@ -118,7 +118,7 @@ class TestCookieCarriesTheLiveSession:
         self, client: AsyncClient
     ) -> None:
         first = refresh_cookie_of(await client.post(LOGIN_URL, json=_login_body()))
-        second = refresh_cookie_of(await client.post(REFRESH_URL, json={}))
+        second = refresh_cookie_of(await client.post(REFRESH_URL))
 
         assert second != first
         rows = await _session_jti_hashes()
@@ -177,7 +177,7 @@ class TestBrowserRefreshPath:
         """这是迁移之后前端唯一的冷启动方式，断了就是"刷新页面必掉线"。"""
         await client.post(LOGIN_URL, json=_login_body())
 
-        refreshed = await client.post(REFRESH_URL, json={})
+        refreshed = await client.post(REFRESH_URL)
         assert refreshed.status_code == 200, refreshed.text
         assert refreshed.json()["access_token"]
 
@@ -191,7 +191,7 @@ class TestBrowserRefreshPath:
         # 不能靠"这个 client 是新建的所以恰好没有"这种隐式前提。
         client.cookies.clear()
 
-        response = await client.post(REFRESH_URL, json={})
+        response = await client.post(REFRESH_URL)
         assert response.status_code == 401
         assert response.json()["code"] == "unauthorized"
 
@@ -212,15 +212,13 @@ class TestSameOriginGuard:
         拦住它们只会让回归脚本莫名其妙 403。"""
         await client.post(LOGIN_URL, json=_login_body())
 
-        response = await client.post(REFRESH_URL, json={})
+        response = await client.post(REFRESH_URL)
         assert response.status_code == 200, response.text
 
     async def test_trusted_origin_is_allowed(self, client: AsyncClient) -> None:
         await client.post(LOGIN_URL, json=_login_body())
 
-        response = await client.post(
-            REFRESH_URL, json={}, headers={"Origin": settings.cors_origins[0]}
-        )
+        response = await client.post(REFRESH_URL, headers={"Origin": settings.cors_origins[0]})
         assert response.status_code == 200, response.text
 
     async def test_site_base_url_is_trusted_even_when_not_in_cors(
@@ -231,9 +229,7 @@ class TestSameOriginGuard:
         monkeypatch.setattr(settings, "site_base_url", "https://blog.example.com")
         await client.post(LOGIN_URL, json=_login_body())
 
-        response = await client.post(
-            REFRESH_URL, json={}, headers={"Origin": "https://blog.example.com"}
-        )
+        response = await client.post(REFRESH_URL, headers={"Origin": "https://blog.example.com"})
         assert response.status_code == 200, response.text
 
     async def test_trailing_slash_still_matches(self, client: AsyncClient) -> None:
@@ -241,7 +237,7 @@ class TestSameOriginGuard:
         await client.post(LOGIN_URL, json=_login_body())
 
         response = await client.post(
-            REFRESH_URL, json={}, headers={"Origin": f"{settings.cors_origins[0]}/"}
+            REFRESH_URL, headers={"Origin": f"{settings.cors_origins[0]}/"}
         )
         assert response.status_code == 200, response.text
 
@@ -249,9 +245,7 @@ class TestSameOriginGuard:
         """没有这道防线，任意站点都能让访客的浏览器悄悄换一枚 access token。"""
         await client.post(LOGIN_URL, json=_login_body())
 
-        response = await client.post(
-            REFRESH_URL, json={}, headers={"Origin": "http://evil.example.com"}
-        )
+        response = await client.post(REFRESH_URL, headers={"Origin": "http://evil.example.com"})
         assert response.status_code == 403
         assert response.json()["code"] == "forbidden"
 
@@ -310,6 +304,6 @@ class TestRefreshTokenInBodyOptIn:
         monkeypatch.setattr(settings, "refresh_token_in_body", True)
         await client.post(LOGIN_URL, json=_login_body())
 
-        refreshed = await client.post(REFRESH_URL, json={})
+        refreshed = await client.post(REFRESH_URL)
         assert refreshed.status_code == 200, refreshed.text
         assert refresh_cookie_of(refreshed)

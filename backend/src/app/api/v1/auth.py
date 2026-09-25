@@ -68,7 +68,18 @@ async def login_form(
 
 @router.post("/refresh", response_model=Token, summary="刷新令牌")
 async def refresh(
-    payload: RefreshRequest, session: SessionDep, request: Request, response: Response
+    session: SessionDep,
+    request: Request,
+    response: Response,
+    # body 必须可省略：浏览器手里没有 refresh token（它在 httpOnly Cookie 里），
+    # 让它为了满足框架而发一个空 ``{}`` 是纯粹的负担。而且 FastAPI 对
+    # Pydantic model 类 body 一律按必填处理（哪怕模型字段全可选），
+    # 漏发就返回 422——看起来像"参数错了"、实际是"你压根没发"，
+    # 这种错误毫无提示性。可省略才准确表达「省略就从 Cookie 取」。
+    #
+    # 放在参数列表末尾是 Python 语法所迫：无默认值的参数不能排在
+    # 有默认值的参数后面，而 SessionDep / Request / Response 都没有默认值。
+    payload: RefreshRequest | None = None,
 ) -> Token:
     """用 refresh token 换一枚新的 access token。
 
@@ -76,7 +87,7 @@ async def refresh(
     因为 Cookie 会被浏览器**自动附带**，这里额外做同源校验（CSRF 防线）。
     """
     assert_same_origin(request)
-    token = read_refresh_token(request, payload.refresh_token)
+    token = read_refresh_token(request, payload.refresh_token if payload else None)
     return set_refresh_cookie(response, await AuthService(session).refresh(token))
 
 

@@ -75,8 +75,12 @@ async def _refresh(client: AsyncClient, token: str | None = None):
     ``token=None``（不传 body）= **浏览器的真实路径**：令牌由 Cookie Jar 自动回带，
     服务端自己从 Cookie 里取。传了值则是脚本/CI 的显式传参路径。
     """
-    payload = {} if token is None else {"refresh_token": token}
-    return await client.post("/api/v1/auth/refresh", json=payload)
+    if token is None:
+        # 浏览器真实路径：一个字节的请求体都不发（服务端从 Cookie 取）。
+        # 这里刻意不发 ``{}`` —— 曾经 refresh 的 body 是必填的，前端只能靠发空
+        # 对象绕过；那条约束已经移除，测试必须真的不发 body 才能守住它。
+        return await client.post("/api/v1/auth/refresh")
+    return await client.post("/api/v1/auth/refresh", json={"refresh_token": token})
 
 
 async def _replay(client: AsyncClient, stale_token: str):
