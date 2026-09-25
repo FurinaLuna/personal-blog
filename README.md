@@ -90,7 +90,10 @@
 - 三级角色：访客 / 作者 / 站长；三层防护：依赖注入门禁 → 资源归属校验 → Schema 层防提权
 - 上传安全：Pillow 真实解码判型（不信任客户端声明的 `Content-Type`）、流式限流读、
   扩展名白名单（默认禁 SVG / HTML）、服务端生成文件名
-- 请求 ID 透传 + 结构化 JSON 日志 + 限流（登录 5/分、评论 5/分、点赞 20/分、搜索 30/分）
+- 请求 ID 透传 + 结构化 JSON 日志 + 限流（登录 5/分、评论 5/分、点赞 20/分、搜索 30/分）。
+  ⚠️ 限流是**进程内**计数，所以必须单 worker 运行：Dockerfile / compose 写死 `--workers 1`，
+  启动期还会检查 `WEB_CONCURRENCY` / `UVICORN_WORKERS` / `sys.argv`，生产发现多 worker
+  直接拒绝启动（多开会把配额按 worker 数静默放大）
 - 评论邮件通知：有人回复你的评论时给被回复者发信（附签名退订链接），
   非站长发的新评论提醒站长（**待审也提醒**——那正是需要审核的时刻）；
   SMTP 默认关闭（仅配 `SMTP_ENABLED=true` 才发信），发信是评论接口提交后触发的后台任务，
@@ -278,11 +281,13 @@ personal-blog/
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | refresh token 有效期 |
 | `CORS_ORIGINS` | localhost | ⚠️ 生产只填真实前端域名，逗号分隔。**它同时也是刷新接口的 CSRF 白名单**（见上），分域部署时前端来源必须包含在内 |
 | `SITE_BASE_URL` | `http://localhost:5173` | RSS / sitemap 里的绝对链接依赖它 |
-| `REFRESH_TOKEN_COOKIE_NAME` | `blog_refresh` | 承载 refresh token 的 Cookie 名 |
+| `REFRESH_TOKEN_COOKIE_NAME` | `blog_refresh` | 承载 refresh token 的 Cookie 名（httpOnly，Path=`/api/v1/auth`） |
+| `SESSION_HINT_COOKIE_NAME` | `blog_session` | 「会话提示」Cookie 名。**非 httpOnly、值恒为 `1`、Path=`/`** —— 前端读它判断值不值得去续期，消掉匿名访客每次进站那次注定 401 的请求。它**不是凭证，不参与任何授权决策** |
 | `COOKIE_SAMESITE` | `lax` | ⚠️ 前端与 API **不同域**时必须设 `none`（`lax` 会拦掉跨站 XHR），而 `none` 强制要求 `Secure` |
 | `COOKIE_SECURE` | 跟随 `APP_ENV` | 生产 `true` / 开发 `false`。开发环境强制 `true` 会让浏览器拒绝写入该 Cookie |
 | `COOKIE_DOMAIN` | 空 | 需要在子域间共享时才填（如 `example.com`，前面不带点） |
 | `REFRESH_TOKEN_IN_BODY` | `false` | 非浏览器客户端（curl / CI）拿不到 Cookie Jar 时设 `true`，让响应体也带回 refresh token |
+| `SESSION_HINT_COOKIE_NAME` | `blog_session` | 非 httpOnly 的**会话提示** Cookie，让前端知道"值不值得去续期"，从而免掉匿名访客每次进站那次注定 401 的请求。⚠️ 它的 `path` 刻意是 `/`（与 refresh Cookie 的 `/api/v1/auth` 不同），否则页面 JS 读不到它 |
 | `STORAGE_DIR` | `./storage` | 上传文件根目录 |
 | `MAX_UPLOAD_SIZE` | `10485760` | 10 MB，需与 nginx `client_max_body_size` 一致 |
 | `IMAGE_VARIANT_WIDTHS` | `480,800,1600` | 上传时生成的响应式图片档位（宽度不足的档位跳过） |
@@ -350,10 +355,10 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **710 passed, 5 skipped**（715 collected，37 个文件；跳过的 5 条是 `pg_only`，见下一行），覆盖率 **83.22%**（门槛 80%） |
+| `pytest`（默认 SQLite） | **735 passed, 5 skipped**（740 collected，40 个文件；跳过的 5 条是 `pg_only`，见下一行），覆盖率 **83.37%**（门槛 80%） |
 | `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **598 passed, 1 skipped**（实测于 postgres:16；1 条跳过的是 `sqlite_only`）。⚠️ 这是**留言板之前**的数字：SQLite 侧已随留言板涨到 665+5，PG 侧待下次跑 `backend-postgres` 作业时回填 |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **726 passed / 45 files**（每个视图都有 spec；含 http 拦截器的「凭证只进内存不进 localStorage」与「启动静默续期」两组防回归用例） |
+| `vitest run` | **736 passed / 45 files**（每个视图都有 spec；含「凭证只进内存不进 localStorage」「启动静默续期」「hint Cookie 不是授权依据」三组防回归用例） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 12 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **40/40**（真实 Chrome，页面错误 0） |

@@ -48,7 +48,7 @@
 | 后端 | FastAPI 分层（api/services/repositories）+ import-linter 机器校验依赖方向；**12 条迁移 / 15 张表**（+ FTS5 的 5 张虚拟/影子表；PG 上另有 pg_trgm 与 3 条 GIN 索引）；**670 个 pytest**（SQLite 665 passed/5 skipped，覆盖率 82.96%，门槛 80%），ruff 全绿 |
 | 前端 | **713 个 vitest 用例 / 45 个 spec**（每个视图都有 spec）；vue-tsc 0 error、eslint 干净 |
 | 端到端 | `tools/e2e_live` 两套方言：SQLite **62/62**（已进 CI）、PostgreSQL **60 pass + 1 skip**；另有 smoke **40** / interaction **25** / full-check **50** 三项浏览器脚本（且已在 CI 上真实执行）（**首个浏览器脚本此前写死 Windows 路径导致 CI 必挂，已修**） |
-| 已有能力 | 分页排序全入 URL、JWT 双 Token 静默续期 + 登出真吊销、RSS/sitemap/OG meta、主题三态、移动端目录、代码块复制、阅读进度条、系列文章、图片多尺寸 srcset、访问趋势 PV/UV、评论邮件通知 |
+| 已有能力 | 分页排序全入 URL、JWT 双 Token 静默续期（refresh token 在 httpOnly Cookie、access token 只留内存）+ 登出真吊销、RSS/sitemap/OG meta、主题三态、移动端目录、代码块复制、阅读进度条、系列文章、图片多尺寸 srcset、访问趋势 PV/UV、评论邮件通知 |
 | 缺口 | ~~views 层零测试~~（**已关闭**：22 个视图全部有 spec / 333 条）；**友链的遗留项**（2026-09-24 交付时明确未做）：无外链健康检查、无申请-审核流程、无分页（几十条够用）；~~未在 PostgreSQL 实跑~~（**已关闭**：2026-09-24 在真 PG 上跑通迁移升降级 + 整套 pytest）；~~远程 CI 从未真正执行~~（**已关闭**：账单锁于 2026-09-24 解除，run #48 起真实执行，**run #53 起 8 个作业全部通过**）；无 ETag / 缓存；PG 上的检索在 3 字以内关键词仍走顺序扫描（三元组索引的固有粒度） |
 
 ---

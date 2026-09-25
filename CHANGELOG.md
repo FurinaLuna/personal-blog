@@ -14,6 +14,15 @@
 
 ### 新增
 
+- **运行期多 worker 自检**（2026-09-25）：限流是**进程内**固定窗口计数，多开 worker 会让
+  登录 / 评论 / 点赞的配额按 worker 数线性放大且**没有任何告警** —— 爆破成本直接降到 1/N。
+  此前只有 `tests/test_deploy_config.py` 静态断言 Dockerfile / compose 写了 `--workers 1`，
+  挡不住"有人裸机用 `uvicorn --workers 4` 起"。现在启动期检查 `WEB_CONCURRENCY` /
+  `UVICORN_WORKERS` 环境变量与 `sys.argv`，**生产直接拒绝启动**、非生产只记警告
+  （与既有生产门禁同一取舍）。局限如实写在 docstring 里：覆盖不了编程式启动
+  （`uvicorn.run(app, workers=4)`）；刻意不数子进程 —— 那在"Windows 开发机 + Linux 容器"
+  的跨平台约束下不可靠。
+
 - **`/ready` 暴露全文检索索引的真实状态**（2026-09-25）：`_ensure_fulltext_index()`
   原先挂在 `db_auto_create` 分支里，而生产 `DB_AUTO_CREATE=false` ——
   等于**生产上根本不探测索引**，PG 下 `pg_trgm` / GIN 索引缺失时搜索会静默退化成
@@ -224,6 +233,17 @@
     否则浏览器直接丢弃该 Cookie；生产门禁会拒绝这个组合。
   - 登出的语义顺带被钉死并实测：`token_version += 1` + 按行吊销全部刷新会话，
     登出前那枚 refresh token 再刷新返回 **401**（此前只有"客户端清本地凭证"）。
+  - **顺带消除了一个由此引入的多余请求**：access token 只存内存后，前端无法从 JS 侧判断
+    "这台浏览器有没有会话"，于是连公开页面也会先打一次 `POST /auth/refresh`，
+    匿名访客每次进站白吃一个 401。现在登录 / 刷新会另发一个**非 httpOnly** 的
+    「会话提示」Cookie（`SESSION_HINT_COOKIE_NAME`，值恒为 `"1"`、不含任何秘密），
+    前端用它决定"值不值得去续期"。
+    - 它的 `path` 与 refresh Cookie **刻意不同**：必须是 `/`。Cookie 可见性受 path 约束，
+      收窄到 `/api/v1/auth` 的话页面 JS 根本读不到它，优化静默失效还会连带丢掉
+      公开页的登录态恢复。这条已用**双向用例**钉死（正向断言读得到、反向断言
+      `/api/v1/auth` 的提示 Cookie 在 `/` 页面读不到），谁"为了对齐 path"改回去会立刻变红。
+    - 它**只用来省一次请求，不参与任何授权决策**：受保护路由仍然无条件尝试恢复登录态。
+      否则一旦提示与实际会话不一致，就会变成"偶发被登出"。
 
 - **`/guestbook` 不再走占位组件**，并因此删掉了 `frontend/src/views/PlaceholderView.vue`
   与它的 spec：`/links` 与 `/guestbook` 两个占位页都已落地，它已无任何引用

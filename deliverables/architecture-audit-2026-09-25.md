@@ -392,6 +392,12 @@ sequenceDiagram
 ### 6.1 P0
 
 **P0-1　刷新令牌长期存放于 localStorage，XSS 即等于管理员身份长期失守**
+
+> **状态：已于 2026-09-25 当日修复。** 采纳的是"中期迁移"方案（httpOnly Cookie 承载
+> refresh token + access token 只存内存），未采用短期缓解项 (a)(b)。改动与验证见
+> `docs/devlog/2026-09-25.md` 与 `CHANGELOG.md` 的 Unreleased 段。下面保留的是
+> **审计当时的原始判断**，不回填。
+
 - 位置：`frontend/src/api/http.ts:60-68`（`localStorage.setItem(REFRESH_TOKEN_KEY, ...)`）、`57`（读取）
 - 为什么是问题：access + refresh 双令牌都落 `localStorage`，任何一次 XSS（第三方依赖漏洞、未来新增组件、`v-html` 误用、浏览器扩展）都能把 refresh token 直接读走，并在 `refresh` 轮换链条上续期出新的 access token，形成长期冒充。Markdown 已经用 DOMPurify 消毒（`utils/markdown.ts:173`）显著降低了 XSS 面，但**消毒只是降低概率，不是消除风险**；管理员会话的价值远高于普通访客。
 - 建议：中期迁移到 `httpOnly + Secure + SameSite=Strict` 的 Cookie 承载 refresh token、access token 只存内存；短期至少做到（a）refresh token 绑定 UA + IP 段指纹，（b）后台会话单独缩短 refresh 有效期，（c）加 CSP 头（`deploy/security-headers.inc` 里补）。
