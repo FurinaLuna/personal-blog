@@ -156,3 +156,120 @@ describe('auth store 启动恢复（刷新页面场景）', () => {
     expect(auth.isAuthenticated).toBe(true)
   })
 })
+
+/* ------------------------------------------------------------------ 机会性恢复 */
+
+/**
+ * `restoreIfLikely()`：公开页面的入口（`DefaultLayout` 挂载时调的就是它）。
+ *
+ * 为什么必须单独守：公开页面（首页 / 归档 / 文章详情）上匿名访客占绝大多数，
+ * 而 access token 只存内存、刷新后必然为空 —— 那里若调无条件的 `restore()`，
+ * 每个匿名访客进站都会先打一次注定 401 的 `/auth/refresh`。服务端因此下发一个
+ * 非 httpOnly 的提示 Cookie，这里就是读它的地方。
+ *
+ * 这组用例的存在还因为踩过一次：当时只在**路由守卫**里加了提示 Cookie 的门控，
+ * 而 `DefaultLayout.vue` 挂载时仍在无条件调 `restore()` —— 门控被绕过、目的没达成，
+ * 而单测因为在路由层断言而全绿。**测调用方，别只测守卫。**
+ */
+describe('restoreIfLikely：只在可能有会话时才去问服务端', () => {
+  /** 提示 Cookie 必须用 `path=/` 才读得到（后端就是这么发的）。 */
+  function setHintCookie(path = '/') {
+    document.cookie = `blog_session=1; path=${path}`
+  }
+
+  function clearHintCookie() {
+    document.cookie = 'blog_session=; path=/; max-age=0'
+  }
+
+  beforeEach(() => {
+    clearHintCookie()
+  })
+
+  it('无提示 Cookie 且内存无 token → 一个请求都不发', async () => {
+    tokenStore.clear()
+    const refresh = vi.spyOn(authApi, 'refresh')
+    const me = vi.spyOn(authApi, 'me')
+
+    const auth = useAuthStore()
+    await auth.restoreIfLikely()
+
+    expect(refresh).not.toHaveBeenCalled()
+    expect(me).not.toHaveBeenCalled()
+  })
+
+  it('短路时**不置 restored**：那是"已问过服务端"的标记，没问过就不能钉结论', async () => {
+    tokenStore.clear()
+
+    const auth = useAuthStore()
+    await auth.restoreIfLikely()
+
+    // 置成 true 会让受保护路由的守卫跳过无条件恢复，于是"提示位缺失但确实有会话"
+    // 的已登录用户（手删了提示 Cookie / 跨域部署读不到）会被直接弹去登录页 ——
+    // 正是这次改动要避免的"偶发被登出"。
+    expect(auth.restored).toBe(false)
+    expect(auth.isAuthenticated).toBe(false)
+  })
+
+  it('有提示 Cookie（生产真实 path：/）→ 静默续期并恢复登录态', async () => {
+    setHintCookie('/')
+    tokenStore.clear()
+    const refresh = vi
+      .spyOn(authApi, 'refresh')
+      .mockResolvedValue({ access_token: 'fresh', token_type: 'bearer', expires_in: 7200 })
+    const me = vi.spyOn(authApi, 'me').mockResolvedValue(ADMIN_USER)
+
+    const auth = useAuthStore()
+    await auth.restoreIfLikely()
+
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(me).toHaveBeenCalledTimes(1)
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
+  it('提示 Cookie 被收窄到 /api/v1/auth 时读不到 → 不发请求（这条是 path 护栏）', async () => {
+    // 后端若"为了与 refresh Cookie 对齐"把它收窄到 /api/v1/auth，页面 JS 就读不到，
+    // 于是公开页永远不恢复登录态 —— 净功能回归。这条用例让那种改动立刻变红。
+    setHintCookie('/api/v1/auth')
+    tokenStore.clear()
+    const refresh = vi.spyOn(authApi, 'refresh')
+
+    const auth = useAuthStore()
+    await auth.restoreIfLikely()
+
+    expect(document.cookie).not.toContain('blog_session')
+    expect(refresh).not.toHaveBeenCalled()
+  })
+
+  it('内存已有 access token → 即使没有提示 Cookie 也要恢复（受保护路由的诉求）', async () => {
+    clearHintCookie()
+    tokenStore.save({ access_token: 'at' })
+    const me = vi.spyOn(authApi, 'me').mockResolvedValue(ADMIN_USER)
+
+    const auth = useAuthStore()
+    await auth.restoreIfLikely()
+
+    expect(me).toHaveBeenCalledTimes(1)
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
+  it('提示 Cookie 消失时不抹掉内存里已有的登录态', async () => {
+    setHintCookie('/')
+    tokenStore.clear()
+    vi.spyOn(authApi, 'refresh').mockResolvedValue({
+      access_token: 'fresh',
+      token_type: 'bearer',
+      expires_in: 7200,
+    })
+    vi.spyOn(authApi, 'me').mockResolvedValue(ADMIN_USER)
+
+    const auth = useAuthStore()
+    await auth.restoreIfLikely()
+    expect(auth.isAuthenticated).toBe(true)
+
+    // 提示位是"省请求的优化"，不是真相来源：它没了不代表用户被登出
+    clearHintCookie()
+    await auth.restoreIfLikely()
+    expect(auth.isAuthenticated).toBe(true)
+  })
+})
+

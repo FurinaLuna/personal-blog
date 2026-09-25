@@ -14,8 +14,16 @@ const auth = useAuthStore()
 onMounted(() => {
   // 站点档案（站名、页脚、关于页）全站共用，进站时拉一次即可
   void site.load()
-  // 已登录用户刷新页面后恢复登录态，顶栏才能正确显示"后台/登录"
-  void auth.restore()
+  // 已登录用户刷新页面后恢复登录态，顶栏才能正确显示"后台/登录"。
+  //
+  // 这里**必须**用 restoreIfLikely 而不是 restore：本布局挂在**公开页面**上，
+  // 匿名访客占绝大多数，而 access token 只存内存、刷新后必然为空 —— 用 restore
+  // 会让每个匿名访客进站都先打一次注定 401 的 /auth/refresh。
+  //
+  // 踩过的坑（别再犯）：这条调用点曾经是 `void auth.restore()`，而当时只在
+  // **路由守卫**里加了提示 Cookie 的门控 —— 于是门控被这里绕过，目的没达成，
+  // 而单测因为在路由层断言，全绿。**测调用方，别只测守卫。**
+  void auth.restoreIfLikely()
 })
 </script>
 

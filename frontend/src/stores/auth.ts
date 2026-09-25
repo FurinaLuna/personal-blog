@@ -122,6 +122,48 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * 「机会性」恢复登录态：只在**可能**有会话时才去问服务端。
+   *
+   * 公开页面（首页、归档、文章详情……）挂载时想知道"要不要显示后台/登录"，
+   * 这正是 `restoreIfLikely` 的用途。而 `access_token` 只存内存，刷新页面后必然是空的，
+   * 前端无从判断这台浏览器有没有会话 —— 直接调 `restore()` 的话，**匿名访客每次进站
+   * 都会先打一次 `POST /auth/refresh` 白吃一个 401**。服务端因此额外下发一个非 httpOnly
+   * 的提示 Cookie（见 `backend/src/app/api/cookies.py` 的 `set_session_hint_cookie`），
+   * 这里读它来短路。
+   *
+   * ## 为什么它必须与 `restore()` 分开，而不是把判断塞进 `restore()` 里
+   *
+   * 提示位只是**省请求的优化，不是授权依据**：它可能与真实会话状态不一致（用户手删了
+   * 这枚 Cookie、或跨域部署时 SPA 根本读不到它）。受保护路由绝不能因为提示位缺失就把
+   * 已登录用户判成未登录 —— 那是"偶发被登出"，比多发一次请求糟糕得多。
+   *
+   * 所以规则是：
+   * - **受保护路由** → 用 `restore()`，无条件尝试（宁多发一次请求）；
+   * - **公开页面** → 用 `restoreIfLikely()`，提示位缺失就直接短路。
+   *
+   * ⚠️ 加新的调用点前先想清楚它属于哪一类。历史上这里漏过一次：路由守卫加了门控，
+   * 但 `DefaultLayout.vue` 在挂载时无条件调 `restore()`，于是目的是匿名的那个 401
+   * 照旧发生 —— 而单测只在路由层断言，全绿。**测调用方，别只测守卫。**
+   */
+  function restoreIfLikely(): Promise<void> {
+    if (!tokenStore.access && !tokenStore.hasSessionHint) {
+      // 没有任何"可能有会话"的信号：直接短路，不发请求。
+      //
+      // **刻意什么都不写** —— 尤其是**不置 `restored = true`**：
+      // `restored` 是"已经问过服务端、结论可信"的标记。这里我们根本没问，
+      // 置上它会让**受保护路由的守卫跳过无条件恢复**，于是"提示位缺失但确实有
+      // 会话"的已登录用户（手删了提示 Cookie、跨域部署读不到它）会被直接弹去
+      // 登录页 —— 正是这次改动要避免的"偶发被登出"。同理也不动 `user`：
+      // 万一内存里已有登录态，不能因为一个提示位就把它抹掉。
+      //
+      // 保持 `restored = false` 的代价只是：公开页每次挂载都短路一次（零请求），
+      // 而受保护路由会照旧无条件去问 —— 这正是我们要的取舍。
+      return Promise.resolve()
+    }
+    return restore()
+  }
+
+  /**
    * 登录。
    *
    * 成功时**返回 user 对象**（而不是 void）：LoginView 用
@@ -221,6 +263,7 @@ export const useAuthStore = defineStore('auth', () => {
     usersLoading,
     usersError,
     restore,
+    restoreIfLikely,
     login,
     logout,
     updateProfile,

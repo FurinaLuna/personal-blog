@@ -46,6 +46,10 @@ async function logout(): Promise<void> {
 }
 
 onMounted(() => {
+  // 这里用**无条件**的 restore()，与 DefaultLayout 的 restoreIfLikely() 不同 ——
+  // 不是笔误：本布局只挂在受保护路由上，而守卫的恢复带 6 秒超时（网络半死时会
+  // 放行让人先看到页面）。那种情况下 `restored` 仍是 false，这里这一问才是真正的
+  // 补救，不能因为"提示位缺失"就短路掉。
   void auth.restore()
 })
 </script>
