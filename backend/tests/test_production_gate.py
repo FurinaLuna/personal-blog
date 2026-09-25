@@ -7,6 +7,7 @@ JWT 密钥和管理员口令**正常启动并对外服务。这里把那条路�
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -254,3 +255,144 @@ class TestCookieConfigTolerance:
             _settings(cookie_secure="").cookie_secure_flag is True
         )  # SAFE_PRODUCTION 是 production
         assert _settings(app_env="development", cookie_secure="").cookie_secure_flag is False
+
+
+class TestWorkerCountRuntimeCheck:
+    """``--workers 1`` 的**运行时**检查。
+
+    存在意义：限流器是进程内固定窗口（``utils/ratelimit.py``），多 worker 会让
+    登录 / 评论 / 点赞的配额按 worker 数线性放大，且没有任何告警。
+    此前只有 ``tests/test_deploy_config.py`` 静态断言 Dockerfile / compose 写了
+    ``--workers 1``，挡不住"有人裸机用 ``uvicorn --workers 4`` 起"。
+    这里守 ``Settings.check_worker_count()`` 与 ``main._enforce_worker_invariant``。
+
+    注意 ``sys.argv`` 一律用 monkeypatch 替换，绝不改真实进程的 argv
+    （真实 argv 属于 pytest，改了会干扰其它用例）。
+    """
+
+    @pytest.fixture
+    def clean_worker_env(self, monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+        """清空两个 worker 环境变量、并把 argv 收成一个正常启动形态。"""
+        for name in ("WEB_CONCURRENCY", "UVICORN_WORKERS"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr(sys, "argv", ["uvicorn", "app.main:app"])
+        return monkeypatch
+
+    def test_clean_environment_reports_nothing(self, clean_worker_env: pytest.MonkeyPatch) -> None:
+        """正常启动（无环境变量、无 --workers）不该报任何问题。"""
+        assert _settings().check_worker_count() == []
+
+    @pytest.mark.parametrize("name", ["WEB_CONCURRENCY", "UVICORN_WORKERS"])
+    def test_env_var_with_multiple_workers_is_flagged(
+        self, clean_worker_env: pytest.MonkeyPatch, name: str
+    ) -> None:
+        clean_worker_env.setenv(name, "4")
+        problems = _settings().check_worker_count()
+        assert any(name in text for text in problems), problems
+
+    def test_blank_env_var_is_treated_as_unset(self, clean_worker_env: pytest.MonkeyPatch) -> None:
+        """``.env`` 里写 ``WEB_CONCURRENCY=``（留空但保留键）不该被误判。
+
+        与 COOKIE_SECURE / COOKIE_DOMAIN 的空串容错同一约定。
+        """
+        clean_worker_env.setenv("WEB_CONCURRENCY", "  ")
+        assert _settings().check_worker_count() == []
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["uvicorn", "app.main:app", "--workers", "4"],
+            ["uvicorn", "app.main:app", "-w", "4"],
+            ["uvicorn", "app.main:app", "--workers=4"],
+        ],
+    )
+    def test_argv_with_multiple_workers_is_flagged(
+        self, clean_worker_env: pytest.MonkeyPatch, argv: list[str]
+    ) -> None:
+        """三种写法都要覆盖：带空格的 ``--workers N`` / ``-w N`` 与 ``--workers=N``。"""
+        clean_worker_env.setattr(sys, "argv", argv)
+        problems = _settings().check_worker_count()
+        assert any("workers" in text for text in problems), problems
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["uvicorn", "app.main:app", "--workers", "1"],
+            ["uvicorn", "app.main:app", "-w", "1"],
+            ["uvicorn", "app.main:app", "--workers=1"],
+        ],
+    )
+    def test_explicit_single_worker_is_fine(
+        self, clean_worker_env: pytest.MonkeyPatch, argv: list[str]
+    ) -> None:
+        """显式写 1 是**正确**用法（Dockerfile 就是这么写的），不能被误报。"""
+        clean_worker_env.setattr(sys, "argv", argv)
+        assert _settings().check_worker_count() == []
+
+    def test_env_var_of_one_is_fine(self, clean_worker_env: pytest.MonkeyPatch) -> None:
+        clean_worker_env.setenv("WEB_CONCURRENCY", "1")
+        assert _settings().check_worker_count() == []
+
+    def test_trailing_workers_flag_without_value_is_ignored(
+        self, clean_worker_env: pytest.MonkeyPatch
+    ) -> None:
+        """``--workers`` 后面没有值时不越界、不误报（uvicorn 自己会报参数错）。"""
+        clean_worker_env.setattr(sys, "argv", ["uvicorn", "app.main:app", "--workers"])
+        assert _settings().check_worker_count() == []
+
+    def test_production_refuses_to_start(
+        self, monkeypatch: pytest.MonkeyPatch, clean_worker_env: pytest.MonkeyPatch
+    ) -> None:
+        """生产下多 worker 必须**拒绝启动**，而不是只打条警告。
+
+        警告在容器日志里没人看，而配额被静默放大是不可逆的安全削弱
+        （攻击者当天就能用上放大后的配额）。
+        """
+        from app import main
+
+        # 先把生产门禁的其它项都置为"已修好"，保证失败一定是 worker 这一条引起的
+        for key, value in SAFE_PRODUCTION.items():
+            monkeypatch.setattr(main.settings, key, value)
+        clean_worker_env.setenv("WEB_CONCURRENCY", "4")
+
+        with pytest.raises(RuntimeError, match="多 worker"):
+            main.create_app()
+
+    def test_non_production_only_warns(
+        self, monkeypatch: pytest.MonkeyPatch, clean_worker_env: pytest.MonkeyPatch
+    ) -> None:
+        """非生产只记 warning：开发时临时多开 worker 不该起不来。
+
+        这里直接替换 ``main.logger.warning`` 而不是用 ``caplog``：``setup_logging``
+        把 ``blog`` 这个 logger 的 ``propagate`` 设成了 False，caplog 挂在 root 上，
+        捕获不到它的记录（照写会得到一条永远为空的假绿用例）。
+        """
+        from app import main
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            main.logger, "warning", lambda msg, *args, **_kw: calls.append(msg % args)
+        )
+        monkeypatch.setattr(main.settings, "app_env", "development")
+        clean_worker_env.setenv("WEB_CONCURRENCY", "4")
+
+        main._enforce_worker_invariant()  # 不抛异常
+
+        assert any("多 worker" in text for text in calls), calls
+        assert any("非生产环境" in text for text in calls), calls
+
+    def test_non_production_clean_env_stays_silent(
+        self, monkeypatch: pytest.MonkeyPatch, clean_worker_env: pytest.MonkeyPatch
+    ) -> None:
+        """没有多 worker 时连警告都不该有（免得天天刷屏、把人训练成忽略告警）。"""
+        from app import main
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            main.logger, "warning", lambda msg, *args, **_kw: calls.append(msg % args)
+        )
+        monkeypatch.setattr(main.settings, "app_env", "development")
+
+        main._enforce_worker_invariant()
+
+        assert calls == []

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -28,6 +30,33 @@ _DEFAULT_ADMIN_PASSWORD = "admin123456"
 # 日志里一句警告都没有。这是"配置写错却表现为一切正常"的典型形态，
 # 所以宁可解析配置时就拒绝启动（与 admin_email 用 EmailStr 同一取舍）。
 KNOWN_APP_ENVS = ("development", "testing", "production")
+
+# uvicorn 会读的「worker 数」环境变量。
+# WEB_CONCURRENCY 是 uvicorn（及 gunicorn）的约定名，UVICORN_WORKERS 是部分平台
+# / 部署模板惯用的名字。两个都查，避免只堵住一个而漏掉另一个。
+_WORKER_ENV_VARS = ("WEB_CONCURRENCY", "UVICORN_WORKERS")
+# uvicorn CLI 里声明 worker 数的短参数。
+_WORKER_SHORT_FLAG = "-w"
+
+
+def _worker_count_from_argv(argv: list[str]) -> str | None:
+    """从命令行参数里取出显式声明的 worker 数，取不到返回 ``None``。
+
+    支持 uvicorn CLI 的三种写法：``--workers N`` / ``-w N`` / ``--workers=N``
+    （``-w=N`` 顺手也认，成本为零）。
+
+    单独抽成函数只为让 ``check_worker_count()`` 保持短小；它**不是**一个
+    "数进程"的探测，见 ``check_worker_count()`` 关于覆盖范围的说明。
+    """
+    for index, token in enumerate(argv):
+        if token in ("--workers", _WORKER_SHORT_FLAG):
+            if index + 1 < len(argv):
+                return argv[index + 1]
+            continue
+        for prefix in ("--workers=", f"{_WORKER_SHORT_FLAG}="):
+            if token.startswith(prefix):
+                return token[len(prefix) :]
+    return None
 
 
 class Settings(BaseSettings):
@@ -387,6 +416,56 @@ class Settings(BaseSettings):
                 "COOKIE_SAMESITE=none 但 Cookie 未启用 Secure："
                 "这种组合下 refresh token 会被任意站点在明文链路上带上。"
                 "请设 COOKIE_SECURE=true（并确认站点确实是 HTTPS），或改回 lax。"
+            )
+
+        return problems
+
+    def check_worker_count(self) -> list[str]:
+        """检测进程是否被以多 worker 方式启动，返回问题清单。
+
+        为什么需要它：限流器是**进程内**固定窗口（``utils/ratelimit.py``，计数在
+        内存 dict 里，配额不跨进程共享）。多开 worker 的后果不是"性能变好"，
+        而是**限流配额按 worker 数线性放大**——登录 5/分 在 4 worker 下变成 20/分，
+        爆破成本直接降到四分之一，且没有任何告警。启动期的副作用（建表、灌种子、
+        重建全文索引）也会被并发执行。
+
+        此前只有 ``tests/test_deploy_config.py`` 静态断言 Dockerfile / compose 写了
+        ``--workers 1``，挡不住"有人裸机用 ``uvicorn --workers 4`` 起"。这里补上
+        运行时的检查，调用方（``main.py``）在生产直接拒绝启动、非生产只记警告。
+
+        **覆盖范围的诚实说明（重要）**：本方法只能看到 ``sys.argv`` 与环境变量，
+        因此**覆盖不了所有启动方式**——例如被进程管理器 / WSGI 包装以编程方式
+        拉起（``uvicorn.run(app, workers=4)``）时，argv 里可能根本没有
+        ``--workers``，此处的检查会漏过。它是一道"能挡住最常见误用"的门槛，
+        **不是**一条完备的不变式。刻意不去数子进程或读 ``/proc``：那类做法在
+        本仓库的跨平台约束（Windows 开发机 + Linux 容器）下不可靠，还会引入
+        自己的一堆边界情况。
+
+        Returns:
+            人类可读的问题描述列表；未发现多 worker 隐患时为空列表。
+        """
+        problems: list[str] = []
+
+        for name in _WORKER_ENV_VARS:
+            raw = os.environ.get(name)
+            # 没设或空串按「没配」处理（与 COOKIE_SECURE / COOKIE_DOMAIN 同一约定：
+            # .env 里写 ``KEY=`` 很常见，不该被当成"配了个非法值"）。
+            if raw is None or not raw.strip():
+                continue
+            if raw.strip() != "1":
+                problems.append(
+                    f"环境变量 {name}={raw!r}：限流器是进程内计数，多 worker 会让"
+                    "登录 / 评论 / 点赞的配额按 worker 数放大，且没有任何告警。"
+                    f"个人博客请保持单 worker（{name}=1）；真要扩容请先换 PostgreSQL "
+                    "并把限流换成共享存储。"
+                )
+
+        argv_count = _worker_count_from_argv(sys.argv[1:])
+        if argv_count is not None and argv_count != "1":
+            problems.append(
+                f"命令行参数指定了 --workers {argv_count}：限流器是进程内计数，"
+                "多 worker 会让登录 / 评论 / 点赞的配额按 worker 数放大，且没有任何告警。"
+                "请去掉该参数（uvicorn 缺省即单 worker）或显式写成 --workers 1。"
             )
 
         return problems

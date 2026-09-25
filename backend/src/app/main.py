@@ -276,6 +276,38 @@ def _enforce_production_safety() -> None:
     )
 
 
+def _enforce_worker_invariant() -> None:
+    """多 worker 的运行时检查：生产拒绝启动，非生产只记警告。
+
+    与 ``_enforce_production_safety`` 同一取舍：生产用多 worker 会让**进程内**
+    限流（``utils/ratelimit.py``）的配额按 worker 数静默放大——登录 5/分 在 4 worker
+    下变成 20/分，爆破成本降到四分之一，而日志里一句告警都没有。这类"改动动机
+    看起来完全正当（加几个 worker 提性能）却破坏了一条毫无字面关联的安全属性"
+    的问题，必须 fail fast。
+
+    非生产（本地 / CI）只记警告、不阻止启动：开发时有人临时多开 worker 不该起不来，
+    而且那种场景下配额放大的危害本来就有限。
+
+    ``check_worker_count()`` 只覆盖环境变量与 ``sys.argv``（见其 docstring），
+    所以这是一道拦最常见误用的门槛，**不是**完备保证。
+
+    Raises:
+        RuntimeError: 生产环境下检测到多 worker。
+    """
+    problems = settings.check_worker_count()
+    if not problems:
+        return
+    detail = "\n".join(f"  {index}. {text}" for index, text in enumerate(problems, start=1))
+    message = f"检测到以多 worker 启动，限流配额会被静默放大：\n{detail}"
+    if settings.is_production:
+        raise RuntimeError(
+            f"{message}\n"
+            "（生产环境已拒绝启动。个人博客的限流是进程内实现，"
+            "要扩容请先换 PostgreSQL 并把限流换成共享存储。）"
+        )
+    logger.warning("%s\n（当前是非生产环境，仅记录警告、不阻止启动。）", message)
+
+
 def create_app() -> FastAPI:
     """应用工厂。测试里也用它，保证测试环境的 app 与生产同构。"""
     _enforce_production_safety()
@@ -284,6 +316,9 @@ def create_app() -> FastAPI:
         json_output=settings.log_json,
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
     )
+
+    # 放在 setup_logging 之后：非生产分支要记 warning，得先让日志 handler 就位
+    _enforce_worker_invariant()
 
     app = FastAPI(
         title=settings.app_name,
