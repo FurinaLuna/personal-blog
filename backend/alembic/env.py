@@ -30,6 +30,19 @@ from app.models import Article, Attachment, Comment, SiteProfile, Tag, User  # n
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
+# ── 迁移也过一遍生产门禁 ────────────────────────────────────────────
+# ``check_production_safety()`` 原本只在 ``create_app()`` 里调用（main.py），
+# 于是 Alembic、backup_db.py、e2e_run.py 这些入口**完全不过门禁** ——
+# 而 Alembic 恰恰是拿着生产库权限、且最容易因为「配置还没配好就先跑迁移」
+# 而第一个碰库的进程。带着默认密钥或 SQLite 上生产时，应用会拒绝启动，
+# 迁移却照跑不误，表现出来就是「库建好了但服务起不来」这种最难查的形态。
+# 这里复用同一个校验函数：门禁只有一个实现，不会出现两边规则漂移。
+_migration_gate_problems = settings.check_production_safety()
+if _migration_gate_problems:
+    raise RuntimeError(
+        "生产环境配置不合法，拒绝执行迁移：\n- " + "\n- ".join(_migration_gate_problems)
+    )
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

@@ -264,6 +264,72 @@ class TestDockerfileCopySources:
         assert not problems, "\n  ".join(problems)
 
 
+class TestWorkerCountInvariant:
+    """``--workers 1`` 是一条**靠命令行参数维持的安全不变式**，必须钉成用例。
+
+    限流器是进程内固定窗口（``utils/ratelimit.py``，计数在内存 dict 里，
+    配额不跨进程共享）。多开 worker 的后果不是"性能变好"，而是
+    **限流配额按 worker 数线性放大**：登录 5/分 在 4 worker 下变成 20/分，
+    爆破成本直接降到四分之一，且没有任何告警。
+
+    它比一般配置更危险的地方在于：改动动机看起来完全正当
+    （"流量上来了，加几个 worker"），而破坏的是与它毫无字面关联的安全属性。
+    所以这里不只断言"有这个参数"，还要断言它的值就是 1。
+    """
+
+    @staticmethod
+    def _cmd_tokens() -> list[str]:
+        """从 Dockerfile 里取出 CMD 的 token 列表。
+
+        CMD 用的是 exec 形式（JSON 数组），直接按 JSON 解析而不是正则劈字符串，
+        免得注释里出现同名词就把断言骗过去。
+        """
+        dockerfile = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
+        match = re.search(r"^CMD\s+(\[.*\])\s*$", dockerfile, re.MULTILINE)
+        assert match, "Dockerfile.backend 里没找到 exec 形式的 CMD"
+        return json.loads(match.group(1))
+
+    def test_uvicorn_runs_with_a_single_worker(self) -> None:
+        tokens = self._cmd_tokens()
+        assert "--workers" in tokens, (
+            "CMD 里没有显式写 --workers：uvicorn 缺省就是 1，"
+            "但这个缺省一旦被别处改成环境变量或命令行覆盖就没人知道了，"
+            "显式写出来才能让下面的断言守得住"
+        )
+        value = tokens[tokens.index("--workers") + 1]
+        assert value == "1", (
+            f"--workers 当前是 {value!r}。限流器是进程内的（utils/ratelimit.py），"
+            "多 worker 会让登录/评论限流配额按 worker 数放大；"
+            "lifespan 的启动期副作用（建表、灌种子、重建全文索引）也会被并发执行。"
+            "要扩容请先换 PostgreSQL 并把限流换成共享存储"
+        )
+
+    def test_workers_is_not_overridable_by_env(self) -> None:
+        """不能留一个"环境变量能把 workers 改大"的后门。
+
+        uvicorn 会读 ``WEB_CONCURRENCY``；compose 里没设它所以当前是安全的，
+        但只要有人在 .env 里加一行，上面那条断言（只查 CMD）就失效了。
+        所以在 compose 层面也确认一次没有这个变量。
+        """
+        compose = COMPOSE_PATH.read_text(encoding="utf-8")
+        assert "WEB_CONCURRENCY" not in compose, (
+            "compose 里出现了 WEB_CONCURRENCY：它会覆盖 CMD 的 --workers，"
+            "让进程内限流的配额被静默放大"
+        )
+
+    def test_proxy_headers_are_handled_by_the_app_only(self) -> None:
+        """``--no-proxy-headers`` 与 workers 同源：都是"参数写错就架空应用层开关"。
+
+        开着 uvicorn 的代理头处理时，它会抢在应用之前按 X-Forwarded-For 改写
+        client host，于是 ``TRUST_PROXY_HEADERS=false`` 形同虚设
+        （实测：伪造 5 个 XFF，UV 从 1 涨到 5）。
+        """
+        tokens = self._cmd_tokens()
+        assert "--no-proxy-headers" in tokens
+        assert "--proxy-headers" not in tokens
+        assert "forwarded-allow-ips" not in " ".join(tokens)
+
+
 class TestEntrypointScript:
     """入口脚本要先迁移再启动，且必须是 LF。"""
 

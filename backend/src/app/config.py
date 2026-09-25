@@ -67,6 +67,30 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 120
     refresh_token_expire_days: int = 7
 
+    # ---------- Refresh Token 的传输方式 ----------
+    # 默认走 **httpOnly Cookie**：refresh token 一旦落到 localStorage，
+    # 任何一次 XSS（第三方依赖漏洞、v-html 误用、浏览器扩展）都能把它读走，
+    # 并顺着轮换链续期出新的 access token，形成长期冒充。
+    # Cookie 上加了 httpOnly 之后 JS 读不到，这个攻击面就没了。
+    #
+    # 配套的取舍：access token 只能存内存（页面刷新即丢），
+    # 所以前端每次冷启动都要先拿 refresh cookie 换一枚新的 access token。
+    refresh_token_cookie_name: str = "blog_refresh"
+    # None = 跟着 is_production 走（生产自动 Secure）。显式设 true/false 可覆盖。
+    cookie_secure: bool | None = None
+    # lax：默认档。跨站 XHR 不会带上它，天然挡住大部分 CSRF；
+    #     同站部署（nginx 反代 / Vite 代理，都是同源）完全够用。
+    # strict：更严，但从外站点链接跳进来时第一次请求不带 Cookie。
+    # none：**必须**同时 Secure，且只在前后端不同域的部署下才需要。
+    cookie_samesite: str = "lax"
+    # 留空 = 绑定当前完整域名（推荐）。填了才能跨子域共享（如 blog.example.com 与
+    # api.example.com 要共用登录态时写 example.com）。
+    cookie_domain: str | None = None
+    # 是否在**响应体**里也返回 refresh token。
+    # 只给非浏览器客户端（脚本、CI、curl 调试）开：浏览器一律走 Cookie，
+    # 否则响应体里的那一份仍然能被页面 JS 读到，等于白改。
+    refresh_token_in_body: bool = False
+
     # ---------- CORS ----------
     # NoDecode：关闭 pydantic-settings 对 list 字段的自动 JSON 解析。
     # 否则 CSV 写法（A,B,C）会在进入 _split_csv 验证器之前直接抛 SettingsError，
@@ -226,9 +250,38 @@ class Settings(BaseSettings):
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
+    @field_validator("cookie_samesite", mode="before")
+    @classmethod
+    def _validate_cookie_samesite(cls, value: Any) -> Any:
+        """SameSite 只允许三个取值，写错就拒绝启动。
+
+        为什么值得拦：`SameSite` 拼错（比如 `Lax;` 或 `nonee`）时浏览器会
+        **按 Lax 处理**，于是"我明明配了 none 以便跨站部署"的预期静默落空，
+        表现为"登录接口 200、set-cookie 也在，但下一个请求就是不带"——
+        这类问题查起来极费时间，因为服务端看起来完全正常。
+        """
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if normalized not in ("lax", "strict", "none"):
+            raise ValueError(f"COOKIE_SAMESITE 只能是 lax / strict / none 之一，当前为 {value!r}。")
+        return normalized
+
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
+
+    @property
+    def cookie_secure_flag(self) -> bool:
+        """Cookie 是否加 Secure。
+
+        未显式配置时跟着 ``is_production`` 走：生产必然是 HTTPS（或至少应该是），
+        而开发是 http://localhost —— 对 localhost 加 Secure 会让 Chrome
+        直接**拒绝写入** Cookie，表现为"登录 200 但刷新必掉线"。
+        """
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return self.is_production
 
     def check_production_safety(self) -> list[str]:
         """生产环境的安全门禁：返回所有「用开发默认值上生产」的问题清单。
@@ -286,6 +339,40 @@ class Settings(BaseSettings):
         # Debug 打开时异常会带堆栈细节
         if self.debug:
             problems.append("DEBUG=true：生产必须设为 false，避免把内部堆栈暴露给访客。")
+
+        # CORS：main.py 的中间件开着 allow_credentials=True，此时通配源等于
+        # 「任意站点都能带着访客凭据读取响应」。空列表则是另一种错：
+        # 前端请求会被浏览器全拦，人很容易为了"先让它跑起来"改成 "*"。
+        if not self.cors_origins:
+            problems.append(
+                "CORS_ORIGINS 为空：生产必须填真实前端域名（逗号分隔）。"
+                "留空会让浏览器拦掉所有跨源请求，进而诱导运维改成通配。"
+            )
+        elif "*" in self.cors_origins:
+            problems.append(
+                'CORS_ORIGINS 含 "*"：CORS 中间件开着 allow_credentials=True，'
+                "通配源 + 携带凭据等于任意站点都能读取已登录访客的响应。"
+                "请改成真实前端域名列表。"
+            )
+
+        # 数据库：SQLite 在本进程内独占文件锁，容器一旦多副本就是数据分裂，
+        # 而且它没有并发写能力。这条此前完全没人管——带着 sqlite 上「生产」
+        # 是能通过全部门禁检查的。
+        if self.database_url.startswith("sqlite"):
+            problems.append(
+                "DATABASE_URL 指向 SQLite：生产请用 postgresql+asyncpg://…。"
+                "SQLite 在多副本容器下会数据分裂，且不支持并发写入。"
+            )
+
+        # SameSite=none 的 Cookie 会被**任何站点**的请求带上，它唯一的合法搭档
+        # 是 Secure（浏览器规范强制要求）。少了 Secure，refresh token 就变成
+        # "谁都能在明文链路上拿到"，比放回 localStorage 还糟。
+        if self.cookie_samesite == "none" and not self.cookie_secure_flag:
+            problems.append(
+                "COOKIE_SAMESITE=none 但 Cookie 未启用 Secure："
+                "这种组合下 refresh token 会被任意站点在明文链路上带上。"
+                "请设 COOKIE_SECURE=true（并确认站点确实是 HTTPS），或改回 lax。"
+            )
 
         return problems
 
