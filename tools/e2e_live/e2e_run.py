@@ -584,6 +584,31 @@ def auth_hdr(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+# 承载 refresh token 的 Cookie 名（与 backend/src/app/config.py 的
+# refresh_token_cookie_name 默认值一致）。
+REFRESH_COOKIE_NAME = "blog_refresh"
+
+
+def refresh_cookie_of(response) -> str:
+    """从响应的 ``Set-Cookie`` 里取出 refresh token。
+
+    refresh token 现在**只在 httpOnly Cookie 里**下发，响应体里没有它
+    （见 backend/src/app/api/cookies.py）。CLIENT 是 ``httpx.Client``，
+    自带 Cookie Jar，所以「刷新」可以直接走浏览器路径（不带 body，令牌由
+    Jar 自动回带）—— A01b 就是专门验证这一条的。
+
+    但仍然有两处必须把它**显式**取出来，靠 Jar 回带证明不了用意：
+
+    - U03 要验证「脚本 / CI 显式传参」这条兼容路径仍然可用（body 优先于
+      Cookie，见 cookies.py 的 read_refresh_token）；
+    - U04 / U05 要验证「改密 / 登出后**旧令牌**必须失效」。Jar 里永远是
+      最新那一枚，拿它去证明"旧令牌已废"是永真的假绿。
+    """
+    value = response.cookies.get(REFRESH_COOKIE_NAME)
+    check(value, f"响应未下发 {REFRESH_COOKIE_NAME} Cookie：{dict(response.cookies)}")
+    return value
+
+
 # ================================================================ 用例定义
 # 环境与迁移
 
@@ -740,16 +765,41 @@ def c_r08():
 # 账号与作者主流程
 
 
-@case("A01", "账号与权限", "P0", "站长登录换取双 token 并可通过 /auth/me 校验")
+@case("A01", "账号与权限", "P0", "站长登录：响应体给 access token，refresh token 走 httpOnly Cookie，且 /auth/me 可校验")
 def c_a01():
     r = api("POST", "/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PASS})
     check(r.status_code == 200, f"登录失败：{r.status_code} {r.text[:200]}")
     body = r.json()
-    check(body.get("access_token") and body.get("refresh_token"), "未返回双 token")
+    # 契约：access token 在响应体里，refresh token 只在 httpOnly Cookie 里。
+    # 「响应体里没有 refresh_token」这条要显式断言 —— 它是整个迁移的目的
+    # （XSS 读不到长效凭证），而不是一个实现细节。
+    check(body.get("access_token"), "未返回 access_token")
+    check(refresh_cookie_of(r), "未下发 refresh token Cookie")
+    check(body.get("refresh_token") is None,
+          "响应体里出现了 refresh_token：它只应走 httpOnly Cookie，"
+          "留在响应体里等于 JS 仍能读到，迁移白做")
     STATE["admin_token"] = body["access_token"]
-    STATE["admin_refresh"] = body["refresh_token"]
+    STATE["admin_refresh"] = refresh_cookie_of(r)
     me = api("GET", "/auth/me", headers=auth_hdr(body["access_token"]))
     check(me.status_code == 200 and me.json()["username"] == ADMIN_USER, "/auth/me 校验失败")
+
+
+@case("A01b", "账号与权限", "P0", "浏览器路径：不带 body 刷新（令牌由 Cookie 自动回带）")
+def c_a01b():
+    """必须紧跟在 A01 之后：此时 Cookie Jar 里确定是刚登录的站长会话。
+
+    这条守的是前端唯一的冷启动方式 —— access token 只存内存，刷新页面后
+    只能靠 Cookie 换一枚新的。它断了就是"刷新任意页面即被登出"。
+    """
+    before = STATE["admin_refresh"]
+    r = api("POST", "/auth/refresh")
+    check(r.status_code == 200, f"不带 body 刷新失败：{r.status_code} {r.text[:200]}")
+    check(r.json().get("refresh_token") is None, "刷新响应体不应包含 refresh_token")
+    after = refresh_cookie_of(r)
+    check(after != before, "刷新后 Cookie 未轮换：应该换成一枚新的 refresh token")
+    # 让后续用例拿的是**当前有效**的那一枚：留旧的会导致 U03 重放已轮换令牌，
+    # 超过 30 秒宽容窗口后被判定为盗用并吊销整族（表现为 U03 莫名 401）。
+    STATE["admin_refresh"] = after
 
 
 @case("A02", "文章创作", "P0", "创建草稿：状态/正文/作者/标签全部真实落库")
@@ -920,12 +970,16 @@ def c_u02():
     check(r.status_code == 401, f"伪造 token 应 401，实际 {r.status_code}")
 
 
-@case("U03", "账号与权限", "P0", "refresh 接口可换取可用的新访问令牌")
+@case("U03", "账号与权限", "P0", "refresh 接口可换取可用的新访问令牌（脚本/CI 显式传参路径）")
 def c_u03():
+    # 刻意走 body 而不是 Cookie：这条就是**非浏览器客户端**的兼容路径
+    # （body 优先于 Cookie，见 cookies.py 的 read_refresh_token）。
+    # 浏览器路径由 A01b 覆盖，两条都要有，否则「脚本还能不能跑」无人守。
     r = api("POST", "/auth/refresh", json={"refresh_token": STATE["admin_refresh"]})
     check(r.status_code == 200, f"刷新失败：{r.status_code} {r.text[:200]}")
     me = api("GET", "/auth/me", headers=auth_hdr(r.json()["access_token"]))
     check(me.status_code == 200, "新换取的令牌不可用")
+    STATE["admin_refresh"] = refresh_cookie_of(r)
 
 
 @case("U04", "账号与权限", "P0", "改密后旧令牌立即失效（吊销生效）")
@@ -942,7 +996,7 @@ def c_u04():
     login = api("POST", "/auth/login", json={"username": ADMIN_USER, "password": NEW_PASS})
     check(login.status_code == 200, "新密码无法登录")
     STATE["admin_token"] = login.json()["access_token"]
-    STATE["admin_refresh"] = login.json()["refresh_token"]
+    STATE["admin_refresh"] = refresh_cookie_of(login)
 
 
 @case("U05", "账号与权限", "P1", "登出后旧令牌是否失效 [已知缺陷 A2 验证]")
@@ -961,7 +1015,7 @@ def c_u05():
     # 复原登录态，避免污染后续用例
     login = api("POST", "/auth/login", json={"username": ADMIN_USER, "password": NEW_PASS})
     STATE["admin_token"] = login.json()["access_token"]
-    STATE["admin_refresh"] = login.json()["refresh_token"]
+    STATE["admin_refresh"] = refresh_cookie_of(login)
 
 
 @case("U06", "账号与权限", "P0", "站长创建作者账号：新账号可真实登录且密码哈希入库")
@@ -1520,7 +1574,7 @@ def make_png(width: int, height: int) -> bytes:
 
 
 PHASE_BOOTSTRAP = [c_e01, c_e02, c_e03, c_e04, c_r01, c_r02, c_r03, c_r04, c_r05, c_r06, c_r07, c_r08]
-PHASE_AUTHOR = [c_a01, c_a02, c_a03, c_a04, c_a05, c_a06, c_a07, c_a08,
+PHASE_AUTHOR = [c_a01, c_a01b, c_a02, c_a03, c_a04, c_a05, c_a06, c_a07, c_a08,
                 c_u01, c_u02, c_u03, c_u04, c_u05, c_u06, c_u07, c_a09, c_a10]
 PHASE_COMMENT = [c_c01, c_c02, c_c03, c_c04, c_c05, c_c06, c_c07, c_c08, c_c09, c_c10]
 PHASE_ADMIN = [c_s01, c_t01, c_m01, c_n01, c_st01, c_nt01]

@@ -156,7 +156,7 @@ jobs:
           SEED_DEMO_DATA: 'false'
 
   e2e-live:
-    # tools/e2e_live 是本仓库最强的一张回归网（SQLite 62 条 / PG 61 条，
+    # tools/e2e_live 是本仓库最强的一张回归网（SQLite 63 条 / PG 62 条，
     # 每条都真起进程、真走 HTTP、真直连数据库复核），但它此前**只在作者本机跑过**：
     # e2e_run.py 里写死了 `backend/.venv/Scripts/python.exe`——一个 Windows 专有路径，
     # Linux runner 上连启动都会 FileNotFoundError。也就是说，"最强防线"恰恰是
