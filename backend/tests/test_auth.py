@@ -7,17 +7,22 @@ import pytest
 from httpx import AsyncClient
 
 from app.config import settings
-from tests.conftest import login
+from tests.conftest import login, refresh_cookie_of
 from tests.factories import ADMIN_PASSWORD, AUTHOR_PASSWORD, make_user_payload
 
 
-async def _login(client: AsyncClient, username: str, password: str) -> dict[str, str]:
-    """登录并返回完整的 token 对（登出用例需要同时拿到 refresh token）。"""
+async def _login(client: AsyncClient, username: str, password: str) -> tuple[dict[str, str], str]:
+    """登录并返回 ``(响应体, refresh token)``。
+
+    refresh token 默认只在 httpOnly Cookie 里（响应体里那一份被抹掉了，
+    页面 JS 读得到它）。登出/改密这类用例要验证"旧 refresh token 是否真的失效",
+    所以必须把令牌一起带出来——只返回响应体是拿不到的。
+    """
     response = await client.post(
         "/api/v1/auth/login", json={"username": username, "password": password}
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    return response.json(), refresh_cookie_of(response)
 
 
 class TestLogin:
@@ -28,7 +33,11 @@ class TestLogin:
         assert response.status_code == 200
         body = response.json()
         assert body["token_type"] == "bearer"
-        assert body["access_token"] and body["refresh_token"]
+        assert body["access_token"]
+        # 新契约：refresh token 走 httpOnly Cookie，响应体里**不带**它——
+        # 页面 JS 读得到响应体，留一份等于把 XSS 那个口子又开回来。
+        assert body["refresh_token"] is None
+        assert refresh_cookie_of(response)
         assert body["expires_in"] > 0
 
     async def test_login_with_email(self, client: AsyncClient) -> None:
@@ -63,7 +72,10 @@ class TestLogin:
             data={"username": "admin", "password": ADMIN_PASSWORD},
         )
         assert response.status_code == 200
-        assert "access_token" in response.json()
+        assert response.json()["access_token"]
+        # 表单入口与 JSON 入口共用同一套签发逻辑：Cookie 同样要下发、响应体同样不带
+        assert response.json()["refresh_token"] is None
+        assert refresh_cookie_of(response)
 
 
 class TestMe:
@@ -79,13 +91,12 @@ class TestMe:
 
     async def test_me_rejects_refresh_token_as_access_token(self, client: AsyncClient) -> None:
         """refresh token 不能当 access token 用——否则短期凭证的隔离就白做了。"""
-        tokens = (
-            await client.post(
-                "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
-            )
-        ).json()
+        logged_in = await client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
+        )
         response = await client.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['refresh_token']}"}
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {refresh_cookie_of(logged_in)}"},
         )
         assert response.status_code == 401
 
@@ -113,25 +124,31 @@ class TestMe:
 
 class TestRefresh:
     async def test_refresh_returns_new_pair(self, client: AsyncClient) -> None:
-        tokens = (
-            await client.post(
-                "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
-            )
-        ).json()
+        logged_in = await client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
+        )
         response = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_cookie_of(logged_in)}
         )
         assert response.status_code == 200
         assert response.json()["access_token"]
+        # 刷新同样只下发 Cookie，不给响应体
+        assert response.json()["refresh_token"] is None
+        assert refresh_cookie_of(response)
 
     async def test_access_token_cannot_be_used_to_refresh(self, client: AsyncClient) -> None:
-        tokens = (
-            await client.post(
-                "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
-            )
-        ).json()
+        """拿 access token 去刷新必须 401。
+
+        这条正是「显式 body 优先于 Cookie」存在的理由：登录已经把 refresh Cookie
+        写进了 Jar，若这里退化成"取不到 body 就回落 Cookie"，请求会被自己的
+        Cookie 救回来变成 200 —— 用例假绿，而"短期凭证换不出长期凭证"这条约束
+        从此没人守。
+        """
+        logged_in = await client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
+        )
         response = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": tokens["access_token"]}
+            "/api/v1/auth/refresh", json={"refresh_token": logged_in.json()["access_token"]}
         )
         assert response.status_code == 401
 
@@ -305,7 +322,7 @@ class TestLogout:
     async def test_logout_invalidates_access_token(
         self, client: AsyncClient, author: dict[str, object]
     ) -> None:
-        tokens = await _login(client, "writer", AUTHOR_PASSWORD)
+        tokens, _ = await _login(client, "writer", AUTHOR_PASSWORD)
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         assert (await client.get("/api/v1/auth/me", headers=headers)).status_code == 200
 
@@ -320,24 +337,22 @@ class TestLogout:
         self, client: AsyncClient, author: dict[str, object]
     ) -> None:
         """只吊销 access token 不够：refresh token 能立刻换出一对新的。"""
-        tokens = await _login(client, "writer", AUTHOR_PASSWORD)
+        tokens, refresh_token = await _login(client, "writer", AUTHOR_PASSWORD)
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         await client.post("/api/v1/auth/logout", headers=headers)
 
-        refreshed = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
-        )
+        refreshed = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
         assert refreshed.status_code == 401, "登出后旧 refresh token 仍能换发新令牌"
 
     async def test_can_login_again_after_logout(
         self, client: AsyncClient, author: dict[str, object]
     ) -> None:
         """吊销不能把用户锁在门外：重新登录必须照常可用。"""
-        tokens = await _login(client, "writer", AUTHOR_PASSWORD)
+        tokens, _ = await _login(client, "writer", AUTHOR_PASSWORD)
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         await client.post("/api/v1/auth/logout", headers=headers)
 
-        fresh = await _login(client, "writer", AUTHOR_PASSWORD)
+        fresh, _ = await _login(client, "writer", AUTHOR_PASSWORD)
         response = await client.get(
             "/api/v1/auth/me", headers={"Authorization": f"Bearer {fresh['access_token']}"}
         )

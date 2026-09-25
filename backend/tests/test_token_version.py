@@ -15,17 +15,24 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
+from tests.conftest import refresh_cookie_of
+
 ME_URL = "/api/v1/auth/me"
 REFRESH_URL = "/api/v1/auth/refresh"
 PASSWORD_URL = "/api/v1/auth/me/password"
 
 
-async def _login(client: AsyncClient, username: str, password: str) -> dict:
+async def _login(client: AsyncClient, username: str, password: str) -> tuple[dict, str]:
+    """登录，返回 ``(响应体, refresh token)``。
+
+    refresh token 只在 httpOnly Cookie 里，响应体拿不到它——而"改密码后 refresh
+    token 是否真的失效"正是这个文件要守的核心，令牌必须能取出来重放。
+    """
     response = await client.post(
         "/api/v1/auth/login", json={"username": username, "password": password}
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    return response.json(), refresh_cookie_of(response)
 
 
 class TestTokenVersionRevocation:
@@ -33,7 +40,7 @@ class TestTokenVersionRevocation:
         self, client: AsyncClient, author: dict[str, object]
     ) -> None:
         """改密码后，旧的 access token 立刻失效。"""
-        tokens = await _login(client, "writer", "author123456")
+        tokens, _ = await _login(client, "writer", "author123456")
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         assert (await client.get(ME_URL, headers=headers)).status_code == 200
 
@@ -55,7 +62,7 @@ class TestTokenVersionRevocation:
         只吊销 access token 是不够的 —— 攻击者拿 refresh token 就能立刻换到
         一对新的，改密码形同虚设。
         """
-        tokens = await _login(client, "writer", "author123456")
+        tokens, refresh_token = await _login(client, "writer", "author123456")
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
         await client.post(
@@ -64,14 +71,14 @@ class TestTokenVersionRevocation:
             headers=headers,
         )
 
-        refreshed = await client.post(REFRESH_URL, json={"refresh_token": tokens["refresh_token"]})
+        refreshed = await client.post(REFRESH_URL, json={"refresh_token": refresh_token})
         assert refreshed.status_code == 401, "改密码后 refresh token 仍然可用 = 没有止损能力"
 
     async def test_new_token_after_password_change_works(
         self, client: AsyncClient, author: dict[str, object]
     ) -> None:
         """吊销不能把用户自己锁在门外：用新密码登录要正常。"""
-        tokens = await _login(client, "writer", "author123456")
+        tokens, _ = await _login(client, "writer", "author123456")
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         await client.post(
             PASSWORD_URL,
@@ -79,7 +86,7 @@ class TestTokenVersionRevocation:
             headers=headers,
         )
 
-        fresh = await _login(client, "writer", "BrandNew123456")
+        fresh, _ = await _login(client, "writer", "BrandNew123456")
         assert (
             await client.get(ME_URL, headers={"Authorization": f"Bearer {fresh['access_token']}"})
         ).status_code == 200
@@ -88,7 +95,7 @@ class TestTokenVersionRevocation:
         self, client: AsyncClient, author: dict[str, object]
     ) -> None:
         """重新登录不会让旧代次的令牌「复活」。"""
-        tokens = await _login(client, "writer", "author123456")
+        tokens, _ = await _login(client, "writer", "author123456")
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         await client.post(
             PASSWORD_URL,

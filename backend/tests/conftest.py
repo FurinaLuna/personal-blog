@@ -13,7 +13,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import text
 
 TEST_DB = Path(tempfile.gettempdir()) / "personal_blog_test.db"
@@ -44,6 +44,7 @@ os.environ["MAX_UPLOAD_SIZE"] = str(2 * 1024 * 1024)
 os.environ["STORAGE_DIR"] = (Path(tempfile.gettempdir()) / "personal_blog_media").as_posix()
 
 # 上面的环境变量必须早于下面这些 import，故有意忽略 E402
+from app.config import settings  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.db.fulltext import ensure_search_indexes  # noqa: E402
 from app.db.session import async_session_factory, engine  # noqa: E402
@@ -170,6 +171,20 @@ async def login(client: AsyncClient, username: str, password: str) -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["access_token"]
+
+
+def refresh_cookie_of(response: Response) -> str:
+    """从登录 / 刷新响应的 ``Set-Cookie`` 里取出 refresh token。
+
+    默认配置下**响应体里没有** refresh token：``Token.refresh_token`` 是可选的，
+    且 ``set_refresh_cookie`` 会把它抹掉（页面 JS 读得到响应体，留一份等于白改）。
+    所以凡是"模拟浏览器"的用例，令牌都得从这里取——继续读
+    ``body["refresh_token"]`` 只会拿到 ``None``，而 ``None`` 会让刷新请求静默
+    退化成"靠 Cookie 兜底"，用例看着是绿的其实什么都没验证。
+    """
+    value = response.cookies.get(settings.refresh_token_cookie_name)
+    assert value, response.headers.get_list("set-cookie")
+    return value
 
 
 @pytest.fixture

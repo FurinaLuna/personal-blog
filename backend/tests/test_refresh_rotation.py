@@ -20,9 +20,11 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, update
 
+from app.config import settings
 from app.models import RefreshSession
 from app.repositories.refresh_session_repository import hash_jti
 from app.services.auth_service import REFRESH_REUSE_GRACE_SECONDS, AuthService
+from tests.conftest import refresh_cookie_of
 from tests.factories import ADMIN_PASSWORD
 
 
@@ -53,26 +55,51 @@ def _jti_of(token: str) -> str:
     return decode_token(token, expected_type="refresh").jti
 
 
-async def _login(client: AsyncClient) -> dict[str, str]:
+async def _login(client: AsyncClient) -> tuple[dict[str, str], str]:
+    """登录，返回 ``(响应体, refresh token)``。
+
+    refresh token 不再出现在响应体里（见 ``app/api/cookies.py``），只能从
+    ``Set-Cookie`` 取。这里保留二元组是为了让"登出/改密后旧令牌必须失效"
+    这类用例仍能**显式**把旧令牌交回服务端。
+    """
     response = await client.post(
         "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    return response.json(), refresh_cookie_of(response)
 
 
-async def _refresh(client: AsyncClient, token: str):
-    return await client.post("/api/v1/auth/refresh", json={"refresh_token": token})
+async def _refresh(client: AsyncClient, token: str | None = None):
+    """刷新。
+
+    ``token=None``（不传 body）= **浏览器的真实路径**：令牌由 Cookie Jar 自动回带，
+    服务端自己从 Cookie 里取。传了值则是脚本/CI 的显式传参路径。
+    """
+    payload = {} if token is None else {"refresh_token": token}
+    return await client.post("/api/v1/auth/refresh", json=payload)
+
+
+async def _replay(client: AsyncClient, stale_token: str):
+    """拿一枚**已经轮换过**的旧令牌重放——复用检测的核心场景。
+
+    刻意先断言 Cookie Jar 里那枚**不是**被重放的这一枚：取凭证时 body 优先于
+    Cookie，所以只有两者不同，服务端收到的才真是那枚旧令牌。否则请求会被
+    自己的 Cookie 悄悄救回来（200），用例变成假绿，而"窗口外重放要整族吊销"
+    这条约束实际上没人守。
+    """
+    current = client.cookies.get(settings.refresh_token_cookie_name)
+    assert current != stale_token, "Cookie Jar 里就是被重放的这一枚：用例没有真正触发复用检测"
+    return await _refresh(client, stale_token)
 
 
 class TestSessionIsRecorded:
     async def test_login_opens_a_session_row(self, client: AsyncClient) -> None:
-        tokens = await _login(client)
+        _, refresh_token = await _login(client)
 
         rows = await _sessions()
         assert len(rows) == 1
         # 只存哈希：库里不该出现原始 jti
-        jti = _jti_of(tokens["refresh_token"])
+        jti = _jti_of(refresh_token)
         assert rows[0].jti_hash == hashlib.sha256(jti.encode()).hexdigest()
         assert jti not in rows[0].jti_hash
         assert rows[0].rotated_at is None and rows[0].revoked_at is None
@@ -91,12 +118,11 @@ class TestSessionIsRecorded:
 
 class TestRotation:
     async def test_rotation_issues_a_new_token_and_records_both(self, client: AsyncClient) -> None:
-        tokens = await _login(client)
-        first = tokens["refresh_token"]
+        _, first = await _login(client)
 
         rotated = await _refresh(client, first)
         assert rotated.status_code == 200, rotated.text
-        second = rotated.json()["refresh_token"]
+        second = refresh_cookie_of(rotated)
         assert second != first
 
         # 两条会话都在：旧的标记为已轮换，新的是可用的
@@ -113,26 +139,25 @@ class TestRotation:
         容忍两个标签页同时刷新（前端的单飞锁只在单页内生效）。
         超出窗口即拒绝，并判定为盗用。
         """
-        tokens = await _login(client)
-        first = tokens["refresh_token"]
+        _, first = await _login(client)
         await _refresh(client, first)
 
         await _set_rotated_at(_jti_of(first), seconds_ago=REFRESH_REUSE_GRACE_SECONDS + 5)
 
-        assert (await _refresh(client, first)).status_code == 401
+        assert (await _replay(client, first)).status_code == 401
 
     async def test_new_token_keeps_working_after_rotation(self, client: AsyncClient) -> None:
-        tokens = await _login(client)
-        second = (await _refresh(client, tokens["refresh_token"])).json()["refresh_token"]
+        _, first = await _login(client)
+        second = refresh_cookie_of(await _refresh(client, first))
 
         third = await _refresh(client, second)
         assert third.status_code == 200
 
     async def test_rotation_chains_are_traceable(self, client: AsyncClient) -> None:
         """排障时要能顺着 replaced_by 看出"这枚是从哪来的"。"""
-        tokens = await _login(client)
-        first_jti = _jti_of(tokens["refresh_token"])
-        second = (await _refresh(client, tokens["refresh_token"])).json()["refresh_token"]
+        _, first = await _login(client)
+        first_jti = _jti_of(first)
+        second = refresh_cookie_of(await _refresh(client, first))
 
         rows = {row.jti_hash: row for row in await _sessions()}
         old = rows[hash_jti(first_jti)]
@@ -143,14 +168,13 @@ class TestRotation:
 class TestReuseDetection:
     async def test_reuse_outside_grace_revokes_the_whole_family(self, client: AsyncClient) -> None:
         """窗口外拿已轮换的令牌来换 = 盗用 ⇒ 整族吊销。"""
-        tokens = await _login(client)
-        first = tokens["refresh_token"]
-        second = (await _refresh(client, first)).json()["refresh_token"]
+        _, first = await _login(client)
+        second = refresh_cookie_of(await _refresh(client, first))
 
         # 把它推到宽容窗口之外
         await _set_rotated_at(_jti_of(first), seconds_ago=REFRESH_REUSE_GRACE_SECONDS + 10)
 
-        replay = await _refresh(client, first)
+        replay = await _replay(client, first)
         assert replay.status_code == 401
 
         # 关键：**连最新那枚也不能再用** —— 攻击者可能已经拿走了它
@@ -165,12 +189,11 @@ class TestReuseDetection:
         前端的单飞锁只在单个页面内生效；两个标签页的 access token 同时过期时，
         两边会几乎同时发起刷新，其中一边必然拿到"已经用过的"那一枚。
         """
-        tokens = await _login(client)
-        first = tokens["refresh_token"]
+        _, first = await _login(client)
         await _refresh(client, first)  # 另一个标签页先换了
 
         # 本标签页紧接着也来换（窗口内）
-        second = await _refresh(client, first)
+        second = await _replay(client, first)
         assert second.status_code == 200
 
         rows = await _sessions()
@@ -194,20 +217,20 @@ class TestReuseDetection:
 
 class TestRevocation:
     async def test_logout_revokes_sessions(self, client: AsyncClient, admin_headers) -> None:
-        tokens = await _login(client)
+        _, refresh_token = await _login(client)
 
         response = await client.post("/api/v1/auth/logout", headers=admin_headers)
         assert response.status_code in (200, 204), response.text
 
         # 登出后手上的 refresh token 立刻换不出东西（它自己能续期，这是最危险的点）
-        assert (await _refresh(client, tokens["refresh_token"])).status_code == 401
+        assert (await _refresh(client, refresh_token)).status_code == 401
         rows = await _sessions()
         assert all(row.revoked_at is not None for row in rows)
 
     async def test_change_password_revokes_sessions(
         self, client: AsyncClient, admin_headers
     ) -> None:
-        tokens = await _login(client)
+        _, refresh_token = await _login(client)
 
         response = await client.post(
             "/api/v1/auth/me/password",
@@ -216,7 +239,7 @@ class TestRevocation:
         )
         assert response.status_code in (200, 204), response.text
 
-        assert (await _refresh(client, tokens["refresh_token"])).status_code == 401
+        assert (await _refresh(client, refresh_token)).status_code == 401
 
         # 改回去，避免影响其它用例（测试库里 admin 是共享的基础数据）
         back = await client.post(

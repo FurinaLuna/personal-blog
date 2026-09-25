@@ -90,13 +90,26 @@ class LoginRequest(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    refresh_token: str
+    # 默认 **不返回**：浏览器走 httpOnly Cookie（见 config.py 的
+    # refresh_token_cookie_*），响应体里带着它等于给 XSS 留了一扇窗。
+    # 只有在 REFRESH_TOKEN_IN_BODY=true 时（非浏览器客户端）才会出现。
+    refresh_token: str | None = None
     token_type: str = "bearer"
     expires_in: int = Field(description="access_token 剩余有效期（秒）")
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    """刷新请求。
+
+    浏览器**不传**这个字段——refresh token 在 httpOnly Cookie 里，服务端自己取。
+    留着它是为了非浏览器客户端（脚本 / CI / curl）：它们拿不到 Cookie Jar，
+    显式传这一字段时服务端按它处理（便于继续跑那些直接打 HTTP 的回归脚本）。
+
+    优先级：显式传的 body > Cookie。这样"测刷新接口拿错令牌该被拒"这类
+    反向用例仍然成立（不会被浏览器 Cookie 悄悄救回）。
+    """
+
+    refresh_token: str | None = None
 
 
 class PasswordChange(BaseModel):
