@@ -218,3 +218,39 @@ class TestStartupEnforcement:
 
         with pytest.raises(RuntimeError, match="拒绝启动"):
             main.create_app()
+
+
+class TestCookieConfigTolerance:
+    """空串按「没配」处理。
+
+    为什么值得单列：``.env`` 里写 ``KEY=``（保留键但留空）是很常见的运维写法，
+    而 docker-compose 用 ``${COOKIE_SECURE:-}`` 透传时**必然**产生空串。
+    pydantic-settings 没开 ``env_ignore_empty``，空串会原样当值传进来 ——
+    对 ``bool`` 字段直接解析失败让应用起不来，对 ``COOKIE_DOMAIN``
+    则写出一个 ``Domain=`` 为空的 Cookie（浏览器不认）。
+    """
+
+    def test_empty_cookie_secure_is_unset(self) -> None:
+        assert _settings(cookie_secure="").cookie_secure is None
+
+    def test_empty_cookie_domain_is_unset(self) -> None:
+        assert _settings(cookie_domain="").cookie_domain is None
+
+    def test_blank_padded_domain_is_unset(self) -> None:
+        assert _settings(cookie_domain="   ").cookie_domain is None
+
+    def test_explicit_values_still_win(self) -> None:
+        """容错不能把正常配置吃掉：显式值必须原样生效。"""
+        assert _settings(cookie_secure=False).cookie_secure is False
+        assert _settings(cookie_domain="example.com").cookie_domain == "example.com"
+
+    def test_secure_flag_falls_back_to_env_when_unset(self) -> None:
+        """空串等于没配，于是 cookie_secure_flag 应当回到 is_production 推断。
+
+        这条是上面几条的"合起来仍然对"的检查：单看 cookie_secure 是 None
+        不能说明最终 Secure 属性正确。
+        """
+        assert (
+            _settings(cookie_secure="").cookie_secure_flag is True
+        )  # SAFE_PRODUCTION 是 production
+        assert _settings(app_env="development", cookie_secure="").cookie_secure_flag is False

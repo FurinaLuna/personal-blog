@@ -250,6 +250,21 @@ class Settings(BaseSettings):
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
+    @field_validator("cookie_secure", "cookie_domain", mode="before")
+    @classmethod
+    def _empty_string_means_unset(cls, value: Any) -> Any:
+        """空串按「没配」处理。
+
+        pydantic-settings 没开 ``env_ignore_empty``，空串会原样当成值传进来：
+        ``COOKIE_SECURE=`` 会让 bool 解析直接报错、``COOKIE_DOMAIN=`` 会写出一个
+        ``Domain=`` 为空的 Cookie。而 ``.env`` 里写 `KEY=`（留空但保留键）是
+        很常见的写法，docker-compose 用 ``${COOKIE_SECURE:-}`` 透传时更是必然
+        产生空串 —— 这两种形态都不该让应用起不来。
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("cookie_samesite", mode="before")
     @classmethod
     def _validate_cookie_samesite(cls, value: Any) -> Any:
