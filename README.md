@@ -81,7 +81,12 @@
 - FastAPI + SQLAlchemy 2.0（全异步）+ Pydantic v2，严格分层
   （`api` / `services` / `repositories` / `models` / `schemas`）
 - JWT 双 Token（access 120 分钟 / refresh 7 天），401 静默续期（带单飞锁防并发重复刷新）；
-  refresh token **落库轮换**（只存 jti 哈希，已轮换的令牌再次出现即判定盗用并吊销整族，30 秒宽容窗口容忍多标签页同时刷新）
+  **refresh token 存在 httpOnly Cookie 里、access token 只留在内存** —— JS 读不到任何长效凭证，
+  XSS 拿不走能自我续期的那一枚。代价是刷新页面后必须先用 Cookie 静默续期再问 `/auth/me`，
+  这条路径断了就是「刷新页面必掉线」，前后端都有专门用例守着；
+  refresh token **落库轮换**（只存 jti 哈希，已轮换的令牌再次出现即判定盗用并吊销整族，30 秒宽容窗口容忍多标签页同时刷新）；
+  登出是真吊销（`token_version += 1` + 按行吊销全部会话），而刷新接口另有一道 `Origin` 白名单防线挡 CSRF ——
+  ⚠️ 因此 **`CORS_ORIGINS` 兼作安全白名单**，分域部署时前端来源必须写进去
 - 三级角色：访客 / 作者 / 站长；三层防护：依赖注入门禁 → 资源归属校验 → Schema 层防提权
 - 上传安全：Pillow 真实解码判型（不信任客户端声明的 `Content-Type`）、流式限流读、
   扩展名白名单（默认禁 SVG / HTML）、服务端生成文件名
@@ -271,8 +276,13 @@ personal-blog/
 | `JWT_SECRET_KEY` | 开发占位值 | ⚠️ 生产必须换：`openssl rand -hex 32` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `120` | access token 有效期 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | refresh token 有效期 |
-| `CORS_ORIGINS` | localhost | ⚠️ 生产只填真实前端域名，逗号分隔 |
+| `CORS_ORIGINS` | localhost | ⚠️ 生产只填真实前端域名，逗号分隔。**它同时也是刷新接口的 CSRF 白名单**（见上），分域部署时前端来源必须包含在内 |
 | `SITE_BASE_URL` | `http://localhost:5173` | RSS / sitemap 里的绝对链接依赖它 |
+| `REFRESH_TOKEN_COOKIE_NAME` | `blog_refresh` | 承载 refresh token 的 Cookie 名 |
+| `COOKIE_SAMESITE` | `lax` | ⚠️ 前端与 API **不同域**时必须设 `none`（`lax` 会拦掉跨站 XHR），而 `none` 强制要求 `Secure` |
+| `COOKIE_SECURE` | 跟随 `APP_ENV` | 生产 `true` / 开发 `false`。开发环境强制 `true` 会让浏览器拒绝写入该 Cookie |
+| `COOKIE_DOMAIN` | 空 | 需要在子域间共享时才填（如 `example.com`，前面不带点） |
+| `REFRESH_TOKEN_IN_BODY` | `false` | 非浏览器客户端（curl / CI）拿不到 Cookie Jar 时设 `true`，让响应体也带回 refresh token |
 | `STORAGE_DIR` | `./storage` | 上传文件根目录 |
 | `MAX_UPLOAD_SIZE` | `10485760` | 10 MB，需与 nginx `client_max_body_size` 一致 |
 | `IMAGE_VARIANT_WIDTHS` | `480,800,1600` | 上传时生成的响应式图片档位（宽度不足的档位跳过） |
@@ -292,8 +302,9 @@ personal-blog/
 
 | 分组 | 端点 | 说明 |
 |---|---|---|
-| 认证 | `POST /api/v1/auth/login` | 用户名或邮箱 + 密码换双 Token（限流 5/分） |
-| | `POST /api/v1/auth/refresh` | 用 refresh token 续期 |
+| 认证 | `POST /api/v1/auth/login` | 用户名或邮箱 + 密码。响应体只给 access token，refresh token 走 `Set-Cookie`（限流 5/分） |
+| | `POST /api/v1/auth/refresh` | 用 refresh token 续期。**请求体可省略**（省略即从 Cookie 取）；带 `Origin` 的请求必须落在 `CORS_ORIGINS` 白名单内 |
+| | `POST /api/v1/auth/logout` | 真吊销：失效该用户全部设备的令牌，并下发删除 Cookie 的指令 |
 | | `GET /api/v1/auth/me` | 当前用户 |
 | | `GET/POST/PATCH/DELETE /api/v1/auth/users` | 用户管理（站长） |
 | 文章 | `GET /api/v1/articles` | 前台列表，支持分页 / 排序 / 筛选 / 搜索 |
@@ -339,15 +350,15 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **665 passed, 5 skipped**（跳过的 5 条是 `pg_only`，见下一行），覆盖率 82.96%（门槛 80%） |
+| `pytest`（默认 SQLite） | **710 passed, 5 skipped**（715 collected，37 个文件；跳过的 5 条是 `pg_only`，见下一行），覆盖率 **83.22%**（门槛 80%） |
 | `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **598 passed, 1 skipped**（实测于 postgres:16；1 条跳过的是 `sqlite_only`）。⚠️ 这是**留言板之前**的数字：SQLite 侧已随留言板涨到 665+5，PG 侧待下次跑 `backend-postgres` 作业时回填 |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **713 passed / 45 files**（含留言板前台页与后台页各 14 条；每个视图都有 spec） |
+| `vitest run` | **726 passed / 45 files**（每个视图都有 spec；含 http 拦截器的「凭证只进内存不进 localStorage」与「启动静默续期」两组防回归用例） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 12 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **40/40**（真实 Chrome，页面错误 0） |
 | `tools/interaction-check.mjs` | **25/25**（登录失败路径 / 匿名留言待审 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
-| `tools/full-check.mjs` | **50/50** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线 |
+| `tools/full-check.mjs` | **51/51** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线。A0 直接断言刷新 Cookie 以 `httpOnly` 种在 `/api/v1/auth` 下——它是整套凭证方案的地基，失败时不希望靠「某个后台页面挂了」倒推 |
 | `tools/e2e_live/e2e_run.py` | **62/62**：真实进程 + 真实数据库的全链路端到端（6 条主流程 + 异常边界），运行前后比对 `blog.db` 指纹确保零污染 |
 | **GitHub Actions（8 个作业）** | **全部通过**（run #53，2026-09-24）—— 本项目历史上第一次远端 CI 全绿。账单锁期间（run #42~#47）所有作业都是 `steps=0` 启动即失败，那段时间的结论只能靠本地实测；解锁后的第一批反馈抓到 3 个真问题（迁移未格式化 / 部署配置测试写死旧布局 / 部署脚本隐式依赖本地 `.env`），见 `docs/devlog/2026-09-22.md` 批次 15 |
 | `tools/deploy-check.mjs` | **49/49**：真构建两个镜像、真用 compose 起一套完整栈（HTTP + HTTPS 两套外壳），逐条验证容器形态与部署行为（见「部署产物验证」） |
