@@ -358,7 +358,7 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 | `pytest`（默认 SQLite） | **735 passed, 5 skipped**（740 collected，40 个文件；跳过的 5 条是 `pg_only`，见下一行），覆盖率 **83.37%**（门槛 80%） |
 | `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **598 passed, 1 skipped**（实测于 postgres:16；1 条跳过的是 `sqlite_only`）。⚠️ 这是**留言板之前**的数字：SQLite 侧已随留言板涨到 665+5，PG 侧待下次跑 `backend-postgres` 作业时回填 |
 | `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **736 passed / 45 files**（每个视图都有 spec；含「凭证只进内存不进 localStorage」「启动静默续期」「hint Cookie 不是授权依据」三组防回归用例） |
+| `vitest run` | **745 passed / 46 files**（每个视图都有 spec；含「凭证只进内存不进 localStorage」「启动静默续期」「hint Cookie 不是授权依据」三组防回归用例，以及 `layouts/DefaultLayout.spec.ts` —— 它钉在**真实调用方**上：匿名访客挂载前台布局时 `/auth/refresh` 一次都不发） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 12 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **40/40**（真实 Chrome，页面错误 0） |
