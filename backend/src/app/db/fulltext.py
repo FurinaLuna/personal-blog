@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -177,6 +179,53 @@ async def ensure_pg_trgm_indexes(session: AsyncSession) -> bool:
     for statement in PG_TRGM_INDEXES.values():
         await session.execute(text(statement))
     return True
+
+
+@dataclass(slots=True)
+class SearchIndexStatus:
+    """启动期实际探测到的检索索引状态（供 ``/ready`` 暴露）。
+
+    为什么要把这个状态存下来：PG 分支依赖 ``CREATE EXTENSION pg_trgm``，
+    而很多托管 PG 默认不给这个权限。建不出来时搜索会**静默**退化成
+    三列 ``ILIKE`` 全表扫——结果依然正确，只是从毫秒级掉到全表扫，
+    并且没有任何告警、没有任何接口能看出这件事。
+
+    把它挂在 ``/ready`` 上，是为了让「搜索慢」有一个可观测的信号，
+    而不是靠用户抱怨才发现。
+    """
+
+    kind: str = ""  # "fts5" / "pg_trgm" / ""（未建立）
+    detail: str = ""  # 退化原因，供运维看
+
+    @property
+    def accelerated(self) -> bool:
+        """是否走了索引加速路径。False 表示搜索正在全表扫。"""
+        return bool(self.kind)
+
+    def as_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "search_index": self.kind or "none",
+            "search_accelerated": self.accelerated,
+        }
+        if self.detail:
+            payload["search_detail"] = self.detail
+        return payload
+
+
+# 进程级单例：启动期由 main.py 的 lifespan 写入，/ready 读取。
+# 用可变对象而不是裸全局变量，是为了让测试能整体替换、也让取值与
+# 「序列化成探针字段」这两件事留在同一个地方。
+_search_index_status = SearchIndexStatus()
+
+
+def get_search_index_status() -> SearchIndexStatus:
+    return _search_index_status
+
+
+def set_search_index_status(kind: str, detail: str = "") -> None:
+    """记录启动期的索引探测结果。"""
+    _search_index_status.kind = kind
+    _search_index_status.detail = detail
 
 
 async def ensure_search_indexes(session: AsyncSession) -> str:

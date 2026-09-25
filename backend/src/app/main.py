@@ -26,7 +26,11 @@ from app.api.middleware import HeadMethodMiddleware, RequestContextMiddleware
 from app.api.v1 import api_router
 from app.config import settings
 from app.db.base import Base
-from app.db.fulltext import ensure_search_indexes
+from app.db.fulltext import (
+    ensure_search_indexes,
+    get_search_index_status,
+    set_search_index_status,
+)
 from app.db.session import async_session_factory, engine
 from app.models import User  # noqa: F401 - 触发所有模型注册到 Base.metadata
 from app.services.auth_service import AuthService
@@ -47,10 +51,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.db_auto_create:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        # create_all 只建 Base.metadata 里的表，FTS5 **虚拟表**不在其中。
-        # 不补这一步的话，「自动建表 + 不跑迁移」这条最常见的开发路径上
-        # 搜索会直接 500（no such table: articles_fts）。
-        await _ensure_fulltext_index()
+
+    # 检索索引**不**跟着 db_auto_create 走：
+    #   - SQLite 的 FTS5 是虚拟表，本来就不在 Base.metadata 里，create_all 建不出来；
+    #   - PG 的 pg_trgm + GIN 由迁移建，但托管库常常不给 CREATE EXTENSION 权限，
+    #     迁移里那一步会失败，而失败的表现只是"搜索慢"，没人会发现。
+    # 所以两种部署形态都要探测一次：它是幂等的（IF NOT EXISTS），
+    # 顺带还能把 FTS5 索引 rebuild 到与正文一致。
+    #
+    # 放在 db_auto_create 之外还有一个理由：生产是 DB_AUTO_CREATE=false，
+    # 若跟着它走，恰好是**最需要这个信号的环境永远拿不到信号**。
+    await _ensure_fulltext_index()
 
     async with async_session_factory() as session:
         try:
@@ -91,13 +102,20 @@ async def _ensure_fulltext_index() -> None:
             kind = await ensure_search_indexes(session)
             await session.commit()
         if kind == "fts5":
+            set_search_index_status("fts5")
             logger.info("全文检索索引已就绪（SQLite FTS5）")
         elif kind == "pg_trgm":
+            set_search_index_status("pg_trgm")
             logger.info("全文检索索引已就绪（PostgreSQL pg_trgm + GIN）")
         else:
+            set_search_index_status("", "当前数据库未建立检索索引")
             logger.info("当前数据库未建立检索索引，搜索将使用无索引的 LIKE")
     except Exception:  # 增强功能不能成为启动的单点故障
-        logger.warning("检索索引初始化失败（搜索将退回无索引 LIKE，不影响启动）", exc_info=True)
+        # 退化是**静默**的（结果仍然正确，只是全表扫），所以要把原因留下来：
+        # /ready 会把它吐出去，否则"搜索突然变慢"只能靠用户抱怨才能发现。
+        reason = "检索索引初始化失败（最常见的是 PG 没有 CREATE EXTENSION 权限）"
+        set_search_index_status("", reason)
+        logger.warning("%s；搜索将退回无索引 LIKE，不影响启动", reason, exc_info=True)
 
 
 async def _prune_refresh_sessions() -> None:
@@ -353,10 +371,13 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unavailable", "database": "down"},
             )
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"status": "ready", "database": "up", "env": settings.app_env},
-        )
+        # 检索索引状态一并报出来，但**不影响**就绪判定：
+        # 它是增强项，索引缺失时搜索结果依然正确（只是全表扫），
+        # 拿它摘流量等于"搜索慢 → 整站下线"，比问题本身严重得多。
+        # 报出来的目的是让退化**可观测**，由监控去告警，而不是让编排系统去重启。
+        content = {"status": "ready", "database": "up", "env": settings.app_env}
+        content.update(get_search_index_status().as_payload())
+        return JSONResponse(status_code=status.HTTP_200_OK, content=content)
 
     @app.get("/", tags=["运维"], summary="服务信息")
     async def root() -> dict[str, str]:
