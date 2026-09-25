@@ -14,6 +14,14 @@
 
 ### 新增
 
+- **`/ready` 暴露全文检索索引的真实状态**（2026-09-25）：`_ensure_fulltext_index()`
+  原先挂在 `db_auto_create` 分支里，而生产 `DB_AUTO_CREATE=false` ——
+  等于**生产上根本不探测索引**，PG 下 `pg_trgm` / GIN 索引缺失时搜索会静默退化成
+  三列 LIKE 全表扫且无人知晓。现在无条件探测，并把 `search_index` /
+  `search_accelerated` / `search_detail` 拼进 `/ready`。
+  **刻意不把索引缺失算进就绪判定**：性能退化不是服务不可用，
+  算进去会让一次索引问题触发整站摘流，放大成可用性事故。
+
 - **远端 CI 第一次真实执行并全绿**（run #53，2026-09-24）：8 个作业全部通过 ——
   在此之前（run #42~#47）所有作业都是 `steps=0` 启动即失败（账号级账单锁），
   也就是说 Linux 侧的迁移升降级、真实浏览器 e2e、PostgreSQL 方言、依赖审计与镜像构建
@@ -192,6 +200,31 @@
 
 ### 已变更
 
+- **凭证存储方式整体迁移：refresh token 进 httpOnly Cookie，access token 只留内存**
+  （2026-09-25）。此前两个 token 都明文存在 `localStorage`，**任何一次 XSS 都能读走
+  refresh token**，而它是能自我续期的长效凭证 —— 攻击者拿到后可以在 7 天内反复换出
+  新的 access token，服务端拦不住也看不见。迁移后 JS 读不到任何 refresh token。
+  - 这是**破坏性契约变更**，三类客户端要跟着改：
+    - 浏览器：`POST /api/v1/auth/refresh` 不再需要请求体（省略即从 Cookie 取），
+      access token 也不再落 `localStorage`；
+    - 脚本 / CI：响应体默认不再返回 `refresh_token`，需要它请设
+      `REFRESH_TOKEN_IN_BODY=true`，或读 `Set-Cookie`；
+    - 原来的 `localStorage` key（`blog-access-token` / `blog-refresh-token`）**彻底废弃**。
+  - 新增的代价必须知道：**刷新页面后内存里的 access token 就没了**，所以应用启动时
+    会先用 Cookie 静默续期一枚，再去问 `/auth/me`。这条路径断了就是「刷新页面必掉线」，
+    后端有一条专门的用例守着它（不传 body 靠 Cookie 刷新）。
+  - 配套的 CSRF 防线：刷新接口会校验 `Origin`（带 Origin 的请求必须落在
+    `CORS_ORIGINS` / `SITE_BASE_URL` 白名单里）。**`CORS_ORIGINS` 因此兼作安全白名单**，
+    分域部署时前端来源必须出现在里面，否则刷新一律 403 ——
+    症状不是"某个接口挂了"，是"登录用户刷新任意页面即被登出"。
+  - 新增可配项 `REFRESH_TOKEN_COOKIE_NAME` / `COOKIE_SAMESITE`（默认 `lax`）/
+    `COOKIE_SECURE`（默认跟随 `APP_ENV`）/ `COOKIE_DOMAIN` / `REFRESH_TOKEN_IN_BODY`，
+    分域部署（前端与 API 不同域）必须把 `COOKIE_SAMESITE` 改成 `none`
+    （`lax` 会拦掉跨站 XHR），而 `none` 强制要求 `Secure`，
+    否则浏览器直接丢弃该 Cookie；生产门禁会拒绝这个组合。
+  - 登出的语义顺带被钉死并实测：`token_version += 1` + 按行吊销全部刷新会话，
+    登出前那枚 refresh token 再刷新返回 **401**（此前只有"客户端清本地凭证"）。
+
 - **`/guestbook` 不再走占位组件**，并因此删掉了 `frontend/src/views/PlaceholderView.vue`
   与它的 spec：`/links` 与 `/guestbook` 两个占位页都已落地，它已无任何引用
   （占位页作为"导航先行"的脚手架留在 git 历史里即可，留着才是死代码）
@@ -299,6 +332,26 @@
 
 ### 已修复
 
+- **刷新接口把请求体声明成必填，浏览器被迫发一个空 `{}`**（2026-09-25）：
+  `payload: RefreshRequest` 是必填 body —— FastAPI 对 Pydantic model 类 body
+  参数一律按 required 处理，哪怕模型内部字段全是可选的，于是**完全不带 body
+  返回 422**、带 `{}` 才是 200。422 在这里毫无提示性：看起来像"参数错了"，
+  实际是"你压根没发"。改为 `RefreshRequest | None = None`。
+  顺带发现测试里的坑：两条用例名写着"without a body"，实际却发的是
+  `json={}` —— 发空对象根本守不住「body 可省略」这条契约，
+  改了签名也不会让它们变红，已统一改成真的零字节请求体。
+- **Cookie 配置的空串被当成真值**（2026-09-25）：pydantic-settings 没开
+  `env_ignore_empty`，所以 `COOKIE_SECURE=`（保留键留空）会让 bool 解析失败、
+  应用起不来；`COOKIE_DOMAIN=` 会写出一个 `Domain=` 为空的 Cookie，
+  浏览器不认，症状是"登录 200 但刷新页面就掉线"。而 docker-compose 用
+  `${COOKIE_SECURE:-}` 透传时必然产生空串。现在空串统一按「没配」处理。
+- **生产安全门禁有三条路径绕得过去**（2026-09-25）：① `CORS_ORIGINS` 为空或含
+  `"*"` —— CORS 中间件开着 `allow_credentials=True`，通配等于把凭证发给任意站点；
+  ② `DATABASE_URL` 指向 SQLite 却上生产；③ `COOKIE_SAMESITE=none` 但未启用 `Secure`
+  （浏览器会直接丢弃该 Cookie）。三条都已纳入 `check_production_safety()`。
+  另外**迁移入口（Alembic）此前完全不过门禁** —— 而它恰恰是拿着生产库权限、
+  最容易"配置还没配好就先跑迁移"的进程，表现为"库建好了但服务起不来"。
+  现在 `alembic/env.py` 复用同一个门禁函数，规则不会两边漂移。
 - **部署脚本隐式依赖开发者本机的 `.env`**（远端 CI 实测暴露，三次才挖到底）：
   ① compose 的 `env_file: ./.env` 在 runner 上不存在 → `docker compose config` 直接失败在
   "env file not found"，负向验证也靠 `.env` 补齐另外两个密钥 —— 现在**缺失时**由脚本临时造一份、
