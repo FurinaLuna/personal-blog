@@ -61,8 +61,10 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 恢复登录态。
    *
-   * 只在有 token 时才请求 /auth/me —— 否则未登录用户每次进站都会白白吃一个 401。
-   * 请求失败（token 过期）时静默清空，不弹任何错误：用户只是"没登录"而已。
+   * access token 只活在内存里，**刷新页面后必然是空的**。所以第一条路径是
+   * 静默续期：用 httpOnly Cookie 换一枚新的 access token，再去问 /auth/me。
+   * 少了这一步，有登录态的用户刷新后台页面会被守卫判成未登录弹去登录页 ——
+   * 这是「token 只存内存」这个决定唯一必须补上的代价。
    */
   function restore(force = false): Promise<void> {
     if (restorePromise && !force) {
@@ -71,9 +73,17 @@ export const useAuthStore = defineStore('auth', () => {
 
     const task = async (): Promise<void> => {
       if (!tokenStore.access) {
-        user.value = null
-        restored.value = true
-        return
+        try {
+          await authApi.refresh()
+        } catch (error) {
+          // 401 / 403 是**确定**的答案：服务端说 Cookie 里没有可用的 refresh
+          // token，那就是没登录。其余（断网 / 502 / 超时）只是"问不出来"，
+          // 不能缓存成"你没登录"（理由见下面 /auth/me 分支里同一条注释）。
+          const denied = error instanceof ApiError && (error.isUnauthorized || error.isForbidden)
+          user.value = null
+          restored.value = denied
+          return
+        }
       }
 
       restoring.value = true
@@ -81,6 +91,8 @@ export const useAuthStore = defineStore('auth', () => {
         // 网络抖动时重试一次再下结论。这个请求是「进入后台的第一道门」，
         // 一次瞬时 502 就把有登录态的作者弹回登录页，体验上非常像"被登出了"。
         user.value = await attemptRestore(2)
+        // 问出来了就钉住结论：否则守卫每次导航都会再问一次 /auth/me
+        restored.value = true
       } catch (error) {
         if (error instanceof ApiError && error.isUnauthorized) {
           // 401 是**确定的**答案：凭证已失效

@@ -14,7 +14,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
-import { tokenStore } from '@/api'
 import { setAuthRequiredProbe } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
@@ -252,7 +251,12 @@ router.beforeEach(async (to) => {
 
   if (requiresAuth) {
     // 需要决定"放不放行"时才等，而且带超时。
-    if (!auth.restored && tokenStore.access) {
+    //
+    // 这里**不能**再加 `&& tokenStore.access`：access token 只存内存，
+    // 刷新页面后它必然是空的，加了就会导致有登录态的用户刷新后台页面时
+    // 守卫不问服务端、直接按未登录弹去登录页。`restore()` 内部会先拿
+    // Cookie 静默续期再问 /auth/me，空内存正是它要处理的场景。
+    if (!auth.restored) {
       await Promise.race([
         auth.restore(),
         new Promise((resolve) => setTimeout(resolve, RESTORE_TIMEOUT_MS)),
@@ -263,7 +267,7 @@ router.beforeEach(async (to) => {
       // 关键区分：`restored === false` 表示"没问到"（网络问题 / 超时），
       // 不代表"没登录"。把这种情况也踢去登录页，会让网络抖动的用户
       // 以为自己被登出了 —— 放行，让页面自己表达失败。
-      if (!auth.restored && tokenStore.access) return true
+      if (!auth.restored) return true
       return { name: 'login', query: { redirect: to.fullPath } }
     }
 
@@ -278,7 +282,8 @@ router.beforeEach(async (to) => {
   // 公开页面**绝不等待**身份恢复：它只影响顶栏显示什么，不影响内容渲染。
   // 旧实现是 `await auth.restore()`（只要本地有 token 就等），
   // 于是"带着 token 打开首页"会被一个后台请求堵住首屏。
-  if (!auth.restored && tokenStore.access) {
+  // `restored` 一旦置上就不再重复触发，所以一次页面加载最多只会问一次。
+  if (!auth.restored) {
     void auth.restore()
   }
 

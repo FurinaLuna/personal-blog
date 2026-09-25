@@ -2,16 +2,18 @@
  * HTTP 客户端。
  *
  * 三件事在这里收口，业务代码只关心「拿到数据」或「抛出一个 ApiError」：
- * 1. 自动附加 Access Token；
- * 2. 收到 401 时用 Refresh Token 静默续期，并把原请求重放一次；
+ * 1. 自动附加 Access Token（**只活在内存里**，刷新页面就没了）；
+ * 2. 收到 401 时用 httpOnly Cookie 里的 Refresh Token 静默续期，并把原请求重放一次；
  * 3. 把后端各种错误体（领域异常 / 参数校验 / 网络异常）统一成 ApiError。
+ *
+ * 凭证怎么放（与后端 `app/api/cookies.py` 的约定一一对应）：
+ * - access token：内存中的一个模块级变量，短命，丢了就用 Cookie 换一枚；
+ * - refresh token：httpOnly Cookie，JS 读不到、也不该读到。
+ * 这样即使页面里混进一段 XSS，也拿不到能换出新 access token 的长效凭证。
  */
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 import type { Token, ValidationIssue } from '@/types'
-
-export const ACCESS_TOKEN_KEY = 'blog-access-token'
-export const REFRESH_TOKEN_KEY = 'blog-refresh-token'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
@@ -52,20 +54,32 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Access Token 唯一的存放处：**内存**。
+ *
+ * 以前 access / refresh 两个令牌都写在 localStorage，XSS 一句话就能全带走。
+ * 现在 refresh token 只存在于 httpOnly Cookie（JS 完全读不到），access token
+ * 短命且只活在这个模块级变量里 —— 刷新页面就没了，所以应用启动时要先用
+ * Cookie 静默续期一枚出来（见 `stores/auth.ts` 的 restore）。
+ */
+let accessToken: string | null = null
+
 export const tokenStore = {
   get access(): string | null {
-    return localStorage.getItem(ACCESS_TOKEN_KEY)
+    return accessToken
   },
-  get refresh(): string | null {
-    return localStorage.getItem(REFRESH_TOKEN_KEY)
-  },
-  save(tokens: Pick<Token, 'access_token' | 'refresh_token'>): void {
-    localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token)
-    localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token)
+  /**
+   * 只保存 access token。
+   *
+   * refresh token 由后端在 `Set-Cookie` 里下发（httpOnly）。即使响应体里带了它
+   * （后端为非浏览器客户端保留了这条路）也**一律忽略**：只要 JS 能读到长效凭证，
+   * 这次改造就等于白做，XSS 又能顺着轮换链无限续期。
+   */
+  save(tokens: Pick<Token, 'access_token'>): void {
+    accessToken = tokens.access_token
   },
   clear(): void {
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
+    accessToken = null
   },
 }
 
@@ -134,6 +148,9 @@ export const http: AxiosInstance = axios.create({
   baseURL: BASE_URL,
   timeout: 20000,
   headers: { Accept: 'application/json' },
+  // 生产是前后端分离部署，refresh Cookie 只在跨站请求里才需要显式声明；
+  // 同源时它无害。不写这一行，跨域场景下浏览器根本不会带上 Cookie。
+  withCredentials: true,
 })
 
 http.interceptors.request.use((config) => {
@@ -150,21 +167,54 @@ http.interceptors.request.use((config) => {
  * 页面加载时经常几个请求同时 401，如果不加锁，就会并发发出 N 个 refresh，
  * 而滚动刷新（refresh 后旧 refresh 立即作废）会让其中 N-1 个失败，
  * 用户表现为"莫名其妙被登出"。这里保证同时只有一个 refresh 在飞。
+ *
+ * **所有调用方共用这一把锁**（页面启动的静默续期 + 拦截器里 401 触发的续期）：
+ * 这两条路径天然会撞在一起（守卫发起 restore 的同时首个业务请求也 401 了），
+ * 各用一把锁就会发出两个 refresh，而滚动轮换下后到的那个必失败 ——
+ * 症状是"刚打开页面就被登出"。
  */
 let refreshPromise: Promise<Token> | null = null
 
+/**
+ * 用 httpOnly Cookie 里的 refresh token 换一枚新的 access token。
+ *
+ * 请求体是**空的**（`{}`）：refresh token 由浏览器在 Cookie 里自动带上。
+ * 走 body 那条路（后端为脚本客户端保留了它）等于把长效凭证又放回 JS 手里。
+ * 空 `{}` 而不是完全不带 body：`RefreshRequest` 在后端是必填 body，
+ * 一个字节都不发会被 FastAPI 判成 422（实测确认），刷新就永远发不出去。
+ *
+ * 用裸 axios 是为了不走进本实例的拦截器造成递归。
+ */
 async function refreshTokens(): Promise<Token> {
-  const refresh = tokenStore.refresh
-  if (!refresh) throw new ApiError('没有可用的刷新令牌', 401, 'no_refresh_token')
+  try {
+    const { data } = await axios.post<Token>(
+      `${BASE_URL}/auth/refresh`,
+      {},
+      { timeout: 15000, withCredentials: true },
+    )
+    tokenStore.save(data)
+    return data
+  } catch (error) {
+    // 必须归一化：store 靠 `ApiError.isUnauthorized` 区分「服务端说没登录」和
+    // 「网络问不出来」。裸 AxiosError 会被一律当成后者，于是 restored 永远
+    // 置不上，匿名访客每次导航都被重试一次刷新。
+    throw normalizeError(error as AxiosError)
+  }
+}
 
-  // 用裸 axios，避免走进本实例的拦截器造成递归
-  const { data } = await axios.post<Token>(
-    `${BASE_URL}/auth/refresh`,
-    { refresh_token: refresh },
-    { timeout: 15000 },
-  )
-  tokenStore.save(data)
-  return data
+/**
+ * 对外唯一的续期入口：带单飞锁（理由见 `refreshPromise`）。
+ *
+ * 应用启动时由 `stores/auth.ts` 的 `restore()` 调用（内存里的 access token
+ * 刷新页面后必然为空），401 时由下面的拦截器调用。
+ */
+export function refreshSession(): Promise<Token> {
+  if (!refreshPromise) {
+    refreshPromise = refreshTokens().finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
 }
 
 function shouldSkipRefresh(config?: AxiosRequestConfig): boolean {
@@ -220,7 +270,9 @@ export function onCredentialsCleared(handler: () => void): () => void {
  * 那会让人以为"站点坏了"。公开页只清凭证 + 通知 store，页面自己按未登录渲染。
  */
 function forceLogout(): void {
-  if (!tokenStore.access && !tokenStore.refresh) return
+  // refresh token 已经不在 JS 里了，闸门只能看内存里的 access token。
+  // 语义不变：没有凭证说明刚刚已经执行过（或本来就是匿名），直接返回。
+  if (!tokenStore.access) return
   tokenStore.clear()
   for (const handler of credentialsClearedHandlers) {
     try {
@@ -251,37 +303,32 @@ http.interceptors.response.use(
         return await Promise.reject(new ApiError('登录已过期，请重新登录', 401, 'token_expired'))
       }
 
-      if (!shouldSkipRefresh(original) && tokenStore.refresh) {
+      // 判据是「内存里有没有 access token」：
+      //
+      // - **有** = 这个页面此前登录过，值得用 Cookie 换一枚新的再试一次
+      //   （以前这里判的是 `tokenStore.refresh`，而 refresh token 现在 JS 读不到，
+      //   照旧写就永远是 false —— 于是"已登录用户 token 过期"会退化成
+      //   「不续期、直接 401」，用户卡在每个请求都失败的死局里）；
+      // - **没有** = 匿名访客，401 就是普通的未授权，**既不续期也不登出**，
+      //   更不该说成"登录已过期"——那会让新访客看到莫名其妙的过期提示。
+      //
+      // 匿名与"登录过期"的区分全靠这一条：两边都是 401，但用户的处境完全不同。
+      if (!shouldSkipRefresh(original) && tokenStore.access) {
         original._retried = true
         try {
-          refreshPromise = refreshPromise ?? refreshTokens()
-          const tokens = await refreshPromise
+          const tokens = await refreshSession()
           original.headers = {
             ...original.headers,
             Authorization: `Bearer ${tokens.access_token}`,
           }
           return await http.request(original)
         } catch {
+          // 续期失败（含它自己 401 / 403 / 断网）：凭证这条路走不通了
           forceLogout()
           return await Promise.reject(
             new ApiError('登录已过期，请重新登录', 401, 'token_expired'),
           )
-        } finally {
-          refreshPromise = null
         }
-      }
-
-      if (!shouldSkipRefresh(original) && !tokenStore.refresh && tokenStore.access) {
-        // 边界：**有** access 但**没有** refresh token 可用（本地存储被清、
-        // 无痕模式、手动删过 key）时，上面的分支条件不成立，旧代码会直接落到
-        // `normalizeError` 返回 401 —— 于是"守卫放行、请求全 401、
-        // 页面上什么都没有"这个死局又回来了。这里同样按"凭证已死"处理。
-        //
-        // 注意必须带 `tokenStore.access`：完全匿名（一个凭证都没有）的 401
-        // 就是普通的未授权，不该说成"登录已过期"——那会让新访客看到
-        // 莫名其妙的"过期"提示。
-        forceLogout()
-        return await Promise.reject(new ApiError('登录已过期，请重新登录', 401, 'token_expired'))
       }
     }
 

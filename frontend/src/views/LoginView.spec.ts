@@ -30,9 +30,9 @@ import LoginView from './LoginView.vue'
 
 /* ------------------------------------------------------------ 测试数据 */
 
+/** 登录响应：refresh token 由后端经 Set-Cookie 下发，响应体里默认没有它。 */
 const TOKEN: Token = {
   access_token: 'at-1',
-  refresh_token: 'rt-1',
   token_type: 'bearer',
   expires_in: 7200,
 }
@@ -118,6 +118,9 @@ beforeEach(() => {
   useToast().items.value = []
   // localStorage 在同一个文件里是跨用例共享的，不清掉会让"已登录"串到下一个用例
   tokenStore.clear()
+  // 默认按"访客"起步：Cookie 里没有可用的 refresh token，静默续期直接 401。
+  // 页面挂载时 LoginView 会先 restore() 一次，不 mock 就会发出真实请求。
+  vi.spyOn(authApi, 'refresh').mockRejectedValue(new ApiError('登录已过期', 401, 'unauthorized'))
 })
 
 afterEach(() => {

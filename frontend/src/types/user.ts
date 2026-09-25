@@ -19,7 +19,12 @@ export interface User extends UserBrief {
 
 export interface Token {
   access_token: string
-  refresh_token: string
+  /**
+   * 默认**没有**：浏览器走 httpOnly Cookie，响应体里不再下发
+   * （后端只在 `REFRESH_TOKEN_IN_BODY=true` 时给非浏览器客户端返回）。
+   * 前端即使收到了也不保存它（见 `api/http.ts` 的 `tokenStore.save`）。
+   */
+  refresh_token?: string
   token_type: string
   expires_in: number
 }
