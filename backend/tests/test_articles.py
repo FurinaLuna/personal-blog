@@ -335,6 +335,66 @@ class TestFiltering:
         body = (await client.get(f"/api/v1/articles?author_id={author_id}")).json()
         assert body["total"] == 0
 
+    async def test_managed_list_filters_by_category_slug(
+        self, client: AsyncClient, author_headers: dict[str, str], admin_headers: dict[str, str]
+    ) -> None:
+        """后台列表按 **slug** 筛选分类必须生效。
+
+        回归用例：``list_managed`` 的两个分支原先只把 ``category_id`` 传进
+        ``ArticleFilter``，漏了 ``category_slug``；而 ``build_article_filter`` 把
+        非数字的 ``category`` 归到 slug 分支，于是 ``?category=<slug>``
+        被静默丢弃 —— 返回全部文章且不报错，表现为「后台筛选时灵时不灵」
+        （取决于前端传 slug 还是 id）。前台 ``/articles`` 一直是好的，所以只在
+        后台暴露。
+        """
+        target = (
+            await client.post(
+                "/api/v1/categories",
+                json={"name": f"目标分类{unique_suffix()}"},
+                headers=author_headers,
+            )
+        ).json()
+        other = (
+            await client.post(
+                "/api/v1/categories",
+                json={"name": f"干扰分类{unique_suffix()}"},
+                headers=author_headers,
+            )
+        ).json()
+        await client.post(
+            "/api/v1/articles",
+            json=make_article_payload(category_id=target["id"], status="draft"),
+            headers=author_headers,
+        )
+        await client.post(
+            "/api/v1/articles",
+            json=make_article_payload(category_id=other["id"], status="draft"),
+            headers=author_headers,
+        )
+
+        # 不筛应当能同时看到两篇（确认数据确实都建出来了）
+        all_managed = (
+            await client.get("/api/v1/articles/manage/list", headers=admin_headers)
+        ).json()
+        assert all_managed["total"] == 2
+
+        # slug 与 id 两条路径都要能筛（与前台 /articles 的口径一致）
+        for admin in (True, False):
+            headers = admin_headers if admin else author_headers
+            by_slug = (
+                await client.get(
+                    f"/api/v1/articles/manage/list?category={target['slug']}", headers=headers
+                )
+            ).json()
+            by_id = (
+                await client.get(
+                    f"/api/v1/articles/manage/list?category={target['id']}", headers=headers
+                )
+            ).json()
+
+            assert by_slug["total"] == 1, f"slug 筛选失效（admin={admin}）"
+            assert by_id["total"] == 1, f"id 筛选失效（admin={admin}）"
+
 
 class TestDetail:
     async def test_detail_by_slug_and_id_are_equivalent(

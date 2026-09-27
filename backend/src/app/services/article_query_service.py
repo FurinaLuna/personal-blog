@@ -185,11 +185,17 @@ class ArticleQueryService:
             article_status=article_status,
         )
         statuses = flt.statuses or ALL_STATUSES
+        # ``category_slug`` 必须带上：``build_article_filter`` 把**非数字**的 category
+        # 归到 slug 分支，这里的两个分支原先都只传了 ``category_id``，
+        # 于是后台 ``?category=<slug>`` 的筛选被静默丢弃——返回全部文章且不报错，
+        # 表现为"后台筛选时灵时不灵"（取决于前端传的是 slug 还是 id）。
+        # 同类字段 ``tag_slug`` 一直是对的，两处口径必须一致。
         if viewer.role is UserRole.ADMIN:
             scoped = ArticleFilter(
                 keyword=flt.keyword,
                 statuses=statuses,
                 category_id=flt.category_id,
+                category_slug=flt.category_slug,
                 tag_slug=flt.tag_slug,
                 author_id=flt.author_id,
             )
@@ -198,6 +204,7 @@ class ArticleQueryService:
                 keyword=flt.keyword,
                 statuses=statuses,
                 category_id=flt.category_id,
+                category_slug=flt.category_slug,
                 tag_slug=flt.tag_slug,
                 author_id=viewer.id,
             )
