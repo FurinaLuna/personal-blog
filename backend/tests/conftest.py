@@ -16,7 +16,70 @@ import pytest
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import text
 
-TEST_DB = Path(tempfile.gettempdir()) / "personal_blog_test.db"
+BASE_DIR = Path(__file__).resolve().parents[1]
+REPO_DIR = BASE_DIR.parent
+# 仓库内、被 .gitignore 覆盖的临时区（见根 .gitignore 的「测试临时区」一节）
+REPO_TMP = REPO_DIR / ".pytest-tmp"
+
+
+def _is_writable(directory: Path) -> bool:
+    """真的去建一个文件来判断目录可用（``os.access`` 在 Windows 上不可靠）。"""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".write-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _safe_temp_dir() -> Path:
+    """取一个真的能用的临时目录，保证**不会落进工作目录**、且确实可写。
+
+    为什么需要它（这是实测踩到的坑，不是防御性代码）：
+
+    - 某些环境里 ``tempfile.gettempdir()`` 会返回**当前工作目录**。此时任何需要
+      临时文件的 SQLite 语句（级联删除、溢出排序、``CREATE INDEX``）都报
+      ``unable to open database file``——5 个用例稳定失败，看起来像业务被改坏了；
+      同时测试媒体与 pytest 的 ``pytest-of-<user>/`` 都生成在仓库里，
+      ``git status`` 一直脏着，``git add -A`` 会把它们提交进去。
+    - 反过来，``gettempdir()`` 给的目录**也可能不可写**（沙箱 / 受限 ACL /
+      容器里只读的 ``/tmp``），拿它当测试库或 basetemp 会直接 ``PermissionError``。
+
+    所以两条都要判：先挑一个确实可写的，仓库内目录排在最后。
+    ``tempfile.gettempdir()`` 内部已经兜住了「候选目录不存在」的情况，
+    这里只补「可写」与「不在仓库里」两个条件。
+    """
+    repo_paths = {REPO_DIR.resolve(), BASE_DIR.resolve()}
+    for candidate in (Path(tempfile.gettempdir()), REPO_TMP):
+        if candidate.resolve() in repo_paths:
+            # 系统临时目录就是工作目录 ⇒ 换到仓库内被 .gitignore 覆盖的专用目录
+            candidate = REPO_TMP
+        if _is_writable(candidate):
+            return candidate
+    # 两个都写不了也不该让整个会话起不来：退回系统返回值，让具体用例自己报错
+    return Path(tempfile.gettempdir())
+
+
+TEMP_ROOT = _safe_temp_dir()
+TEST_DB = TEMP_ROOT / "personal_blog_test.db"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """把 pytest 自己的临时基目录挪出仓库。
+
+    默认是 ``<tempfile.gettempdir()>/pytest-of-<user>``，在上面那种情况下
+    就等于 ``<仓库>/pytest-of-<user>``。``tmp_path`` 由 fixture 按需创建，
+    所以这里只在 basetemp 目录还不存在时改写——
+    已存在说明本会话/上次运行已经建好（或用户显式传了 ``--basetemp``），不要去动它。
+    """
+    if getattr(config.option, "basetemp", None):
+        return  # 用户显式传了 --basetemp，尊重它
+    fallback = REPO_TMP / "pytest"
+    if not fallback.exists() and _is_writable(REPO_TMP):
+        config.option.basetemp = str(fallback)
+
 
 # 测试库方言：默认 SQLite（零依赖、跑得快），可用 TEST_DATABASE_URL 指定 PostgreSQL。
 #
@@ -41,7 +104,7 @@ os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_EMAIL"] = "admin@example.com"
 os.environ["ADMIN_PASSWORD"] = "admin123456"
 os.environ["MAX_UPLOAD_SIZE"] = str(2 * 1024 * 1024)
-os.environ["STORAGE_DIR"] = (Path(tempfile.gettempdir()) / "personal_blog_media").as_posix()
+os.environ["STORAGE_DIR"] = (TEMP_ROOT / "personal_blog_media").as_posix()
 
 # 上面的环境变量必须早于下面这些 import，故有意忽略 E402
 from app.config import settings  # noqa: E402

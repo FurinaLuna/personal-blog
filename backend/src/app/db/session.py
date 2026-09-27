@@ -22,9 +22,17 @@ def enable_sqlite_pragmas(engine: AsyncEngine) -> None:
     SQLite 默认 **不** 强制外键约束（``PRAGMA foreign_keys`` 默认 OFF），
     这意味着 ``ON DELETE CASCADE`` 写了也不会生效，删文章时评论会全部变成孤儿行。
     必须每个连接显式打开，且要在 ``connect`` 事件里做——连接池里的连接是复用的。
+
+    ``temp_store`` 的取值来自配置（默认留空，即不设置、跟编译期默认走）：见
+    ``Settings.sqlite_temp_store`` 的说明——某些环境里 SQLite 建不出磁盘临时文件，
+    任何需要临时表的语句（级联删除、``ORDER BY`` 溢出排序、``CREATE INDEX``）
+    都会直接报 ``unable to open database file``。它没有无条件设成 MEMORY，
+    因为那会把临时文件的内存占用从「受 temp_store 限制」变成「受容器内存限制」。
     """
     if not engine.url.get_backend_name().startswith("sqlite"):
         return
+
+    temp_store = settings.sqlite_temp_store
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
@@ -32,6 +40,8 @@ def enable_sqlite_pragmas(engine: AsyncEngine) -> None:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        if temp_store:
+            cursor.execute(f"PRAGMA temp_store={temp_store}")
         cursor.close()
 
 

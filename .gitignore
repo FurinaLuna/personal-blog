@@ -68,6 +68,18 @@ npm-debug.log*
 yarn-error.log*
 alembic_boot.db
 
+# ---------------- 测试临时区 ----------------
+# tests/conftest.py 在「系统的临时目录不可用」时会把测试库 / 上传产物 / pytest 基目录
+# 落到这里（见该文件 _safe_temp_dir 的说明：此时 tempfile.gettempdir() 会返回工作目录，
+# 于是这些产物生成在仓库里，git status 一直脏着，git add -A 会把测试媒体提交进去）。
+.pytest-tmp/
+# pytest 的 cacheprovider 在「写不进 .pytest_cache」时会在工作目录旁开一个
+# pytest-cache-files-* 临时目录（受限权限 / 只读缓存目录下会出现）
+pytest-cache-files-*/
+# 上面那种情况在修复前留下的两个目录名，兜一层避免误提交
+backend/personal_blog_media/
+backend/pytest-of-*/
+
 # ---------------- 端到端验证产物 ----------------
 # CDP 脚本的截图/报告统一写入 shots/（make smoke 等目标会传 ./shots/<名称>），
 # 每次运行都会重写，不入库

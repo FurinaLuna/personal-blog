@@ -84,6 +84,24 @@ class Settings(BaseSettings):
     # postgresql+asyncpg://user:pass@host:5432/blog
     database_url: str = f"sqlite+aiosqlite:///{(BASE_DIR / 'blog.db').as_posix()}"
     db_echo: bool = False
+    # SQLite 临时文件存放位置（PRAGMA temp_store）。只对 SQLite 生效。
+    #
+    # 空串 = 不设置，跟编译期默认走（绝大多数平台上默认就是「用磁盘临时文件」）。
+    #
+    # 为什么需要这个开关：某些环境里 SQLite **建不出磁盘临时文件**，而这时
+    # 任何需要临时表的语句都会失败——不只是"慢"，而是直接报
+    # `unable to open database file`。实测踩到的场景就是本机：
+    # `tempfile.gettempdir()` 返回工作目录，级联删除（DELETE 触发临时表）、
+    # 溢出排序、CREATE INDEX 全部报错，于是 5 个用例稳定失败，看起来像业务被改坏了。
+    # 这类失败在「容器里 /tmp 不可写」或「TEMP 指向不可用路径」的部署上同样会出现。
+    #
+    # 取值直接透传给 SQLite（FILE / MEMORY / 0 / 1 / 2），所以只允许这几个值，
+    # 写错就在解析配置时拒绝——与 APP_ENV / COOKIE_SAMESITE 同一取舍：
+    # 静默拼错一个枚举的表现是"配置了却没生效"，比启动失败难查得多。
+    #
+    # 默认不设成 MEMORY 是有意的：MEMORY 会把临时文件的内存占用交给容器内存上限，
+    # 大数据量下可能 OOM。真遇到上面那种环境再显式打开。
+    sqlite_temp_store: str = ""
     # 启动时自动建表。开发/演示方便，**生产必须设为 false**，
     # 改由 `alembic upgrade head` 管理结构变更——否则一次误改模型就会在生产悄悄改表。
     db_auto_create: bool = True
@@ -303,6 +321,28 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("sqlite_temp_store", mode="before")
+    @classmethod
+    def _validate_sqlite_temp_store(cls, value: Any) -> Any:
+        """只允许 SQLite 认得的 temp_store 取值，写错就拒绝启动。
+
+        取值直接拼进 ``PRAGMA temp_store=...``，所以这里既是一次拼写校验，
+        也是一道**注入边界**（虽然值来自受信配置，但拼错一个字的后果是
+        「配了却没生效」，比启动失败难查得多——与 APP_ENV / COOKIE_SAMESITE 同一取舍）。
+        空串表示「不设置」，跟编译期默认走。
+        """
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().upper()
+        if not normalized:
+            return ""
+        if normalized not in ("FILE", "MEMORY", "0", "1", "2"):
+            raise ValueError(
+                "SQLITE_TEMP_STORE 只能是 FILE / MEMORY / 0 / 1 / 2 之一（留空表示不设置），"
+                f"当前为 {value!r}。"
+            )
+        return normalized
 
     @field_validator("cookie_samesite", mode="before")
     @classmethod
