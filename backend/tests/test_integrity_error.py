@@ -13,8 +13,53 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import IntegrityError
 
+from app.main import _is_unique_violation
 from app.repositories import TagRepository
+
+
+class TestUniqueViolationDiscriminator:
+    """判据本身：只有唯一键冲突才该被答成 409。
+
+    为什么值得单测：这个判断决定响应是 409 还是 500，两者在排障语义上完全不同
+    （"名字重复了" vs "服务端有缺陷"）。而且它的判据是**方言相关**的——
+    SQLite 只有文案、PostgreSQL 走 SQLSTATE——两条路都得覆盖，
+    否则会在另一种方言上静默退化成"一律 500"或"一律 409"。
+    """
+
+    class _FakeOrig(Exception):
+        """模拟 DBAPI 层原始异常；PostgreSQL 会把 sqlstate 挂在它上面。"""
+
+        def __init__(self, message: str, sqlstate: str | None = None) -> None:
+            super().__init__(message)
+            if sqlstate is not None:
+                self.sqlstate = sqlstate
+
+    @staticmethod
+    def _wrap(orig: Exception) -> IntegrityError:
+        return IntegrityError("INSERT INTO t VALUES (?)", {}, orig)
+
+    @pytest.mark.parametrize(
+        ("message", "sqlstate", "expected"),
+        [
+            # SQLite：没有结构化错误码，只能看文案
+            ("UNIQUE constraint failed: tags.name", None, True),
+            ("NOT NULL constraint failed: articles.title", None, False),
+            ("FOREIGN KEY constraint failed", None, False),
+            ("CHECK constraint failed: view_count >= 0", None, False),
+            # PostgreSQL：SQLSTATE 是标准值，比文案可靠
+            ('duplicate key value violates unique constraint "uq_tags_name"', "23505", True),
+            ("insert or update on table violates foreign key constraint", "23503", False),
+            ("null value in column violates not-null constraint", "23502", False),
+        ],
+    )
+    def test_classification(self, message: str, sqlstate: str | None, expected: bool) -> None:
+        assert _is_unique_violation(self._wrap(self._FakeOrig(message, sqlstate))) is expected
+
+    def test_missing_orig_is_not_treated_as_unique(self) -> None:
+        """拿不到原始异常时**不要**猜成唯一键冲突：宁可报 500 也不要谎报 409。"""
+        assert _is_unique_violation(IntegrityError("stmt", {}, Exception())) is False
 
 
 class TestIntegrityErrorTranslation:

@@ -156,6 +156,39 @@ async def _prune_visit_logs() -> None:
         logger.warning("访问日志清理失败（不影响启动）", exc_info=True)
 
 
+# 唯一键冲突在各方言下的判据。
+#
+# SQLite 不会给出结构化错误码（``sqlite3.IntegrityError`` 只有一句英文文案），
+# 所以只能看文案；PostgreSQL 走 SQLSTATE，``23505`` 是 ``unique_violation``，
+# 是标准值，可以放心依赖。两条都判：本项目两种方言都要能跑。
+_UNIQUE_SQLSTATE = "23505"
+_UNIQUE_SQLITE_MARKERS = ("UNIQUE constraint failed",)
+
+
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """区分「唯一键冲突」与其它完整性错误（NOT NULL / 外键 / CHECK）。
+
+    为什么值得单独抽一个函数并写注释：这个判断决定了响应是 409 还是 500，
+    而两者在排障语义上完全不同——把它判错会让"数据完整性问题"伪装成
+    "用户取的名字重复了"。
+
+    判据取 ``exc.orig``（DBAPI 层的原始异常）而不是 ``IntegrityError`` 本身：
+    后者的 ``str()`` 会带上 SQL 语句与参数，里面可能恰好含有 ``UNIQUE`` 之类的词，
+    用它做匹配会误判。
+    """
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+
+    # PostgreSQL：优先用结构化字段，比文案可靠
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate:
+        return str(sqlstate) == _UNIQUE_SQLSTATE
+
+    message = str(orig)
+    return any(marker in message for marker in _UNIQUE_SQLITE_MARKERS)
+
+
 def _register_exception_handlers(app: FastAPI) -> None:
     """把领域异常翻译成 HTTP 响应。
 
@@ -180,7 +213,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(IntegrityError)
     async def integrity_error_handler(_request: Request, exc: IntegrityError) -> JSONResponse:
-        """把数据库完整性约束冲突翻译成 409，而不是 500。
+        """把数据库完整性约束冲突翻译成合适的响应，而不是一律 409。
 
         「先查重、再插入」这个模式在本项目里到处都是（用户名 / 邮箱 / slug /
         分类名 / 标签名），而两步之间永远存在竞态窗口：两个请求同时通过查重，
@@ -188,11 +221,34 @@ def _register_exception_handlers(app: FastAPI) -> None:
         正确的回答是 409「已存在」，而不是 500「服务器开小差了」——
         500 会让用户以为是自己操作错了或者站点坏了。
 
-        ``get_session`` 依赖已经回滚了事务，这里只负责把它翻译成合适的响应。
+        ## 为什么必须区分「唯一键冲突」与其它完整性错误（这是一个真实的误导源）
+
+        原来这里把**所有** ``IntegrityError`` 都答成 409「该内容已存在」。
+        但 ``IntegrityError`` 覆盖的不只是唯一键：NOT NULL 违反、外键违反
+        （例如请求在飞行中作者被删掉，插入带了已失效的 ``author_id``）、
+        CHECK 违反都会落到这里。把它们答成「内容已存在」的后果不是"不够精确"，
+        而是**把排查方向指错**：前端提示用户"换个名字试试"，
+        运维日志里看到的是 409（客户端错误）而不是 500（服务端缺陷），
+        真正的数据完整性问题就此被掩盖。
+
+        所以只有唯一键冲突才是 409，其余交给兜底 500 信封。
+
+        ``get_session`` 依赖已经回滚了事务，这里只负责翻译。
         原始异常写进日志（带上 request_id），但不回给客户端：
         数据库错误信息会暴露表名与列名。
         """
-        logger.warning("数据库完整性约束冲突：%s", exc, exc_info=True)
+        if not _is_unique_violation(exc):
+            logger.exception("非唯一键的完整性约束冲突（request_id=%s）：%s", get_request_id(), exc)
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": "服务器内部错误",
+                    "code": "internal_error",
+                    "request_id": get_request_id(),
+                },
+            )
+
+        logger.warning("唯一键冲突（并发查重竞态）：%s", exc, exc_info=True)
         return JSONResponse(
             status_code=409,
             content={
