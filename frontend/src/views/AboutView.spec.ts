@@ -186,6 +186,53 @@ describe('AboutView · 头部与联系方式', () => {
     expect(wrapper.findAll('header a[target="_blank"]')).toHaveLength(2)
   })
 
+  it('社交链接里的伪协议地址不渲染成链接（存量脏数据兜底）', async () => {
+    // 后端已按 app.utils.url 的口径校验，但库里可能留着「补校验之前」写入的值
+    // （与 CommentSection 兜底 author_site 是同一个理由）。Vue 不清洗动态 href，
+    // 一个 javascript: 地址被点一下就在本站源内执行。
+    vi.spyOn(siteApi, 'profile').mockResolvedValue(
+      makeProfile({
+        social_links: [
+          { label: '正常', url: 'https://github.com/example' },
+          { label: '伪协议', url: 'javascript:alert(1)' },
+          { label: '数据URI', url: 'data:text/html,<script>alert(1)</script>' },
+        ],
+      }),
+    )
+
+    const { wrapper } = await mountAbout()
+
+    // 安全的留下，不安全的两条整条不渲染（标签文案也不出现，避免留下死链接）
+    expect(wrapper.get('header a[href="https://github.com/example"]').text()).toBe('正常')
+    expect(wrapper.findAll('header a[target="_blank"]')).toHaveLength(1)
+    expect(wrapper.html()).not.toContain('javascript:')
+    expect(wrapper.text()).not.toContain('伪协议')
+  })
+
+  it('站内相对路径的社交链接在测试环境被安全过滤（jsdom 无 document base）', async () => {
+    // 说明：真实浏览器里 `new URL('/api/v1/articles')` 会按 document base 解析成
+    // 同源绝对地址，所以种子数据里的 RSS 链接是正常渲染的；但 vitest 的 jsdom
+    // 里 Node 的 URL 解析拿不到 document base，会抛 "Invalid URL"，于是被
+    // safeExternalUrl 过滤掉。这里把这个**已知的环境差异**固化成断言，
+    // 而不是写一条依赖宿主 origin 的测试 —— 那种断言会随执行顺序变化。
+    // 后端侧「相对路径必须被接受」由 test_site.py 的
+    // test_scheme_less_social_link_gets_https 与 SocialLink 读模型宽松策略保证。
+    vi.spyOn(siteApi, 'profile').mockResolvedValue(
+      makeProfile({
+        social_links: [
+          { label: 'RSS', url: '/api/v1/articles', icon: 'rss' },
+          { label: '外部', url: 'https://github.com/example' },
+        ],
+      }),
+    )
+
+    const { wrapper } = await mountAbout()
+
+    // 只有绝对地址那条渲染出来；相对路径那条不渲染成死链接（`href` 为 null 时整条跳过）
+    expect(wrapper.get('a[href="https://github.com/example"]').text()).toBe('外部')
+    expect(wrapper.findAll('header a[target="_blank"]')).toHaveLength(1)
+  })
+
   it('没有副标题 / 所在地 / 邮箱 / 社交链接时不渲染空标签', async () => {
     vi.spyOn(siteApi, 'profile').mockResolvedValue(
       makeProfile({ owner_name: '小站', headline: null, location: null, email: null, social_links: null }),

@@ -5,6 +5,7 @@ import { computed, onMounted } from 'vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { useHead } from '@/composables/useHead'
 import { useSiteStore } from '@/stores/site'
+import { safeExternalUrl } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 
 useHead({ title: '关于' })
@@ -13,6 +14,13 @@ const site = useSiteStore()
 
 const aboutHtml = computed(() => renderMarkdown(site.profile.about_md ?? '').html)
 const bioHtml = computed(() => renderMarkdown(site.profile.bio_md ?? '').html)
+
+/** 只保留能安全放进 `href` 的社交链接（理由见 `SiteFooter.vue` 的同名 computed）。 */
+const safeSocialLinks = computed(() =>
+  site.socialLinks
+    .map((link) => ({ ...link, href: safeExternalUrl(link.url) }))
+    .filter((link): link is typeof link & { href: string } => link.href !== null),
+)
 
 onMounted(() => {
   void site.load()
@@ -51,9 +59,9 @@ onMounted(() => {
             {{ site.profile.email }}
           </a>
           <a
-            v-for="link in site.socialLinks"
+            v-for="link in safeSocialLinks"
             :key="link.url"
-            :href="link.url"
+            :href="link.href"
             target="_blank"
             rel="noopener noreferrer"
             class="text-brand-600 hover:text-brand-700"
