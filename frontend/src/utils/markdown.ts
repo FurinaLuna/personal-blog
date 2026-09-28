@@ -12,49 +12,20 @@
  *
  * 只靠 Markdown 语法本身就能写出 `<script>`（Markdown 允许内联 HTML），
  * 所以「用了 Markdown 就安全」是错觉，必须消毒。
+ *
+ * ## 代码高亮的加载时机（这里做过一次性能取舍）
+ *
+ * 语法高亮**不在这里做**，而是拆到 `utils/codeHighlight.ts` 按需加载。
+ * 原因：highlight.js 与注册语言共约 49.5KB gzip，原先被本文件静态 import，
+ * 于是**每一篇文章**（哪怕一个代码块都没有）都要先下载解析完才能显示第一段正文。
+ * 现在本文件只做同步的「准备」（`.code-block` 骨架 + lang 标记），
+ * 真正的 import 推迟到正文挂载后、且确认存在代码块时。
  */
 import DOMPurify from 'dompurify'
-// 按需注册语言而不是 import 'highlight.js/lib/common'：
-// common 打包了约 40 种语言（~230KB），这里只留博客实际会用到的，体积降到 ~1/4。
-import hljs from 'highlight.js/lib/core'
-import bash from 'highlight.js/lib/languages/bash'
-import css from 'highlight.js/lib/languages/css'
-import dockerfile from 'highlight.js/lib/languages/dockerfile'
-import go from 'highlight.js/lib/languages/go'
-import ini from 'highlight.js/lib/languages/ini'
-import java from 'highlight.js/lib/languages/java'
-import javascript from 'highlight.js/lib/languages/javascript'
-import json from 'highlight.js/lib/languages/json'
-import markdownLang from 'highlight.js/lib/languages/markdown'
-import nginx from 'highlight.js/lib/languages/nginx'
-import plaintext from 'highlight.js/lib/languages/plaintext'
-import python from 'highlight.js/lib/languages/python'
-import rust from 'highlight.js/lib/languages/rust'
-import sql from 'highlight.js/lib/languages/sql'
-import typescript from 'highlight.js/lib/languages/typescript'
-import xml from 'highlight.js/lib/languages/xml'
-import yaml from 'highlight.js/lib/languages/yaml'
 import { marked } from 'marked'
 
+import { prepareCodeBlocks, resetPendingLanguages } from './codeHighlight'
 import { slugifyHeading } from './format'
-
-hljs.registerLanguage('bash', bash)
-hljs.registerLanguage('css', css)
-hljs.registerLanguage('dockerfile', dockerfile)
-hljs.registerLanguage('go', go)
-hljs.registerLanguage('ini', ini)
-hljs.registerLanguage('java', java)
-hljs.registerLanguage('javascript', javascript)
-hljs.registerLanguage('json', json)
-hljs.registerLanguage('markdown', markdownLang)
-hljs.registerLanguage('nginx', nginx)
-hljs.registerLanguage('plaintext', plaintext)
-hljs.registerLanguage('python', python)
-hljs.registerLanguage('rust', rust)
-hljs.registerLanguage('sql', sql)
-hljs.registerLanguage('typescript', typescript)
-hljs.registerLanguage('xml', xml) // html 是 xml 语言的别名，无需单独注册
-hljs.registerLanguage('yaml', yaml)
 
 export interface TocItem {
   id: string
@@ -193,62 +164,17 @@ export function renderMarkdown(source: string): RenderResult {
     toc.push({ id, text, depth: Number(element.tagName.slice(1)) })
   })
 
-  // 2) 代码高亮 + 语言标签 + 复制标记。
-  //    highlight.js 直接操作 DOM，比自己拼字符串安全得多。
-  //    这里只负责「标记结构」（data-copyable / .code-block__lang），真正的复制交互
-  //    由 MarkdownRenderer 用事件委托绑定 —— 工具函数不该掺和 UI 行为，
-  //    否则后台编辑器复用这段渲染逻辑时会被迫引入 toast 依赖。
+  // 2) 代码块骨架（.code-block + lang 角标 + 复制按钮）。
   //
-  //    先取「作者声明的语言」再高亮：hljs 会对没标语言的块做自动探测，
-  //    并把探测结果写进 class（`language-nginx` 之类），如果之后再去读 class，
-  //    就会把猜测出来的语言当成作者本意显示在角标上——那是误导。
-  container.querySelectorAll<HTMLElement>('pre code').forEach((block) => {
-    const declared = Array.from(block.classList)
-      .find((name) => name.startsWith('language-'))
-      ?.replace('language-', '')
-    // 没声明语言就不高亮：宁可呈现为纯文本，也不要给出一个可能是错的猜测
-    if (!declared) return
-
-    block.classList.add('hljs')
-    try {
-      hljs.highlightElement(block)
-    } catch {
-      // 语言没注册或识别失败时保持纯文本，不能让高亮失败把正文拖垮
-    }
-  })
-
-  container.querySelectorAll<HTMLElement>('pre').forEach((block) => {
-    // 语言名取自 marked 生成的 language-xxx 类（来自 ```语言 井号语法）。
-    // 注意要过滤掉 hljs 自己加的类：只认 marked 写在 <code> 上的声明。
-    const lang =
-      (Array.from(block.querySelector('code')?.classList ?? []).find(
-        (name) => name.startsWith('language-'),
-      ) ?? '')
-        .replace('language-', '')
-        .slice(0, 16) || 'text'
-
-    const wrapper = document.createElement('div')
-    wrapper.className = 'code-block'
-    wrapper.dataset.copyable = 'true'
-    wrapper.dataset.lang = lang
-    // 用原生 DOM API 挪节点（不碰 innerHTML，避免把已高亮的 DOM 重新序列化）
-    block.replaceWith(wrapper)
-    wrapper.append(block)
-
-    const tag = document.createElement('span')
-    tag.className = 'code-block__lang'
-    tag.textContent = lang
-    wrapper.append(tag)
-
-    // 按钮本体在这里生成（它属于渲染产物，要跟着 v-html 一起走），
-    // 但点击行为留给 MarkdownRenderer 用事件委托绑定 —— 结构与行为分离。
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'code-block__copy'
-    button.textContent = '复制'
-    button.setAttribute('aria-label', `复制 ${lang} 代码`)
-    wrapper.append(button)
-  })
+  //    这里**不做高亮**：highlight.js 约 49.5KB gzip，放进同步渲染管线等于
+  //    每篇文章（含无代码块的）都要先付这个代价。高亮由 MarkdownRenderer 挂载后
+  //    调用 `enhanceCodeBlocks` 按需加载并应用（见 utils/codeHighlight.ts）。
+  //
+  //    结构与行为分离：这里只生成 DOM 与标记，复制交互由 MarkdownRenderer
+  //    用事件委托绑定 —— 工具函数不该掺和 UI 行为，否则后台编辑器复用这段
+  //    渲染逻辑时会被迫引入 toast 依赖。
+  resetPendingLanguages()
+  prepareCodeBlocks(container)
 
   // 3) 外链新开窗口并补 rel：没有 noopener 时，新页面能通过 window.opener 反向操作本页。
   //
@@ -290,5 +216,3 @@ export function renderMarkdown(source: string): RenderResult {
   cache.set(input, result)
   return result
 }
-
-export { hljs }

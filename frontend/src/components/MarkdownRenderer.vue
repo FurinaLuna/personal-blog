@@ -8,10 +8,15 @@
  *
  * 用 v-html 是安全的——内容已经过 DOMPurify 白名单过滤（见 utils/markdown.ts），
  * 这是全站唯一允许使用 v-html 的地方。
+ *
+ * 另外负责在挂载后触发**按需的代码高亮**：highlight.js 约 49.5KB gzip，
+ * 放在同步渲染管线里会让每篇文章（含没有代码块的）都先付这个代价。
+ * 这里等到有代码块接近视口时再加载并应用（见 utils/codeHighlight.ts）。
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useToast } from '@/composables/useToast'
+import { scheduleEnhancement } from '@/utils/codeHighlight'
 
 defineProps<{ html: string }>()
 
@@ -20,6 +25,9 @@ const root = ref<HTMLElement | null>(null)
 
 /** 复制成功后的反馈时长。太短会让人怀疑没生效，太长会干扰连续复制多段代码。 */
 const DONE_MS = 1400
+
+/** 取消按需高亮的观察者（组件卸载时调用，避免 observer 泄漏）。 */
+let cancelEnhancement: (() => void) | null = null
 
 /**
  * 把代码写进剪贴板。
@@ -79,8 +87,15 @@ async function handleClick(event: MouseEvent): Promise<void> {
   }, DONE_MS)
 }
 
-onMounted(() => root.value?.addEventListener('click', handleClick))
-onBeforeUnmount(() => root.value?.removeEventListener('click', handleClick))
+onMounted(() => {
+  root.value?.addEventListener('click', handleClick)
+  // 有代码块才挂观察者：没有代码块的文章完全不碰 highlight.js 那 49.5KB
+  if (root.value) cancelEnhancement = scheduleEnhancement(root.value)
+})
+onBeforeUnmount(() => {
+  root.value?.removeEventListener('click', handleClick)
+  cancelEnhancement?.()
+})
 </script>
 
 <template>

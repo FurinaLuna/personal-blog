@@ -76,9 +76,20 @@ describe('renderMarkdown 代码块增强', () => {
     expect(html).toContain('data-lang="text"')
   })
 
-  it('代码块内容被高亮（hljs 类名注入）', () => {
+  it('代码块本体带 hljs 类（主题样式挂载点），且高亮被推迟', () => {
     const { html } = renderMarkdown('```python\nprint(1)\n```')
+    // hljs 类在**准备**阶段就加上：github.css 与暗色覆盖都挂在 .hljs 上，
+    // 纯文本状态也要可读，不能等异步高亮完成才有样式
     expect(html).toContain('hljs')
+    // 高亮本身被推迟：标记待处理，由 MarkdownRenderer 挂载后按需加载 hljs
+    expect(html).toContain('data-hljs-pending')
+    expect(html).toContain('data-language="python"')
+  })
+
+  it('没写语言的代码块不做高亮标记（不猜语言）', () => {
+    const { html } = renderMarkdown('```\nplain\n```')
+    expect(html).toContain('data-lang="text"')
+    expect(html).not.toContain('data-hljs-pending')
   })
 })
 
