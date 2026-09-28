@@ -2,12 +2,46 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from tests.factories import make_article_payload, make_png_bytes, unique_suffix
+
+
+@contextmanager
+def _captured_statements() -> Iterator[list[str]]:
+    """捕获上下文里真正发到数据库的 SQL 文本。
+
+    断言"列表没有 select 正文"只能落在**实际执行的语句**上：响应体里本来就没有
+    ``content_md`` 字段（``ArticleSummary`` 不含它），断言响应等于什么都没测。
+    挂在 engine 上而不是会话上，是因为语句在 ORM 编译缓存之后才成形——
+    这里拿到的就是最终 SQL。
+    """
+    from app.db.session import engine
+
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        yield statements
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", _record)
+
+
+def _article_selects(statements: list[str]) -> list[str]:
+    """从捕获结果里挑出对 articles 表的 SELECT。"""
+    return [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT") and "FROM articles" in statement
+    ]
 
 
 class TestCreate:
@@ -916,6 +950,92 @@ class TestPublishedYmColumn:
             ).scalar_one()
 
         assert stored == "2024-07"
+
+
+class TestListProjection:
+    """列表接口不得把正文（``content_md``）搬进进程再丢掉。
+
+    断言落在**真正发出去的 SQL** 上：响应体里本来就没有这个字段
+    （``ArticleSummary`` 不含它），只断言响应等于什么都没测。
+    """
+
+    async def test_list_sql_does_not_select_content_md(
+        self,
+        client: AsyncClient,
+        author_headers: dict[str, str],
+        admin_headers: dict[str, str],
+    ) -> None:
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(content_md="# 正文\n\n" + "正文内容" * 2000),
+                headers=author_headers,
+            )
+        ).json()
+
+        with _captured_statements() as public_statements:
+            public = await client.get("/api/v1/articles?page_size=50")
+        with _captured_statements() as managed_statements:
+            managed = await client.get(
+                "/api/v1/articles/manage/list?page_size=50", headers=admin_headers
+            )
+
+        assert public.status_code == 200, public.text
+        assert managed.status_code == 200, managed.text
+        assert any(item["id"] == created["id"] for item in managed.json()["items"])
+
+        for label, statements in (
+            ("前台列表", public_statements),
+            ("后台列表", managed_statements),
+        ):
+            selects = _article_selects(statements)
+            assert selects, f"{label}没有捕获到 articles 的 SELECT，用例前提不成立"
+            offenders = [sql for sql in selects if "content_md" in sql]
+            assert not offenders, f"{label}仍然在 select 正文：\n{offenders[0]}"
+
+        # 投影没有把列表需要的列裁掉：字段齐全（少一列会在序列化时炸/丢字段）
+        item = next(i for i in managed.json()["items"] if i["id"] == created["id"])
+        assert item["title"] and item["summary"] and item["tags"]
+        assert {"status", "view_count", "reading_time", "created_at", "updated_at"} <= set(item)
+
+        # 反向对照：详情接口**必须**照旧加载正文。它同时证明捕获机制能看到
+        # content_md —— 否则上面两条断言可能只是"什么都没捕到"而假通过。
+        with _captured_statements() as detail_statements:
+            detail = await client.get(f"/api/v1/articles/{created['slug']}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["content_md"]
+        assert any("content_md" in sql for sql in _article_selects(detail_statements)), (
+            "详情接口的 SQL 里没有 content_md —— 捕获方式失效，列表那两条断言不可信"
+        )
+
+    async def test_rss_still_gets_the_body_for_its_summary_fallback(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """RSS 的 ``description`` 在 summary 为空时要回退到正文。
+
+        ``load_only`` 之后被延迟加载的列在**异步会话**里访问会抛 ``MissingGreenlet``，
+        所以"谁需要正文"必须由调用方显式声明：``FeedService._latest`` 用的是
+        ``list_paged`` 的默认值（整行），这条用例把它钉住 —— 默认值哪天被改成
+        ``False``，这里会红，而不是上线后 ``/feed.xml`` 静默 500。
+        """
+        marker = f"回退标记{unique_suffix()}"
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(content_md=f"# 标题\n\n{marker}"),
+                headers=author_headers,
+            )
+        ).json()
+        # summary 是允许被显式清空的字段（NULLABLE_FIELDS），清空后 RSS 只剩正文可退回
+        cleared = await client.patch(
+            f"/api/v1/articles/{created['id']}", json={"summary": None}, headers=author_headers
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["summary"] is None, "summary 没被清空，用例前提不成立"
+
+        feed = await client.get("/feed.xml")
+        assert feed.status_code == 200, feed.text
+        assert marker in feed.text, "RSS 没能回退到正文：content_md 没有被加载"
 
 
 class TestCoverVariants:

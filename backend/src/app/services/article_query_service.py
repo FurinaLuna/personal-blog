@@ -222,6 +222,12 @@ class ArticleQueryService:
 
         注意顺序：先 ``count`` 再取数据会让「页码超出范围」时也返回正确 total，
         前端能据此把用户弹回最后一页，而不是显示成「没有文章」。
+
+        ``with_content_md=False`` 是列表接口的核心取舍：返回的是 ``ArticleSummary``，
+        正文永远进不了响应，所以不该把它从数据库搬出来（列表一页 100 篇、
+        100KB 的草稿就是约 1MB 的无用传输；后台列表是登录态，连公开缓存都没有）。
+        行仍然是 ``Article`` 实体，只是部分列被延迟加载，
+        于是 ``model_validate`` / ``comment_count`` / 封面变体的形状一律不变。
         """
         sorting.top_first = top_first
         total = await self.queries.count(flt)
@@ -233,6 +239,7 @@ class ArticleQueryService:
             sorting=sorting,
             offset=page_params.offset,
             limit=page_params.limit,
+            with_content_md=False,
         )
         items = [
             ArticleSummary.model_validate(row.article).model_copy(

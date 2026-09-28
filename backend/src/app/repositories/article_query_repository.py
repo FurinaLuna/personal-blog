@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import Select, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 from sqlalchemy.sql import ColumnElement
 
 from app.models import Article, ArticleSort, ArticleStatus, Category, Comment, Tag
@@ -23,6 +24,39 @@ from app.repositories.base import BaseRepository
 # 「有效发布时间」：已发布用 published_at，草稿回退到 created_at。
 # 统一用它排序，就不用到处处理 NULL 在 SQLite / PostgreSQL 中排序位置不一致的坑。
 _EFFECTIVE_DATE = func.coalesce(Article.published_at, Article.created_at)
+
+# 列表接口的**实体投影**：只加载列表真正会序列化出去的列，**不含正文
+# ``content_md``。
+#
+# 为什么要把列列出来：列表查询原来是 ``select(Article)`` 取整行，然后
+# ``ArticleSummary`` 把正文丢掉——正文还是从数据库搬进了应用进程。
+# ``GET /articles/manage/list`` 一页 100 篇 100KB 的草稿就是约 1MB 的无用传输，
+# 而这条**登录态**列表不走公开缓存，省不掉。
+#
+# 为什么用 ``load_only`` 而不是手写列元组：行仍然是 ``Article`` 实体
+# （只是部分列被延迟），所以 ``ArticleSummary.model_validate(row.article)``、
+# 相关子查询 ``comment_count``、以及 author / category / series / tags 这几个
+# eager 关系**一行都不用改**——调用点形状不变正是这里最重要的取舍。
+_LIST_COLUMNS: tuple[Any, ...] = (
+    Article.id,
+    Article.title,
+    Article.slug,
+    Article.summary,
+    Article.cover_image,
+    Article.status,
+    Article.is_top,
+    Article.allow_comment,
+    Article.view_count,
+    Article.like_count,
+    Article.reading_time,
+    Article.published_at,
+    Article.author_id,
+    Article.category_id,
+    Article.series_id,
+    Article.series_order,
+    Article.created_at,
+    Article.updated_at,
+)
 
 
 # LIKE 的转义符。抽成常量是刻意的：内联写进 f-string 时，
@@ -363,6 +397,11 @@ class ArticleQueryRepository(BaseRepository[Article]):
         所以在 Python 侧按传入的 id 顺序重排。数量受搜索上限约束（≤50），
         重排成本可以忽略。
 
+        这里**刻意整行加载**（不套 ``list_paged`` 的 ``_LIST_COLUMNS`` 投影）：
+        搜索结果为正文命中的文章拼 ``snippet``，而 ``build_snippet`` 读的正是
+        ``content_md``（``utils/text.py``）。要投影的话得让片段退化成"没有正文命中
+        就不显示"——用功能退化换几十 KB 传输，不划算。
+
         渲染所需的关联（author / category / series / tags）由 mapper 级的
         eager 策略自动带出，这里不需要显式 selectinload。
         """
@@ -435,13 +474,27 @@ class ArticleQueryRepository(BaseRepository[Article]):
         sorting: ArticleSorting,
         offset: int,
         limit: int,
+        with_content_md: bool = True,
     ) -> list[ArticleListRow]:
         """分页取列表。
 
-        刻意只 ``select(Article, comment_count)`` 而不带 content_md 之外的大字段——
-        正文由详情接口单独取，列表接口保持轻量。
+        ``with_content_md=False`` 时只加载 ``_LIST_COLUMNS``：列表接口序列化的是
+        ``ArticleSummary``，正文会被丢掉，所以它没必要从数据库搬出来
+        （一页 100 篇 100KB 草稿 ≈ 1MB，而 ``/articles/manage/list`` 是登录态、
+        不走公开缓存）。
+
+        **默认是 True（整行）而不是 False**，方向是刻意选的：漏传只会多加载正文，
+        而"少加载了正文"会在异步会话里变成 ``MissingGreenlet``（延迟加载要发同步
+        IO）—— 一个静默 500。所以「要不要正文」由调用方显式声明：
+
+        - ``ArticleQueryService._paginate``（前台列表 / 后台列表）→ ``False``；
+        - ``FeedService._latest``（RSS）→ 默认 ``True``，它的 ``description``
+          在 ``summary`` 为空时要回退到正文（``feed_service.py``）；
+        - 检索路径不走这里（见 ``list_by_ids_ordered``），它要正文拼 ``snippet``。
         """
         stmt = self._apply_filters(select(Article), flt)
+        if not with_content_md:
+            stmt = stmt.options(load_only(*_LIST_COLUMNS))
         stmt = (
             stmt.add_columns(self._comment_count_expr().label("comment_count"))
             .order_by(*sorting.clauses())
