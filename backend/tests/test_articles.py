@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from tests.factories import make_article_payload, make_png_bytes, unique_suffix
 
@@ -746,6 +749,173 @@ class TestArchive:
         assert not _is_year_month("2026-9")
         assert not _is_year_month("202609")
         assert not _is_year_month("abcd-09")
+
+    async def test_month_comes_from_published_at_not_created_at(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """补发一篇「去年写的」文章：归到**发布时间**那个月，而不是 created_at 当月。
+
+        这是 ``published_ym`` 派生规则的核心语义（``coalesce(published_at,
+        created_at)``），也是迁移回填与新写入两条路径必须一致的地方。
+        """
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(
+                    published_at=datetime(2024, 3, 15, 8, 30, tzinfo=UTC).isoformat()
+                ),
+                headers=author_headers,
+            )
+        ).json()
+        assert created["published_at"].startswith("2024-03")
+
+        groups = (await client.get("/api/v1/articles/archive")).json()
+        assert [group["year_month"] for group in groups] == ["2024-03"]
+        assert groups[0]["items"][0]["id"] == created["id"]
+
+    async def test_publishing_a_draft_uses_its_published_at_month(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """草稿发布：先记在 created_at 当月，改状态后必须迁到 published_at 那个月。
+
+        走的是 ``ArticleCommandService.update`` 那条写路径。派生列如果只在 INSERT
+        时算一次，这里就会停在草稿的月份上——归档页"永远少一篇/多一篇"，
+        而且不会报任何错。
+        """
+        draft = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+        assert (await client.get("/api/v1/articles/archive")).json() == []
+
+        patched = await client.patch(
+            f"/api/v1/articles/{draft['id']}",
+            json={
+                "status": "published",
+                "published_at": datetime(2025, 1, 15, 9, 0, tzinfo=UTC).isoformat(),
+            },
+            headers=author_headers,
+        )
+        assert patched.status_code == 200, patched.text
+
+        groups = (await client.get("/api/v1/articles/archive")).json()
+        assert [group["year_month"] for group in groups] == ["2025-01"]
+        assert [item["id"] for item in groups[0]["items"]] == [draft["id"]]
+
+    async def test_scheduled_article_shows_under_its_scheduled_month(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """定时发布：归档月份按**排期时间**算，不是创建时间。"""
+        target = datetime.now(UTC) + timedelta(days=40)
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(published_at=target.isoformat()),
+                headers=author_headers,
+            )
+        ).json()
+
+        groups = (await client.get("/api/v1/articles/archive")).json()
+        assert [group["year_month"] for group in groups] == [target.strftime("%Y-%m")]
+        assert groups[0]["items"][0]["id"] == created["id"]
+
+    async def test_rescheduling_moves_the_article_between_months(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """改发布时间（改期）后，归档月份必须跟着走。"""
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(
+                    published_at=datetime(2024, 5, 5, 10, 0, tzinfo=UTC).isoformat()
+                ),
+                headers=author_headers,
+            )
+        ).json()
+        assert [g["year_month"] for g in (await client.get("/api/v1/articles/archive")).json()] == [
+            "2024-05"
+        ]
+
+        patched = await client.patch(
+            f"/api/v1/articles/{created['id']}",
+            json={"published_at": datetime(2024, 6, 5, 10, 0, tzinfo=UTC).isoformat()},
+            headers=author_headers,
+        )
+        assert patched.status_code == 200, patched.text
+
+        groups = (await client.get("/api/v1/articles/archive")).json()
+        assert [group["year_month"] for group in groups] == ["2024-06"]
+        assert [item["id"] for item in groups[0]["items"]] == [created["id"]]
+
+
+class TestPublishedYmColumn:
+    """派生列本身（而不是 API 的表现）：草稿也必须带月份。
+
+    迁移回填对**所有**存量行按 ``coalesce(published_at, created_at)`` 算月份，
+    写路径如果只覆盖 ``published_at``，新草稿就会是 NULL——老行有值、新行没有，
+    这种漂移不报错，只会在"想按草稿月份做点什么"时突然暴露。
+    """
+
+    async def test_draft_row_falls_back_to_created_at_month(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        from app.db.session import async_session_factory
+        from app.models import Article
+
+        draft = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+
+        async with async_session_factory() as session:
+            row = (
+                await session.execute(
+                    select(Article.published_ym, Article.created_at).where(
+                        Article.id == draft["id"]
+                    )
+                )
+            ).one()
+
+        assert row.published_ym == row.created_at.strftime("%Y-%m")
+
+    async def test_only_publish_time_edits_recompute_the_column(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """改标题/正文不该动这一列——它只由发布时间决定。"""
+        from app.db.session import async_session_factory
+        from app.models import Article
+
+        created = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(
+                    published_at=datetime(2024, 7, 7, 7, 0, tzinfo=UTC).isoformat()
+                ),
+                headers=author_headers,
+            )
+        ).json()
+
+        patched = await client.patch(
+            f"/api/v1/articles/{created['id']}",
+            json={"title": "换了标题", "content_md": "换了正文"},
+            headers=author_headers,
+        )
+        assert patched.status_code == 200, patched.text
+
+        async with async_session_factory() as session:
+            stored = (
+                await session.execute(
+                    select(Article.published_ym).where(Article.id == created["id"])
+                )
+            ).scalar_one()
+
+        assert stored == "2024-07"
 
 
 class TestCoverVariants:

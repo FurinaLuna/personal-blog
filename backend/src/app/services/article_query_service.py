@@ -388,6 +388,12 @@ class ArticleQueryService:
         「逐月再查一次列表」是 N+1 的**有意选择**：月份总数通常个位数到十几，
         每月条目有 ``list_by_month`` 自己的 limit 保护，一次 JOIN 聚合反而会把
         SQL 写复杂。编排逻辑放服务层，路由只负责 HTTP 参数（limit 校验）。
+
+        这个取舍成立的前提是**每次查询都走索引**：月份列表与每月取条目现在都是
+        ``published_ym`` 上的裸列比较，由 ``ix_articles_status_published_ym``
+        服务（查询计划断言见 ``tests/test_indexes.py``）。在此之前谓词是
+        ``substr(cast(coalesce(published_at, created_at), text), 1, 7)``——
+        对列的函数，索引一律用不上，于是"月份数量少"换来的只是"少几次**全表扫描**"。
         """
         groups: list[ArchiveGroup] = []
         for year_month, count in await self.archive():

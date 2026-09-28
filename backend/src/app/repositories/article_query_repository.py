@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, String, case, cast, func, or_, select, text
+from sqlalchemy import Select, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
@@ -587,32 +587,61 @@ class ArticleQueryRepository(BaseRepository[Article]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_archive(self, *, statuses: tuple[ArticleStatus, ...]) -> list[tuple[str, int]]:
-        """按月归档。
+    @staticmethod
+    def _archive_stmt(statuses: tuple[ArticleStatus, ...]) -> Select[Any]:
+        """按月分组计数（独立出来是为了让查询计划断言能拿到同一条语句）。
 
-        用 ``substr(cast(时间, 文本), 1, 7)`` 取 ``YYYY-MM``——这个写法在 SQLite
-        与 PostgreSQL 上都能跑，避免为了一行 GROUP BY 去写两套方言。
+        分组键是裸列 ``published_ym``：对**列的函数**分组时索引一律用不上，
+        而且表达式里含 ``created_at``，索引覆盖不到，必须回表取整行。
+
+        ``published_ym IS NOT NULL`` 是给可空列兜底：NULL 会自成一组，
+        而 ``str(None)`` 会变成接口里一个叫 ``"None"`` 的月份。
         """
-        ym = func.substr(cast(_EFFECTIVE_DATE, String), 1, 7)
-        stmt = (
+        ym = Article.published_ym
+        return (
             select(ym.label("ym"), func.count(Article.id).label("cnt"))
-            .where(Article.status.in_(list(statuses)))
+            .where(Article.status.in_(list(statuses)), ym.is_not(None))
             .group_by(ym)
             .order_by(ym.desc())
         )
-        result = await self.session.execute(stmt)
+
+    async def list_archive(self, *, statuses: tuple[ArticleStatus, ...]) -> list[tuple[str, int]]:
+        """按月归档，返回 ``(YYYY-MM, 文章数)``。
+
+        月份取自 materialised 的 ``Article.published_ym``（写路径由模型事件维护，
+        存量行由迁移回填），所以这里只剩**裸列**比较与分组，
+        ``ix_articles_status_published_ym`` 能当覆盖索引扫。
+
+        之前这里是 ``substr(cast(coalesce(published_at, created_at), text), 1, 7)``：
+        对**列的函数**做 GROUP BY，索引一律用不上，而且还必须回表取整行
+        （表达式里含 ``created_at``，索引里没有它）。归档是公开端点、
+        没有缓存也没有限流，全表扫描会随文章数线性变慢。
+        """
+        result = await self.session.execute(self._archive_stmt(statuses))
         return [(str(row.ym), int(row.cnt)) for row in result.all()]
+
+    @staticmethod
+    def _by_month_stmt(
+        *, year_month: str, statuses: tuple[ArticleStatus, ...], limit: int
+    ) -> Select[Any]:
+        """某个月的条目查询（独立出来是为了让查询计划断言能拿到同一条语句）。
+
+        ``published_ym == year_month`` 必须是**裸列等值**：这条语句的价值就在
+        「谓词可索引」，任何函数包装都会让它退回全表扫描，
+        所以 tests/test_indexes.py 直接编译这个构造器的产物做 EXPLAIN。
+        """
+        return (
+            select(Article)
+            .where(Article.status.in_(list(statuses)), Article.published_ym == year_month)
+            .order_by(_EFFECTIVE_DATE.desc())
+            .limit(limit)
+        )
 
     async def list_by_month(
         self, *, year_month: str, statuses: tuple[ArticleStatus, ...], limit: int = 200
     ) -> list[Article]:
-        ym = func.substr(cast(_EFFECTIVE_DATE, String), 1, 7)
-        stmt = (
-            select(Article)
-            .where(Article.status.in_(list(statuses)), ym == year_month)
-            .order_by(_EFFECTIVE_DATE.desc())
-            .limit(limit)
-        )
+        """取某个月的条目（月份语义见 ``list_archive``）。"""
+        stmt = self._by_month_stmt(year_month=year_month, statuses=statuses, limit=limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

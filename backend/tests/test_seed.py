@@ -139,6 +139,33 @@ def test_demo_article_taxonomy_refs_are_valid() -> None:
         assert set(item["tags"]) <= valid_tags  # type: ignore[arg-type]
 
 
+class TestSeedDemoArchiveKey:
+    """演示数据也必须带上归档键。
+
+    ``seed_demo_content`` 是**不经过 ArticleCommandService** 的第三条写路径
+    （直接 ``Article(...)`` + ``session.add``）。派生列 ``published_ym`` 的维护
+    放在模型事件里正是为了让这种"绕过服务层"的写法也自动正确；
+    这里把这个假设变成断言，免得以后有人把维护逻辑挪回服务层。
+    """
+
+    async def test_demo_articles_have_published_ym(
+        self, db_reset: None, demo_seed_on: None
+    ) -> None:
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            await ensure_seed(session)
+            await session.commit()
+
+        async with async_session_factory() as session:
+            rows = (await session.execute(select(Article.published_at, Article.published_ym))).all()
+
+        assert rows, "演示数据没灌进来，用例前提不成立"
+        for published_at, published_ym in rows:
+            assert published_at is not None
+            assert published_ym == published_at.strftime("%Y-%m")
+
+
 class TestSeedConcurrency:
     """启动期 seed 的并发安全。
 
