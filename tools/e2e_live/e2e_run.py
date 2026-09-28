@@ -676,7 +676,7 @@ def c_r01():
     STATE["article"] = items[0]
 
 
-@case("R02", "访客读取", "P0", "文章详情：正文一致 + 浏览量递增 + visit_logs 真实落库")
+@case("R02", "访客读取", "P0", "文章详情：GET 是纯读（不动 view_count）+ 正文一致 + visit_logs 真实落库")
 def c_r02():
     art = STATE["article"]
     before_views = scalar("SELECT view_count FROM articles WHERE id=?", (art["id"],))
@@ -695,9 +695,16 @@ def c_r02():
                      f"库内片段={b[max(0, pos - 30):pos + 30]!r}")
     after_views = scalar("SELECT view_count FROM articles WHERE id=?", (art["id"],))
     after_logs = scalar("SELECT COUNT(*) FROM visit_logs WHERE article_id=?", (art["id"],))
-    check(after_views == before_views + 1, f"浏览量未递增：{before_views} -> {after_views}")
+    # GET **必须**是纯读。它此前每次自增 view_count，而 view_count 是响应体字段，
+    # 于是响应体每请求一变、ETag 每请求一变，「详情页可缓存」在实现上永远命中不了 304。
+    # 计数已改由 POST /articles/{id}/view 承担（见 R09），这里守住这条不变式：
+    # 一旦有人把计数搬回 GET，本用例会立刻变红。
+    check(after_views == before_views,
+          f"GET 详情改动了 view_count：{before_views} -> {after_views}。"
+          "详情必须是纯读，否则 ETag 永远命中不了 304；计数请走 POST /articles/{id}/view")
+    # 但「纯读」不等于「不记录」：访问日志仍然要落库，否则统计与趋势全废
     check(after_logs == before_logs + 1, f"visit_logs 未新增：{before_logs} -> {after_logs}")
-    note(f"浏览量 {before_views}->{after_views}，访问日志 {before_logs}->{after_logs}")
+    note(f"view_count 保持 {after_views}（GET 纯读），访问日志 {before_logs}->{after_logs}")
 
 
 @case("R03", "访客读取", "P0", "全文检索命中关键词并返回片段")
@@ -760,6 +767,64 @@ def c_r08():
     db_name = scalar("SELECT owner_name FROM site_profile WHERE id=1")
     check(r.json().get("owner_name") == db_name,
           f"站点档案不一致：{r.json().get('owner_name')} vs {db_name}")
+
+
+@case("R09", "访客读取", "P0",
+      "阅读计数走独立端点，且详情条件请求真能命中 304（ETag 生效）")
+def c_r09():
+    """「详情页可缓存」这条链路的端到端证明。
+
+    R02 守的是**前提**（GET 不改响应体里任何字段），本用例守的是**结果**
+    （条件请求真的返回 304、计数走独立端点）。两者缺一不可：只测前提，
+    中间件被改坏也没人知道；只测结果，计数被搬回 GET 会让缓存悄悄失效。
+
+    顺序刻意照真实浏览来：打开页面（计数）→ 刷新（304）。
+    """
+    aid = STATE["article"]["id"]
+
+    # ① 取一次详情（纯读 ⇒ 响应体稳定），拿到它的 ETag
+    first = api("GET", f"/articles/{aid}")
+    check(first.status_code == 200, f"详情失败：{first.status_code} {first.text[:200]}")
+    etag = first.headers.get("etag")
+    check(etag, f"详情响应没有 ETag，缓存无从谈起：{dict(first.headers)}")
+
+    # ② 带同一 ETag 再请求 ⇒ 必须 304 且零字节响应体。
+    #    把 view_count 从 GET 里搬走之前，这里恒为 200 —— 这条断言就是那件事的验收标准。
+    cond = api("GET", f"/articles/{aid}", headers={"If-None-Match": etag})
+    check(cond.status_code == 304,
+          f"条件请求未命中 304（If-None-Match={etag}）：实际 {cond.status_code}，"
+          f"body 前 200 字 {cond.text[:200]!r}")
+    check(not cond.content, f"304 不应带响应体，实际 {len(cond.content)} 字节")
+
+    # ③ 计数端点：库里真的 +1，且响应体给出的新值与库内一致（前端直接拿它渲染）
+    before = scalar("SELECT view_count FROM articles WHERE id=?", (aid,))
+    r = api("POST", f"/articles/{aid}/view")
+    check(r.status_code == 200, f"计数端点失败：{r.status_code} {r.text[:200]}")
+    after = scalar("SELECT view_count FROM articles WHERE id=?", (aid,))
+    check(after == before + 1, f"计数端点未让 view_count 递增：{before} -> {after}")
+    check(r.json().get("view_count") == after,
+          f"计数端点返回值与库内不一致：接口 {r.json().get('view_count')} / 库内 {after}")
+
+    # ④ 计数改了响应体 ⇒ 旧 ETag 自然失效。这是「计数器」与「HTTP 缓存」的固有矛盾，
+    #    不是缺陷；这里要固化的是**失效可预期**，而不是「永远 304」。
+    #    反过来，它也是本用例的自证：能 200 说明 ② 的 304 不是恒真断言。
+    stale = api("GET", f"/articles/{aid}", headers={"If-None-Match": etag})
+    check(stale.status_code == 200,
+          f"计数后旧 ETag 仍命中 304（{stale.status_code}）：说明 ETag 没跟着响应体走")
+
+    # ⑤ 再取一次详情拿到新 ETag ⇒ 又能 304。真实用户的「刷新页面」就该是这个结果
+    settled = api("GET", f"/articles/{aid}")
+    etag2 = settled.headers.get("etag")
+    check(etag2, "第二次详情仍无 ETag")
+    cond2 = api("GET", f"/articles/{aid}", headers={"If-None-Match": etag2})
+    check(cond2.status_code == 304, f"稳定后再条件请求仍未命中 304：{cond2.status_code}")
+
+    # ⑥ 不存在的文章：计数端点必须是 404，而不是 500
+    missing = api("POST", "/articles/999999/view")
+    check(missing.status_code == 404, f"不存在文章的计数端点应 404，实际 {missing.status_code}")
+
+    note(f"条件请求 304（{len(cond.content)} 字节）；view_count {before}->{after}；"
+         f"不存在 id → 404")
 
 
 # 账号与作者主流程
@@ -1573,7 +1638,8 @@ def make_png(width: int, height: int) -> bytes:
     return buf.getvalue()
 
 
-PHASE_BOOTSTRAP = [c_e01, c_e02, c_e03, c_e04, c_r01, c_r02, c_r03, c_r04, c_r05, c_r06, c_r07, c_r08]
+PHASE_BOOTSTRAP = [c_e01, c_e02, c_e03, c_e04, c_r01, c_r02, c_r03, c_r04, c_r05, c_r06, c_r07,
+                   c_r08, c_r09]
 PHASE_AUTHOR = [c_a01, c_a01b, c_a02, c_a03, c_a04, c_a05, c_a06, c_a07, c_a08,
                 c_u01, c_u02, c_u03, c_u04, c_u05, c_u06, c_u07, c_a09, c_a10]
 PHASE_COMMENT = [c_c01, c_c02, c_c03, c_c04, c_c05, c_c06, c_c07, c_c08, c_c09, c_c10]

@@ -10,9 +10,9 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 599 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
-690 个前端单测，外加三个真实浏览器端到端脚本（冒烟 34 项 / 交互 22 项 / 全功能回归 41 项）
-与两套数据库方言的真实链路端到端（SQLite 62 条 / PostgreSQL 61 条）。
+**写出来能跑、改起来可验证** —— 783 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
+763 个前端单测，外加三个真实浏览器端到端脚本（冒烟 40 项 / 交互 25 项 / 全功能回归 51 项）
+与两套数据库方言的真实链路端到端（SQLite 64 条 / PostgreSQL 63 条）。
 
 ---
 
@@ -308,12 +308,13 @@ personal-blog/
 | 分组 | 端点 | 说明 |
 |---|---|---|
 | 认证 | `POST /api/v1/auth/login` | 用户名或邮箱 + 密码。响应体只给 access token，refresh token 走 `Set-Cookie`（限流 5/分） |
-| | `POST /api/v1/auth/refresh` | 用 refresh token 续期。**请求体可省略**（省略即从 Cookie 取）；带 `Origin` 的请求必须落在 `CORS_ORIGINS` 白名单内 |
+| | `POST /api/v1/auth/refresh` | 用 refresh token 续期（限流 30/分）。**请求体可省略**（省略即从 Cookie 取）；带 `Origin` 的请求必须落在 `CORS_ORIGINS` 白名单内 |
 | | `POST /api/v1/auth/logout` | 真吊销：失效该用户全部设备的令牌，并下发删除 Cookie 的指令 |
 | | `GET /api/v1/auth/me` | 当前用户 |
 | | `GET/POST/PATCH/DELETE /api/v1/auth/users` | 用户管理（站长） |
 | 文章 | `GET /api/v1/articles` | 前台列表，支持分页 / 排序 / 筛选 / 搜索 |
-| | `GET /api/v1/articles/{slug或id}` | 详情（草稿对无权用户返回 404） |
+| | `GET /api/v1/articles/{slug或id}` | 详情（草稿对无权用户返回 404）。**纯读**：不回写任何字段，带 `ETag`，条件请求可命中 `304` |
+| | `POST /api/v1/articles/{id}/view` | 记一次阅读（原子自增 `view_count` 并返回最新值；草稿 404，限流 60/分）。计数与详情读取分离，详情才可缓存 |
 | | `POST/PATCH/DELETE /api/v1/articles` | 增改删（作者以上） |
 | | `GET /api/v1/articles/archive` | 按月归档 |
 | | `GET /api/v1/articles/{id}/related` | 相关文章 |

@@ -428,14 +428,19 @@ Store (stores/)          跨页面共享的状态：登录态 / 主题 / 站点�
 | `status` | enum | NOT NULL, IDX, default `draft` | `draft` / `published` / `archived` |
 | `is_top` | bool | NOT NULL, default false | 置顶 |
 | `allow_comment` | bool | NOT NULL, default true | |
-| `view_count` | int | NOT NULL, default 0 | 详情页访问时**原子自增** |
+| `view_count` | int | NOT NULL, default 0 | 由 `POST /api/v1/articles/{id}/view` **原子自增**；详情 GET 只读不回写（见 §3.5） |
 | `like_count` | int | NOT NULL, default 0 | |
 | `reading_time` | int | NOT NULL, default 1 | 预估阅读分钟数，按正文字符数估算 |
 | `published_at` | timestamptz | IDX | 首次发布时写入；反复切状态**不会**覆盖 |
+| `published_ym` | varchar(7) | IDX | `published_at` 的 `YYYY-MM` 物化列，随 `published_at` 由 ORM 事件同步；归档按月查询靠它走索引 |
 | `author_id` | int | FK users, NOT NULL, IDX, CASCADE | |
 | `category_id` | int | FK categories, IDX, **SET NULL** | 可空 = 未分类 |
 
-索引：`ix_articles_status_published_at(status, published_at)`、`ix_articles_is_top_published_at(is_top, published_at)` —— 对应列表页最高频的两种查询组合。
+索引：`ix_articles_status_published_at(status, published_at)`、`ix_articles_is_top_published_at(is_top, published_at)`、`ix_articles_status_published_ym(status, published_ym)` —— 前两条对应列表页最高频的两种查询组合，第三条给「归档按月」用。
+
+> `published_ym` 为什么值得多一列：按月谓词写成 `substr(cast(published_at AS TEXT), 1, 7) = '2026-09'` 时，**列上套了函数** ⇒ 索引失效，归档页退化成全表扫。物化成一列之后查询计划里能看到
+> `SEARCH articles USING INDEX ix_articles_status_published_ym (status=? AND published_ym=?)`。
+> 代价是这条不变式必须由写入侧守住：改 `published_at` 的地方都要同步 `published_ym`（`article.py` 的 `before_insert` / `before_update` 事件负责，运维手工 UPDATE 需要一并写）。
 
 #### attachments
 
@@ -481,7 +486,7 @@ Store (stores/)          跨页面共享的状态：登录态 / 主题 / 站点�
 | User → Article | 1:N | `ON DELETE CASCADE` | 删除用户会删除其文章 |
 | User → Attachment | 1:N | `ON DELETE CASCADE` | |
 | Category → Article | 1:N | `ON DELETE SET NULL` | **删分类不删文章**，它们变成"未分类" |
-| Article ↔ Tag | M:N | `ON DELETE CASCADE`（连接表） | 纯连接表，无额外属性 |
+| Article ↔ Tag | M:N | `ON DELETE CASCADE`（连接表） | 纯连接表，无额外属性。连接表上建了**两个方向**的联合索引：`(article_id, tag_id)`（主键，按文章取标签）与 `(tag_id, article_id)`（按标签取文章）—— 只有前者时，「标签 → 文章」那条查询只能扫全表 |
 | Article → Comment | 1:N | `ON DELETE CASCADE` | 删文章连带删评论 |
 | Comment → Comment | 1:N（自关联） | `ON DELETE CASCADE` | 删父评论连带删回复 |
 
@@ -509,6 +514,29 @@ SQLite 底层把时间存成字符串，取出来是 **naive**（无时区）dat
 SQLite 的 `PRAGMA foreign_keys` **默认是 OFF**。这意味着写了 `ON DELETE CASCADE` 数据库根本不会执行——删掉一篇文章，评论会全部变成指向不存在文章的孤儿行。
 
 必须在每个连接建立时打开（`connect` 事件里，而不是启动时执行一次，因为连接池里的连接是复用的），同时开启 WAL 提升并发读写。
+
+---
+
+### 3.5 读接口的可缓存性：计数与表示分离
+
+`PublicCacheMiddleware`（`app/api/cache.py`）对公开读接口按**完整响应体**算 ETag，命中 `If-None-Match` 时直接回 304，不再序列化正文。这条链路此前在最热的那条路径上**收益恒为零**：
+
+- 详情页每次访问都 `view_count + 1`，而 `view_count` 是响应体字段；
+- 响应体每请求一变 ⇒ ETag 每请求一变 ⇒ 条件请求永远 200；
+- 也就是说中间件写了 166 行，而真正需要的那个接口恰好被排除在白名单之外（见 `CACHEABLE_PREFIXES` 的注释）。
+
+现在把**计数**和**表示**拆开：
+
+| 动作 | 端点 | 语义 |
+|---|---|---|
+| 读内容 | `GET /api/v1/articles/{slug或id}` | **纯读**。不回写任何字段，响应体逐字稳定 ⇒ ETag 稳定 ⇒ 可命中 304。仍然写 `visit_logs`（访问统计不因此丢） |
+| 记一次阅读 | `POST /api/v1/articles/{id}/view` | 原子自增 `view_count`，并把最新值放在响应体里返回（限流 60/分）。草稿返回 404，已归档仍计数 |
+
+前端 `ArticleDetailView` 拿到计数后直接渲染，所以页面上的「N 次阅读」**比以前更准**（旧实现返回的是自增前的值，要等下次刷新才对得上）。
+
+**预期内的一个后果**：计数会改响应体，所以「刚记完一次阅读」的那一瞬间旧 ETag 已失效，下一次详情请求是 200 而不是 304；再取一次后新 ETag 又稳定下来。计数与 HTTP 缓存本质上互斥，这里选择的是「计数不阻塞缓存」而不是「让缓存掩盖计数」。
+
+> 该契约由 `tools/e2e_live` 的两条用例把守：**R02** 守前提（详情 GET 不得改动 `view_count`，但必须写 `visit_logs`），**R09** 守结果（条件请求必须 304、计数端点必须递增且返回库内真值、不存在的 id 必须 404）。两者缺一不可——只守前提，中间件被改坏也没人知道；只守结果，计数被搬回 GET 会让缓存悄悄失效。
 
 ---
 
@@ -628,6 +656,7 @@ class UserSelfUpdate(BaseModel):
 | 读草稿 | ❌ 404 | 仅自己的 | 全部 |
 | 发表评论 | ✅（需审核） | ✅ | ✅（自动过审） |
 | 点赞 | ✅ | ✅ | ✅ |
+| 记一次阅读（`/articles/{id}/view`） | ✅ | ✅ | ✅ |
 | 新建文章 | ❌ | ✅ | ✅ |
 | 改 / 删文章 | ❌ | 仅自己的 | 任意 |
 | 上传附件 | ❌ | ✅ | ✅ |
