@@ -38,8 +38,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(
 )
 """
 
-# 三个触发器覆盖增删改，与迁移里的定义一致（见该文件的说明：
-# AFTER UPDATE 用 'delete' + 'insert' 是 external content 表的标准做法）
+# AFTER UPDATE 的守卫：只有**正文相关列**真的变了才重写索引。
+#
+# 没有这个 WHEN 的代价很大：`articles` 上任何 UPDATE 都会触发「delete + insert」
+# 一对 FTS 写操作，而详情页每次访问都会 `UPDATE articles SET view_count = view_count + 1`
+# （点赞同理）。也就是说**读一次文章就重新分词一次整篇正文**，
+# 实测（30 次迭代，内存库）2KB 正文 0.11ms、30KB 1.42ms、100KB 4.73ms——
+# 与正文长度线性相关，且每次浏览都多一次索引写。
+#
+# 为什么必须是 `title IS NOT old.title AND ...` 这种写法（两个坑）：
+#
+# 1. **SQLite 触发器体里不能用括号表达式做条件**，只能挂 `WHEN`——直接把
+#    `IF` 写进 BEGIN...END 里建表就报语法错；
+# 2. **NULL 会短路 AND**：只要旧值里有 NULL，`new.x IS NOT old.x` 结果是 NULL，
+#    整个 AND 变 NULL（等价 false），触发器就不跑了。而 `summary` 是**可空列**，
+#    「把 summary 从 NULL 改成有值」正是必须重建索引的情况 —— 用
+#    `coalesce(new.summary,'') IS NOT coalesce(old.summary,'')` 把 NULL 归一成
+#    空串才是安全的。`title` / `content_md` 非空，但为了口径一致一并包上。
 CREATE_TRIGGER_SQL = [
     f"""
     CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_ai AFTER INSERT ON articles BEGIN
@@ -54,7 +69,11 @@ CREATE_TRIGGER_SQL = [
     END
     """,
     f"""
-    CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON articles BEGIN
+    CREATE TRIGGER IF NOT EXISTS {FTS_TABLE}_au AFTER UPDATE ON articles
+    WHEN coalesce(new.title, '') IS NOT coalesce(old.title, '')
+      OR coalesce(new.summary, '') IS NOT coalesce(old.summary, '')
+      OR coalesce(new.content_md, '') IS NOT coalesce(old.content_md, '')
+    BEGIN
         INSERT INTO {FTS_TABLE}({FTS_TABLE}, rowid, title, summary, content_md)
         VALUES ('delete', old.id, old.title, old.summary, old.content_md);
         INSERT INTO {FTS_TABLE}(rowid, title, summary, content_md)
@@ -63,7 +82,71 @@ CREATE_TRIGGER_SQL = [
     """,
 ]
 
+# 只在 SQLite 的 sqlite_master 里查/改触发器定义（用于下面的「自愈」判断）
+_UPDATE_TRIGGER_NAME = f"{FTS_TABLE}_au"
+_READ_TRIGGER_SQL = "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = :name"
+
 REBUILD_SQL = f"INSERT INTO {FTS_TABLE}({FTS_TABLE}) VALUES ('rebuild')"
+
+
+def _normalize_sql(sql: str | None) -> str:
+    """把 DDL 归一成可以逐字比较的形式（大小写与空白差异不该算「漂移」）。
+
+    **``IF NOT EXISTS`` 必须剥掉**：SQLite 存进 ``sqlite_master`` 时会去掉它
+    （实测：常量里写 ``CREATE TRIGGER IF NOT EXISTS x``，从库里读回来是
+    ``CREATE TRIGGER x``）。不剥的话比较永远不相等，自愈逻辑会
+    **每次启动都 DROP + CREATE 一次触发器**——虽然幂等、不报错，
+    但那是不必要且每次都要写 schema 的操作。
+    """
+    normalized = " ".join((sql or "").split()).lower()
+    return normalized.replace("if not exists ", "")
+
+
+async def _refresh_update_trigger(session: AsyncSession) -> bool:
+    """确保 ``articles_fts_au`` 的定义与当前代码一致；不一致就重建。
+
+    为什么需要它（这是一个**静默失效**的坑）：三条触发器都是
+    ``CREATE TRIGGER IF NOT EXISTS``，所以**改触发器体不会影响已经建过它的库**——
+    老库里会一直留着旧定义，新库才拿到新定义，两种库行为不同且没有任何报错。
+    守卫（WHEN）正是这种改动：升级前建的库不会获得它，
+    「读完一篇文章就重新分词整篇正文」的写放大就一直在。
+
+    只重建这一条（有守卫风险的那条）；``ai``/``ad`` 的定义没变，不动它。
+
+    Returns:
+        是否发生了重建。
+    """
+    result = await session.execute(text(_READ_TRIGGER_SQL), {"name": _UPDATE_TRIGGER_NAME})
+    row = result.first()
+    expected = next(s for s in CREATE_TRIGGER_SQL if _UPDATE_TRIGGER_NAME in s)
+    if row is not None and _normalize_sql(row[0]) == _normalize_sql(expected):
+        return False
+
+    if row is not None:
+        await session.execute(text(f"DROP TRIGGER IF EXISTS {_UPDATE_TRIGGER_NAME}"))
+    await session.execute(text(expected))
+    return True
+
+
+async def ensure_fulltext_index(session: AsyncSession) -> bool:
+    """幂等地建好 FTS 索引与触发器，并回填一次。
+
+    Returns:
+        是否成功（非 SQLite 或建表失败时返回 False，调用方照常启动）。
+    """
+    if session.bind is None or session.bind.dialect.name != "sqlite":
+        return False
+
+    await session.execute(text(CREATE_FTS_SQL))
+    for statement in CREATE_TRIGGER_SQL:
+        await session.execute(text(statement))
+    # 自愈：老库里的 articles_fts_au 可能还是「没有 WHEN 守卫」的旧版本，
+    # 而 IF NOT EXISTS 不会更新它（见 _refresh_update_trigger 的说明）。
+    await _refresh_update_trigger(session)
+    # rebuild 是幂等的：它按 articles 的当前内容重建整份索引。
+    # 每次启动都跑一次，顺带修复「触发器曾经缺失导致索引与正文脱节」的情况。
+    await session.execute(text(REBUILD_SQL))
+    return True
 
 
 async def fulltext_available(session: AsyncSession) -> bool:
@@ -79,24 +162,6 @@ async def fulltext_available(session: AsyncSession) -> bool:
         {"name": FTS_TABLE},
     )
     return result.first() is not None
-
-
-async def ensure_fulltext_index(session: AsyncSession) -> bool:
-    """幂等地建好 FTS 索引与触发器，并回填一次。
-
-    Returns:
-        是否成功（非 SQLite 或建表失败时返回 False，调用方照常启动）。
-    """
-    if session.bind is None or session.bind.dialect.name != "sqlite":
-        return False
-
-    await session.execute(text(CREATE_FTS_SQL))
-    for statement in CREATE_TRIGGER_SQL:
-        await session.execute(text(statement))
-    # rebuild 是幂等的：它按 articles 的当前内容重建整份索引。
-    # 每次启动都跑一次，顺带修复「触发器曾经缺失导致索引与正文脱节」的情况。
-    await session.execute(text(REBUILD_SQL))
-    return True
 
 
 # ---------------------------------------------------------------------------
