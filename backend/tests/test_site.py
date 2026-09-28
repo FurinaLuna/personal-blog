@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.factories import make_article_payload
+from tests.factories import ADMIN_PASSWORD, make_article_payload
 
 
 class TestHealth:
@@ -74,6 +74,48 @@ class TestProfile:
         assert response.status_code == 200
         assert response.json()["comment_need_approval"] is False
         assert response.json()["allow_guest_comment"] is False
+
+    async def test_login_entry_switch_defaults_to_on(self, client: AsyncClient) -> None:
+        """默认显示登录入口：升级后的前台行为与升级前一致（迁移给 server_default=TRUE）。"""
+        response = await client.get("/api/v1/site/profile")
+        assert response.status_code == 200
+        assert response.json()["show_login_entry"] is True
+
+    async def test_login_entry_switch_can_be_turned_off(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """关掉之后**公开读接口**（前台真正读的那个）也必须返回 False。"""
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"show_login_entry": False},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["show_login_entry"] is False
+        # 回读一次：前台读的是公开 GET，只信写接口的返回值等于没验证落库
+        assert (await client.get("/api/v1/site/profile")).json()["show_login_entry"] is False
+
+    async def test_login_entry_switch_does_not_disable_login(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """关掉入口 ≠ 关闭登录：这是「入口开关」与「权限开关」的分界线。
+
+        隐藏入口之后，站长自己还得进得去（直接访问 /login）。如果哪天有人把
+        `show_login_entry` 接到登录接口或路由守卫上，站长会被自己锁在门外 ——
+        这条用例让那种改动立刻变红。前台不显示入口是**渲染层**的事。
+        """
+        await client.patch(
+            "/api/v1/site/profile",
+            json={"show_login_entry": False},
+            headers=admin_headers,
+        )
+
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": ADMIN_PASSWORD},
+        )
+        assert response.status_code == 200
+        assert response.json()["access_token"]
 
     async def test_partial_update_keeps_other_fields(
         self, client: AsyncClient, admin_headers: dict[str, str]
@@ -241,16 +283,19 @@ class TestProfileUrlSafety:
         assert response.status_code == 200
         assert response.json()["avatar_url"] is None
 
+    @pytest.mark.parametrize(
+        "field", ["allow_guest_comment", "comment_need_approval", "show_login_entry"]
+    )
     async def test_boolean_null_is_treated_as_noop(
-        self, client: AsyncClient, admin_headers: dict[str, str]
+        self, client: AsyncClient, admin_headers: dict[str, str], field: str
     ) -> None:
         """布尔开关显式传 null 视为「不修改」——布尔列非空，写 None 只会换来 500。"""
-        before = (await client.get("/api/v1/site/profile")).json()["allow_guest_comment"]
+        before = (await client.get("/api/v1/site/profile")).json()[field]
         response = await client.patch(
-            "/api/v1/site/profile", json={"allow_guest_comment": None}, headers=admin_headers
+            "/api/v1/site/profile", json={field: None}, headers=admin_headers
         )
         assert response.status_code == 200
-        assert response.json()["allow_guest_comment"] == before
+        assert response.json()[field] == before
 
     async def test_author_cannot_update_profile(
         self, client: AsyncClient, author_headers: dict[str, str]

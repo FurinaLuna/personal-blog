@@ -93,8 +93,13 @@ const brandName = computed(() => site.title)
         >
           后台
         </RouterLink>
+        <!--
+          「登录」入口受后台开关控制（站点设置 → 前台入口）。
+          已登录时的「后台」入口**不受开关影响**：关掉入口是为了访客看不见，
+          站长自己反而更需要它。
+        -->
         <RouterLink
-          v-else
+          v-else-if="site.showLoginEntry"
           to="/login"
           class="hidden rounded-lg px-3 py-2 text-sm text-ink-soft transition-colors hover:bg-surface-muted hover:text-ink sm:block"
         >
@@ -143,11 +148,12 @@ const brandName = computed(() => site.title)
         >
           {{ item.label }}
         </RouterLink>
-        <RouterLink
-          :to="auth.isAuthenticated ? '/admin' : '/login'"
-          class="nav-link block py-2.5"
-        >
-          {{ auth.isAuthenticated ? '进入后台' : '登录' }}
+        <!-- 移动端抽屉与桌面同一口径：登录入口受开关控制，已登录的「进入后台」不受影响 -->
+        <RouterLink v-if="auth.isAuthenticated" to="/admin" class="nav-link block py-2.5">
+          进入后台
+        </RouterLink>
+        <RouterLink v-else-if="site.showLoginEntry" to="/login" class="nav-link block py-2.5">
+          登录
         </RouterLink>
       </nav>
     </Transition>

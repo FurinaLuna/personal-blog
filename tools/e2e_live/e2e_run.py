@@ -767,6 +767,15 @@ def c_r08():
     db_name = scalar("SELECT owner_name FROM site_profile WHERE id=1")
     check(r.json().get("owner_name") == db_name,
           f"站点档案不一致：{r.json().get('owner_name')} vs {db_name}")
+    # 前台顶栏按这个字段决定要不要渲染「登录」入口。字段缺失时前端拿到 undefined
+    # —— 恰好等同于「不显示」，会把默认开着的入口静悄悄关掉，所以这里同时钉住
+    # 「字段存在且是布尔值」与「值与库内一致」。
+    entry = r.json().get("show_login_entry")
+    db_entry = scalar("SELECT show_login_entry FROM site_profile WHERE id=1")
+    check(isinstance(entry, bool),
+          f"站点档案缺少 show_login_entry 或类型不对（前台登录入口开关）：{entry!r}")
+    check(entry == truthy(db_entry),
+          f"登录入口开关与库内不一致：接口 {entry!r} / 库内 {db_entry!r}")
 
 
 @case("R09", "访客读取", "P0",

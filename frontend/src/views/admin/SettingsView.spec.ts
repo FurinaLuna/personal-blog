@@ -16,6 +16,7 @@
  * 4. **防重复提交**：保存中顶部与底部两个按钮共用同一 action 计数，一起禁用；
  * 5. **本地边界**：社交链接最多 8 条，第 9 次只提示、不加行；
  * 6. **Markdown 正文原样提交**：只有空串转 null，不做 trim（留白由作者掌握）。
+ * 7. **前台入口开关**（`show_login_entry`）：按勾选状态提交，并按服务端值回填。
  *
  * 另外钉住两条**现状缺陷**（本轮只加测试、不改产品代码，见文末「加载失败」一节）：
  * 档案加载失败时表单是空白的且没有任何失败提示，而这份空白表单可以直接保存 ——
@@ -54,6 +55,7 @@ const PROFILE: SiteProfile = {
   skills: ['Python', 'FastAPI', 'Vue'],
   comment_need_approval: true,
   allow_guest_comment: false,
+  show_login_entry: true,
   updated_at: '2026-01-01T00:00:00Z',
 }
 
@@ -167,9 +169,27 @@ async function save(wrapper: VueWrapper): Promise<void> {
   await flushPromises()
 }
 
-/** 两个评论策略开关：模板里顺序是「需要审核」「允许游客」。 */
+/** 复选框。模板顺序：两个评论策略开关（「需要审核」「允许游客」）+「前台显示登录入口」。 */
 function checkboxes(wrapper: VueWrapper): DOMWrapper<Element>[] {
   return wrapper.findAll('input[type="checkbox"]')
+}
+
+/**
+ * 按标签文字取复选框。
+ *
+ * 不能复用 `fieldControl`：那个辅助函数比的是 label 里**第一个** span 的文本，
+ * 而开关类字段的 label 是「标题 span + 说明 span」两层结构 —— 第一个 span 的
+ * `text()` 会把说明文字一起拼进来，永远比不中标题。这里改成"某个 span 的文本
+ * 恰好等于标签"，两层结构也能命中。
+ */
+function switchByLabel(wrapper: VueWrapper, label: string): DOMWrapper<Element> {
+  const labelEl = wrapper
+    .findAll('label')
+    .find((item) => item.findAll('span').some((span) => span.text() === label))
+  if (!labelEl) throw new Error(`找不到标签为「${label}」的开关`)
+  const control = labelEl.find('input[type="checkbox"]')
+  if (!control.exists()) throw new Error(`标签「${label}」下没有复选框`)
+  return control
 }
 
 function isChecked(wrapper: VueWrapper, index: number): boolean {
@@ -298,6 +318,7 @@ describe('SettingsView · 保存的 payload 口径', () => {
       ],
       comment_need_approval: true,
       allow_guest_comment: false,
+      show_login_entry: true,
       bio_md: '第一段简介',
       about_md: '## 关于我',
     })
@@ -348,6 +369,29 @@ describe('SettingsView · 保存的 payload 口径', () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ comment_need_approval: false, allow_guest_comment: true }),
     )
+  })
+
+  it('「前台显示登录入口」开关关掉后按 false 提交（前台不再渲染入口）', async () => {
+    const update = vi.spyOn(siteApi, 'updateProfile').mockResolvedValue({
+      ...PROFILE,
+      show_login_entry: false,
+    })
+
+    const { wrapper } = await mountSettings()
+    // 按标签文字定位而不是下标：以后再有开关插进来，这条不会因为顺序变化而假绿
+    await switchByLabel(wrapper, '前台顶栏显示「登录」入口').setValue(false)
+    await save(wrapper)
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ show_login_entry: false }))
+  })
+
+  it('回填：服务端已把登录入口关掉时，这个复选框是未勾选状态', async () => {
+    vi.spyOn(siteApi, 'profile').mockResolvedValue({ ...PROFILE, show_login_entry: false })
+
+    const { wrapper } = await mountSettings()
+
+    const box = switchByLabel(wrapper, '前台顶栏显示「登录」入口').element as HTMLInputElement
+    expect(box.checked).toBe(false)
   })
 
   it('名称为空或地址为空的半成品链接在保存时被丢弃，地址两边空白会被 trim', async () => {

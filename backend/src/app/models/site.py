@@ -34,6 +34,12 @@ class SiteProfile(Base, TimestampMixin):
     # 站点策略开关
     comment_need_approval: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_guest_comment: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 前台顶栏是否显示「登录」入口。
+    #
+    # 它是**入口开关，不是权限开关**：关掉只是前台不渲染那个链接，
+    # `/login` 路由与登录接口照旧可用 —— 那正是站长自己还能进后台的保证。
+    # 想连入口路径一起藏起来，得另做（见 docs/devlog 里的「边界」一节）。
+    show_login_entry: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<SiteProfile owner={self.owner_name!r}>"

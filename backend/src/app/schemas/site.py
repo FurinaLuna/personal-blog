@@ -95,6 +95,7 @@ class SiteProfileRead(BaseModel):
     skills: list[str] | None = None
     comment_need_approval: bool
     allow_guest_comment: bool
+    show_login_entry: bool
     updated_at: datetime
 
 
@@ -111,6 +112,7 @@ class SiteProfileUpdate(BaseModel):
     skills: list[str] | None = None
     comment_need_approval: bool | None = None
     allow_guest_comment: bool | None = None
+    show_login_entry: bool | None = None
 
     @field_validator("avatar_url")
     @classmethod

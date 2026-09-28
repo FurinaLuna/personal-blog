@@ -1413,6 +1413,73 @@ try {
   }
   record('E3 document.title 随路由变化', !titles.includes('★不匹配'), titles.join(' '))
 
+  // E4 前台登录入口开关（site_profile.show_login_entry）。
+  //
+  // 为什么必须放在这里：E 段是**匿名**浏览器状态（B1 登出后 Cookie 已删），
+  // 而「登录」入口只在匿名时渲染 —— 用已经登录的浏览器根本看不到它。
+  // 开关用 API 切（token 是 B1 之后重新取的那枚），因此不额外消耗 /auth/login
+  // 的 5 次/分钟配额（B 段刚登过三次，见上面的注释）。
+  //
+  // 为什么要关 HTTP 缓存：`/api/v1/site/profile` 是公开可缓存接口（max-age=60），
+  // 第一次匿名加载会把它存进浏览器缓存 —— 不关的话第二次加载拿到的还是旧档案，
+  // 表现为"开关明明关了前台还显示"，一条彻头彻尾的假失败。
+  const loginEntryCount = () =>
+    evalJs(`document.querySelectorAll('header a[href="/login"]').length`)
+
+  const patchLoginEntry = async (visible) => {
+    let resp = await api('/api/v1/site/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ show_login_entry: visible }),
+    })
+    if (resp.status === 401) {
+      // 令牌在这之前被吊销了（例如又跑过一次登出）：换一枚再试，
+      // 且**只在需要时**登录，避免常态下多消耗一次登录配额
+      await relogin()
+      resp = await api('/api/v1/site/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ show_login_entry: visible }),
+      })
+    }
+    return resp
+  }
+
+  await send('Network.setCacheDisabled', { cacheDisabled: true }).catch(() => {})
+  // 必须先切回匿名：B4「非站长访问后台被弹回首页」把浏览器留在了**已登录**状态，
+  // 而已登录时顶栏渲染的是「后台」—— 两个开关状态下都数不到「登录」入口，
+  // 用例会以"关 0 个 / 开 0 个"的形状失败（本轮第一版正是如此）。
+  // 后面只剩截图与收尾，清理走的是 API + relogin，不依赖浏览器会话。
+  await send('Network.clearBrowserCookies').catch(() => {})
+  const e4Before = (await api('/api/v1/site/profile')).body?.show_login_entry
+  let e4Off
+  let e4On
+  let e4Hidden = -1
+  let e4Shown = -1
+  try {
+    e4Off = await patchLoginEntry(false)
+    await goto('/', 2000)
+    e4Hidden = await loginEntryCount()
+
+    e4On = await patchLoginEntry(true)
+    await goto('/', 2000)
+    e4Shown = await loginEntryCount()
+  } finally {
+    // 无论断言成败都要把开关还原：留在"关"的状态会让后面的用例与手工复核
+    // 都看到与站点默认不一样的界面
+    if (e4On?.body?.show_login_entry !== true) await patchLoginEntry(true)
+    await send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {})
+  }
+  record(
+    'E4 后台关掉登录入口开关后前台真的不再显示（再打开即恢复）',
+    e4Off?.status === 200 &&
+      e4Off?.body?.show_login_entry === false &&
+      e4Hidden === 0 &&
+      e4On?.status === 200 &&
+      e4On?.body?.show_login_entry === true &&
+      e4Shown === 1,
+    `关：HTTP ${e4Off?.status} 字段=${e4Off?.body?.show_login_entry} 渲染 ${e4Hidden} 个；` +
+      `开：HTTP ${e4On?.status} 字段=${e4On?.body?.show_login_entry} 渲染 ${e4Shown} 个（初始 ${e4Before}）`,
+  )
+
   await shot('99-final')
 
   // ================================================================ 收尾：回收 + 基线核对

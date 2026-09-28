@@ -19,6 +19,8 @@ export interface SiteProfile {
   skills: string[] | null
   comment_need_approval: boolean
   allow_guest_comment: boolean
+  /** 前台顶栏是否显示「登录」入口。只是入口开关，`/login` 路由始终可用。 */
+  show_login_entry: boolean
   updated_at: string
 }
 

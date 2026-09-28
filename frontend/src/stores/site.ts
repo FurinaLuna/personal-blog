@@ -19,6 +19,9 @@ const FALLBACK: SiteProfile = {
   skills: null,
   comment_need_approval: true,
   allow_guest_comment: true,
+  // 档案取不到时**默认显示**登录入口：降级路径要和"站点默认行为"一致，
+  // 否则一次接口抖动就会让站长在前台找不到登录入口（见 store 的 load 注释）。
+  show_login_entry: true,
   updated_at: '',
 }
 
@@ -40,6 +43,14 @@ export const useSiteStore = defineStore('site', () => {
   const headline = computed(() => profile.value.headline ?? '')
   const socialLinks = computed(() => profile.value.social_links ?? [])
   const skills = computed(() => profile.value.skills ?? [])
+  /**
+   * 前台顶栏要不要显示「登录」入口。
+   *
+   * 放在 store 而不是组件里：顶栏有**两个**渲染位（桌面链接 + 移动端抽屉），
+   * 两处各写一遍判断迟早会漂成不一致。它只管入口，登录接口与 `/login` 路由
+   * 始终可用 —— 那不是遗漏，而是「站长自己还得进得去」的必要条件。
+   */
+  const showLoginEntry = computed(() => profile.value.show_login_entry)
 
   /**
    * 拉取站点档案。
@@ -104,6 +115,7 @@ export const useSiteStore = defineStore('site', () => {
     headline,
     socialLinks,
     skills,
+    showLoginEntry,
     stats,
     statsError,
     statsLoading,

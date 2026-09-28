@@ -24,6 +24,7 @@ const form = ref({
   social_links: [] as SocialLink[],
   comment_need_approval: true,
   allow_guest_comment: true,
+  show_login_entry: true,
 })
 
 /** 用站点档案初始化表单。store 是异步加载的，所以这里用 watch 而不是 onMounted 一次赋值。 */
@@ -43,6 +44,7 @@ function fillFromStore(): void {
     social_links: (profile.social_links ?? []).map((item) => ({ ...item })),
     comment_need_approval: profile.comment_need_approval,
     allow_guest_comment: profile.allow_guest_comment,
+    show_login_entry: profile.show_login_entry,
   }
 }
 
@@ -97,6 +99,7 @@ async function save(): Promise<void> {
           .filter((item) => item.label && item.url),
         comment_need_approval: form.value.comment_need_approval,
         allow_guest_comment: form.value.allow_guest_comment,
+        show_login_entry: form.value.show_login_entry,
       }),
     {
       success: '站点设置已保存',
@@ -224,6 +227,21 @@ onMounted(() => {
           <span class="text-ink">允许游客评论</span>
           <span class="mt-0.5 block text-xs text-ink-faint">
             关闭后只有登录用户才能发表评论。
+          </span>
+        </span>
+      </label>
+    </section>
+
+    <section class="card p-5">
+      <h3 class="mb-3 text-sm font-medium text-ink">前台入口</h3>
+      <label class="flex items-start gap-3 text-sm">
+        <input v-model="form.show_login_entry" type="checkbox" class="mt-1 rounded border-border" />
+        <span>
+          <span class="text-ink">前台顶栏显示「登录」入口</span>
+          <span class="mt-0.5 block text-xs text-ink-faint">
+            关闭后访客在前台看不到登录入口（桌面顶栏与移动端菜单都不再显示）。
+            这只是入口开关，不是禁用登录：登录页仍可直接访问 /login 进入，站长自己
+            要用，建议收藏该地址。已登录时顶栏的「后台」入口始终保留。
           </span>
         </span>
       </label>

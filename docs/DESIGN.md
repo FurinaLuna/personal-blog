@@ -475,7 +475,11 @@ Store (stores/)          跨页面共享的状态：登录态 / 主题 / 站点�
 
 #### site_profile（单行表）
 
-`owner_name`、`headline`、`avatar_url`、`bio_md`、`about_md`、`email`、`location`、`icp`、`social_links`(JSON)、`skills`(JSON)、`comment_need_approval`(bool)、`allow_guest_comment`(bool)。
+`owner_name`、`headline`、`avatar_url`、`bio_md`、`about_md`、`email`、`location`、`icp`、`social_links`(JSON)、`skills`(JSON)、`comment_need_approval`(bool)、`allow_guest_comment`(bool)、`show_login_entry`(bool)。
+
+> `show_login_entry` 是**入口开关而不是权限开关**：它只决定前台顶栏渲不渲染「登录」链接，
+> `/login` 路由与 `/auth/login` 接口始终可用 —— 那正是站长自己还能进得去的保证
+> （已有回归用例钉住这条分界线）。已登录时的「后台」入口不受它影响。
 
 **为什么用单行表而不是 key-value 配置表？** 这些字段有明确的结构（数组、布尔），KV 表存进去就得手动序列化/反序列化，还会丢掉类型校验。单行表的查询也更简单（`WHERE id = 1`）。
 
