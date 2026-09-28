@@ -105,3 +105,7 @@ style-baseline*.json
 # 保留的是 e2e_run.py / probe.py 与人工整理的两份最终报告。
 tools/e2e_live/reports/e2e-report-*.md
 tools/e2e_live/reports/e2e-results-*.json
+# e2e_run.py 自建的临时工作目录（内含 e2e.db* 与 storage/ 上传物）。
+# 它在 Windows 上偶尔删不干净（uvicorn 子进程的文件句柄尚未释放），
+# 于是残留在仓库根目录 —— 内容包含测试数据库与上传文件，绝不能入库。
+blog-e2e-*/
