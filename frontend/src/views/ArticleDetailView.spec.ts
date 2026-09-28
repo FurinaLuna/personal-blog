@@ -175,6 +175,10 @@ beforeEach(() => {
   useToast().items.value = []
   vi.spyOn(articleApi, 'detail').mockResolvedValue(makeArticle())
   vi.spyOn(articleApi, 'related').mockResolvedValue([])
+  // 阅读计数是详情渲染后的一次独立调用（见 countView 的说明）。这里必须桩掉：
+  // 不桩的话每条用例都会真的发一次请求（adapter 未替换时抛错，被静默吞掉），
+  // 既污染"没发意外请求"这类断言，也让控制台满是噪音。
+  vi.spyOn(articleApi, 'view').mockResolvedValue({ view_count: 12 })
   vi.spyOn(commentApi, 'listForArticle').mockResolvedValue([])
   // jsdom 没有实现这两个：不桩掉的话每条用例都会往控制台喷 "Not implemented"
   vi.stubGlobal('scrollTo', scrollToMock)
@@ -287,6 +291,69 @@ describe('ArticleDetailView · 加载与错误态', () => {
 
     expect(wrapper.find('article script').exists()).toBe(false)
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined()
+  })
+})
+
+describe('ArticleDetailView · 阅读计数', () => {
+  /** 详情里的数字：故意与计数端点返回的不同，用来区分"用了哪个值"。 */
+  async function mountWithDetailCount(detailCount: number, liveCount: number) {
+    vi.spyOn(articleApi, 'detail').mockResolvedValue(makeArticle({ view_count: detailCount }))
+    const view = vi.spyOn(articleApi, 'view').mockResolvedValue({ view_count: liveCount })
+    const mounted = await mountView()
+    // 计数发生在 article.run() 的 .then 里（详情先出来才有 id），
+    // 所以要多让一轮微任务，断言才看得到那次调用
+    await flushPromises()
+    return { ...mounted, view }
+  }
+
+  it('进页面后调计数端点，并用返回的最新值覆盖显示', async () => {
+    const { wrapper, view } = await mountWithDetailCount(3, 4)
+
+    // 计数端点用**文章 id**（不是 slug）：slug 与 id 都能打开同一篇，
+    // 但计数接口只需要 id，用 slug 会多一次解析、也容易和路由参数混
+    expect(view).toHaveBeenCalledWith(makeArticle().id)
+    // 详情里是 3（可能来自 60 秒的共享缓存），计数端点返回 4 —— 显示 4
+    expect(wrapper.text()).toContain('4 次阅读')
+    expect(wrapper.text()).not.toContain('3 次阅读')
+  })
+
+  it('计数失败时静默沿用详情里的数字，不弹错、不白屏', async () => {
+    vi.spyOn(articleApi, 'detail').mockResolvedValue(makeArticle({ view_count: 7 }))
+    vi.spyOn(articleApi, 'view').mockRejectedValue(new ApiError('服务器开小差了', 500, 'internal_error'))
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+
+    const { wrapper } = await mountView()
+
+    expect(wrapper.text()).toContain('7 次阅读')
+    expect(wrapper.text()).toContain('一篇文章') // 标题与正文照常渲染
+    expect(wrapper.text()).toContain('正文内容')
+    expect(lastToastMessage()).toBeUndefined() // 没有错误提示
+    expect(debug).toHaveBeenCalled() // 但留下排查痕迹
+  })
+
+  it('切换文章时不会把上一篇的计数留在这一篇上', async () => {
+    const view = vi
+      .spyOn(articleApi, 'view')
+      .mockResolvedValueOnce({ view_count: 100 })
+      .mockResolvedValueOnce({ view_count: 1 })
+    vi.spyOn(articleApi, 'detail').mockImplementation(async (slug) =>
+      makeArticle({ id: slug === 'second' ? 2 : 1, view_count: 1 }),
+    )
+
+    const router = makeRouter()
+    await router.push('/article/first')
+    await router.isReady()
+    const wrapper = mount(ArticleDetailView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('100 次阅读')
+
+    await router.push('/article/second')
+    await flushPromises()
+
+    // 第二篇是 1；若没重置 liveViewCount，这里会残留上一篇的 100
+    expect(wrapper.text()).toContain('1 次阅读')
+    expect(wrapper.text()).not.toContain('100 次阅读')
+    expect(view).toHaveBeenCalledTimes(2)
   })
 })
 

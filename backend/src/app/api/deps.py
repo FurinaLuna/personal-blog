@@ -190,6 +190,13 @@ def rate_limit(name: str, *, limit: int, window_seconds: int) -> Callable[[Reque
 LOGIN_RATE_LIMIT = Depends(rate_limit("login", limit=5, window_seconds=60))
 COMMENT_RATE_LIMIT = Depends(rate_limit("comment", limit=5, window_seconds=60))
 LIKE_RATE_LIMIT = Depends(rate_limit("like", limit=20, window_seconds=60))
+# 阅读计数：与点赞同为「匿名可写的公开端点」，所以同样靠限流兜底。
+#
+# 配额比点赞宽（60/分）：正常阅读一篇要点进去一次，一分钟六十次远超真人。
+# 但比"完全不限"意义大得多 —— 它是这个端点唯一的门槛（浏览本来就不需要身份）。
+# 注意它不参与任何响应体的缓存判定（详情页已改为纯读），
+# 所以这里被限流不影响页面能否打开，只影响计数准不准。
+VIEW_RATE_LIMIT = Depends(rate_limit("view", limit=60, window_seconds=60))
 # 搜索：读接口里唯一的重查询（三列 ILIKE + 同条件 COUNT，最多三路 BitmapOr）。
 # 30 次/分 远高于真人使用频率（没人一分钟搜 30 次），但足以让脚本化的
 # 全表扫描变成不划算的事。此前的审计结论是"这个端点是可以被廉价放大的攻击面"。

@@ -443,14 +443,100 @@ class TestDetail:
         assert by_slug.json()["id"] == by_id.json()["id"]
         assert by_slug.json()["content_md"] == published_article["content_md"]
 
-    async def test_view_count_increments(
+    async def test_view_count_increments_via_dedicated_endpoint(
         self, client: AsyncClient, published_article: dict[str, object]
     ) -> None:
-        before = published_article["view_count"]
-        after = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()[
-            "view_count"
-        ]
-        assert after == before + 1
+        """阅读计数改由 ``POST /articles/{id}/view`` 承担，返回最新值。
+
+        为什么不再挂在详情 GET 上：详情响应体带每次 +1 的 ``view_count`` 时，
+        基于响应体算的 ETag 必然每次都变，条件请求永远命中不了 304 ——
+        计数与 HTTP 缓存不可兼得（见 ``get_article`` 的说明与
+        ``test_detail_is_cacheable``）。
+        """
+        response = await client.post(f"/api/v1/articles/{published_article['id']}/view")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["view_count"] == published_article["view_count"] + 1
+
+        # 再记一次会继续累加（同一个访客重复打开文章就该算两次阅读）
+        again = await client.post(f"/api/v1/articles/{published_article['id']}/view")
+        assert again.json()["view_count"] == published_article["view_count"] + 2
+
+    async def test_detail_get_does_not_touch_view_count(
+        self, client: AsyncClient, published_article: dict[str, object]
+    ) -> None:
+        """详情 GET 是**纯读**：反复取内容，计数不动。
+
+        这是"详情可缓存"的前提，也是与计数端点分工的边界。
+        """
+        first = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        second = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+
+        assert first["view_count"] == published_article["view_count"]
+        assert second["view_count"] == published_article["view_count"]
+
+    async def test_view_endpoint_rejects_missing_and_draft(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """不存在的文章 404；草稿也不计阅读数（连作者预览都不算）。"""
+        assert (await client.post("/api/v1/articles/999999/view")).status_code == 404
+
+        draft = (
+            await client.post(
+                "/api/v1/articles",
+                json=make_article_payload(status="draft"),
+                headers=author_headers,
+            )
+        ).json()
+        assert (await client.post(f"/api/v1/articles/{draft['id']}/view")).status_code == 404
+
+    async def test_detail_is_cacheable_and_revalidates_to_304(
+        self, client: AsyncClient, published_article: dict[str, object]
+    ) -> None:
+        """**详情页必须真能命中 304**——这是本组改动的最终目的。
+
+        实测过反例：计数留在详情 GET 里时，连续两次请求的 ETag 一定不同、
+        ``If-None-Match`` 一律返回 200（``max-age=60`` 完全没用）。
+
+        现在详情是**纯读**：GET 不再改动任何参与响应体的字段，所以 ETag 在
+        "内容不变"期间是稳定的 —— 这正是缓存成立的定义。计数端点会带来
+        **一次**变化（``view_count`` 从旧值到新值），之后一直稳定；
+        这与真实浏览时序一致（进页面 → 计数 → 之后重复校验）。
+        """
+        url = f"/api/v1/articles/{published_article['slug']}"
+        article_id = published_article["id"]
+
+        # 先走一次计数：真实访问的第一步，让响应体落到"当前值"上
+        counted = await client.post(f"/api/v1/articles/{article_id}/view")
+        assert counted.status_code == 200
+        settled = counted.json()["view_count"]
+
+        first = await client.get(url)
+        assert first.status_code == 200
+        etag = first.headers.get("etag")
+        assert etag, "公开读接口应当带 ETag"
+        assert "max-age" in first.headers.get("cache-control", "")
+        assert first.json()["view_count"] == settled
+
+        # 关键：详情 GET 自己**不会**再改变响应体（真实浏览器里就是重复打开同一页）
+        again = await client.get(url)
+        assert again.content == first.content, "详情 GET 是纯读，响应体必须逐字相同"
+
+        second = await client.get(url, headers={"If-None-Match": etag})
+        assert second.status_code == 304, (
+            f"条件请求未命中 304（实际 {second.status_code}）：详情响应体在变化，"
+            "ETag 永远失效 —— 检查有没有把会自增的字段放回 GET 路径"
+        )
+        assert not second.content, "304 不能带响应体"
+
+        # 再浏览一次：计数确实变了，但那只是一次新的浏览，缓存随后照常重新稳定
+        after_view = await client.post(f"/api/v1/articles/{article_id}/view")
+        assert after_view.json()["view_count"] == settled + 1
+        refreshed = await client.get(url)
+        assert refreshed.json()["view_count"] == settled + 1
+        assert (
+            await client.get(url, headers={"If-None-Match": refreshed.headers["etag"]})
+        ).status_code == 304
 
     async def test_view_does_not_touch_updated_at(
         self, client: AsyncClient, published_article: dict[str, object]
@@ -463,14 +549,17 @@ class TestDetail:
         刚编辑过的；sitemap 的 ``<lastmod>`` 每次访问都变，等于告诉爬虫
         全站天天在改。
         """
-        first = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
-        assert first["view_count"] == published_article["view_count"] + 1
+        before = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
 
-        # 再读几次，updated_at 必须纹丝不动
+        first = await client.post(f"/api/v1/articles/{published_article['id']}/view")
+        assert first.json()["view_count"] == published_article["view_count"] + 1
+
+        # 再记几次，updated_at 必须纹丝不动
         for _ in range(2):
-            later = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
-        assert later["view_count"] > first["view_count"]
-        assert later["updated_at"] == first["updated_at"]
+            await client.post(f"/api/v1/articles/{published_article['id']}/view")
+        later = (await client.get(f"/api/v1/articles/{published_article['slug']}")).json()
+        assert later["view_count"] == published_article["view_count"] + 3
+        assert later["updated_at"] == before["updated_at"]
 
     async def test_like_does_not_touch_updated_at(
         self, client: AsyncClient, published_article: dict[str, object]

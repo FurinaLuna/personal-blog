@@ -17,6 +17,7 @@ from fastapi import APIRouter, Query, Request, status
 from app.api.deps import (
     LIKE_RATE_LIMIT,
     SEARCH_RATE_LIMIT,
+    VIEW_RATE_LIMIT,
     AuthorUser,
     OptionalUser,
     SessionDep,
@@ -130,14 +131,28 @@ async def get_article(
 
     带登录态时可以预览自己的草稿；访客访问草稿会得到 404（而非 403），
     避免暴露「这里存在一篇未发布文章」。
+
+    ## 这是一条**纯读**路径（不再自增浏览计数）
+
+    阅读计数改由 ``POST /articles/{id}/view`` 单独承担，原因是缓存：
+    详情响应体里带 ``view_count`` 且每次请求都 +1，会让
+    ``PublicCacheMiddleware`` 依据响应体算出的 ETag **每次都变**，
+    于是条件请求永远命中不了 304、``max-age=60`` 形同虚设
+    （实测：连续两次详情请求 ETag 不同、``if-none-match`` 一律返回 200）。
+
+    计数与 HTTP 缓存是**不可兼得**的：缓存要求"同一状态下响应体稳定"，
+    而"每次请求 +1 的计数器"本质上就在改变响应体。把计数挪到独立端点后，
+    两边各自成立：详情可缓存，计数照旧每次访问 +1。
+
+    访问日志（``visit_logs``）仍在这里记：它**不影响响应体**，因此不破坏缓存；
+    而且它和"看了一次详情"是同一件事，挪走反而会让语义变模糊。
     """
-    detail = await ArticleQueryService(session).get_detail(slug_or_id, viewer)
-    # 详情 GET 也会写库（已发布文章的浏览计数 + 访问日志）。显式提交与其他
-    # 写路由同口径，不依赖 get_session 的收尾提交，规避写后读旧快照的竞态
-    # （见 db/session.py）。访问记录与 view_count 同门槛：仅已发布文章
+    service = ArticleQueryService(session)
+    detail = await service.get_detail(slug_or_id, viewer, count_view=False)
     if detail.status is ArticleStatus.PUBLISHED:
+        # 显式提交与其他写路由同口径，不依赖 get_session 的收尾提交（见 db/session.py）
         await VisitStatsService(session).record(detail.id, ip=client_ip(request))
-    await session.commit()
+        await session.commit()
     return detail
 
 
@@ -168,6 +183,28 @@ async def like_article(
     count = await ArticleCommandService(session).like(article_id)
     await session.commit()
     return {"like_count": count}
+
+
+@router.post("/{article_id}/view", response_model=dict, summary="记一次阅读")
+async def view_article(
+    article_id: int, session: SessionDep, _: None = VIEW_RATE_LIMIT
+) -> dict[str, int]:
+    """记一次已发布文章的阅读，返回**最新**的阅读数。
+
+    为什么单独一个端点（而不是留在详情 GET 里）：详情响应体带每次 +1 的
+    ``view_count`` 时，基于响应体算的 ETag 必然每次都变，条件请求永远命中不了 304。
+    把"计数"与"取内容"分开，详情就能真正被缓存（见 ``get_article`` 的说明）。
+
+    与点赞同口径：无需登录（浏览本来就不需要身份），因此天然可被脚本刷 ——
+    **限流是它唯一的门槛**。返回最新计数让前端能在进入页面的几毫秒内把
+    详情里那个（可能被缓存了 60 秒的）旧数字刷新成准确值。
+
+    Raises:
+        NotFoundError: 文章不存在或不是已发布状态（草稿不计阅读数）。
+    """
+    count = await ArticleCommandService(session).count_view(article_id)
+    await session.commit()
+    return {"view_count": count}
 
 
 @router.get("/{article_id}/related", response_model=list[ArticleSummary], summary="相关文章")

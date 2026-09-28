@@ -207,6 +207,26 @@ class ArticleCommandService:
         self._assert_can_edit(article, user)
         await self.articles.delete(article)
 
+    async def count_view(self, article_id: int) -> int:
+        """记一次阅读，返回最新阅读数。
+
+        口径与点赞一致但**更宽松**：草稿不可见照旧 404；归档文章**仍可计**阅读
+        （归档文章详情页本来就能打开，把它排除掉会让页面上的数字与访问日志对不上）。
+        这与"``visit_logs`` 只记已发布"的差别是有意的：日志服务趋势聚合，
+        而这里的数字是给读者看的。
+
+        .. important::
+
+           这个方法是**详情页缓存策略的一部分**，不是"顺手把计数挪个地方"：
+           只要详情 GET 也自增计数，响应体就每次都变、ETag 必然每次都变，
+           条件请求永远命中不了 304（见 ``api/v1/articles.get_article`` 的说明）。
+           改动这里前请先读那段注释。
+        """
+        article = await self.articles.get(article_id)
+        if article is None or article.status is ArticleStatus.DRAFT:
+            raise NotFoundError("文章不存在或尚未发布")
+        return await self.articles.increment_view(article)
+
     async def like(self, article_id: int) -> int:
         """点赞。
 

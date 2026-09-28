@@ -141,16 +141,53 @@ async function removeArticle(): Promise<void> {
  */
 let relatedGeneration = 0
 
+/**
+ * 本页最新的阅读数（来自计数端点），null 表示还没拿到。
+ *
+ * 为什么需要它：详情响应体里那个 `view_count` 现在**可能来自 60 秒的共享缓存**，
+ * 所以它只是"进页面时的大致值"。真正的计数由 `POST /articles/{id}/view`
+ * 完成后返回最新值，用它覆盖显示。
+ *
+ * 为什么不直接改 `article.data.value.view_count`：那会污染 `useAsyncData` 持有的
+ * 服务端响应对象，让"响应内容"变成"响应 + 本地写入"的混合体 ——
+ * 之后任何基于它的判断（重渲染、对比）都不可信。
+ * 派生值放独立 ref、显示时优先取它，职责就清楚了。
+ */
+const liveViewCount = ref<number | null>(null)
+
+/** 页面上显示的阅读数：拿到最新值就用它，否则退回详情里的值。 */
+const viewCount = computed(() => liveViewCount.value ?? article.data.value?.view_count ?? 0)
+
+/**
+ * 记一次阅读并刷新计数。
+ *
+ * 失败**完全静默**：计数是锦上添花，页面上的数字少一次更新远好过弹个错误提示。
+ */
+async function countView(id: number): Promise<void> {
+  try {
+    const { view_count: count } = await articleApi.view(id)
+    liveViewCount.value = count
+  } catch (error) {
+    console.debug('[article] 阅读计数失败，页面沿用详情里的数字', error)
+  }
+}
+
 watch(
   () => route.params.slug,
   () => {
     // 切换文章时重置页面级状态，否则上一篇的"已点赞"会串到这一篇
     liked.value = false
     related.value = []
+    // 计数同理：上一篇的数字绝不能留在下一篇上
+    liveViewCount.value = null
     const generation = ++relatedGeneration
     void article.run().then(() => {
       const item = article.data.value
       if (!item || generation !== relatedGeneration) return
+      // 计数请求与相关文章并行，两者互不依赖；迟到响应同样按代次丢弃
+      void countView(item.id).then(() => {
+        if (generation !== relatedGeneration) liveViewCount.value = null
+      })
       // 相关文章是「锦上添花」：失败只记录不打扰，正文阅读不受影响
       articleApi
         .related(item.id)
@@ -234,7 +271,7 @@ watch(
             修订于 {{ updatedLabel }}
           </time>
           <span>{{ formatReadingTime(article.data.value.reading_time) }}</span>
-          <span>{{ formatCount(article.data.value.view_count) }} 次阅读</span>
+          <span>{{ formatCount(viewCount) }} 次阅读</span>
           <span>{{ article.data.value.comment_count }} 条评论</span>
 
           <div v-if="canEdit" class="ml-auto flex items-center gap-2">

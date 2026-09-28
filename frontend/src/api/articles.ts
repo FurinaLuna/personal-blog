@@ -60,6 +60,19 @@ export const articleApi = {
     return api.post<{ like_count: number }>(`/articles/${id}/like`)
   },
 
+  /**
+   * 记一次阅读，返回**最新**阅读数。
+   *
+   * 为什么阅读计数不在详情 GET 里：详情响应体带每次 +1 的 `view_count` 时，
+   * 基于响应体算的 ETag 必然每次都变，条件请求永远命中不了 304、
+   * `max-age=60` 形同虚设。把计数挪到独立端点后，详情可以被真正缓存，
+   * 而计数照旧每次访问 +1。前端在详情渲染后调它，把页面上那个（可能被缓存了
+   * 60 秒的）数字刷新成准确值。
+   */
+  view(id: number) {
+    return api.post<{ view_count: number }>(`/articles/${id}/view`)
+  },
+
   archive() {
     return api.get<ArchiveGroup[]>('/articles/archive')
   },
