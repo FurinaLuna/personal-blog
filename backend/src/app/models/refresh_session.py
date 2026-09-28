@@ -58,6 +58,16 @@ class RefreshSession(Base, TimestampMixin):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True, nullable=False)
     # 被轮换掉的时刻：这一枚已经不能再用了（复用检测的依据）
     rotated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # **第一次**被轮换的时刻，之后不再更新。
+    #
+    # 为什么需要单独一列（这是一个真实的漏洞）：宽容窗口原本按 ``rotated_at``
+    # 计算，而 ``mark_rotated`` 每次调用都会把它重置成"现在"。于是窗口会**滑动**——
+    # 攻击者拿着枚已用过的令牌，只要每 <30 秒重放一次，就能一直换出新令牌对，
+    # 而"复用即吊销整族"的检测永远不触发。
+    #
+    # 用这个不可变的时间戳计算窗口之后，重放次数就不再影响判定：
+    # 窗口从**第一次**轮换算起，滑不动。
+    first_rotated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     # 轮换后的下一枚（排障时能顺着链条看"这枚是从哪来的"）
     replaced_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

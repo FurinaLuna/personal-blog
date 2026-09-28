@@ -45,8 +45,17 @@ class RefreshSessionRepository(BaseRepository[RefreshSession]):
         return await self.create(user_id=user_id, jti_hash=hash_jti(jti), expires_at=expires_at)
 
     async def mark_rotated(self, session_row: RefreshSession, *, replaced_by_jti: str) -> None:
-        """把旧的标记为"已轮换"，并记下它换成了哪一枚（排障用）。"""
-        session_row.rotated_at = datetime.now(UTC)
+        """把旧的标记为"已轮换"，并记下它换成了哪一枚（排障用）。
+
+        ``rotated_at`` 每次都会更新成"最近一次被使用"，**它不能用来判定复用窗口**——
+        那样窗口会随时间滑动（见 ``RefreshSession.first_rotated_at`` 的说明）。
+        判定用的一律是只在第一次写入的 ``first_rotated_at``。
+        """
+        now = datetime.now(UTC)
+        # 只在第一次写入：这枚令牌"最早被轮换"的时刻是不可变的
+        if session_row.first_rotated_at is None:
+            session_row.first_rotated_at = now
+        session_row.rotated_at = now
         session_row.replaced_by = hash_jti(replaced_by_jti)
         await self.session.flush()
 

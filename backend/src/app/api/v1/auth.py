@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Form, Request, Response, status
+from fastapi import APIRouter, Depends, Form, Request, Response, status
 
 from app.api.cookies import (
     assert_same_origin,
@@ -16,7 +16,7 @@ from app.api.cookies import (
     read_refresh_token,
     set_refresh_cookie,
 )
-from app.api.deps import LOGIN_RATE_LIMIT, AdminUser, CurrentUser, SessionDep
+from app.api.deps import LOGIN_RATE_LIMIT, AdminUser, CurrentUser, SessionDep, rate_limit
 from app.schemas.common import Message
 from app.schemas.user import (
     LoginRequest,
@@ -71,6 +71,19 @@ async def refresh(
     session: SessionDep,
     request: Request,
     response: Response,
+    # 限流：**这是唯一一个原先没有限流的 auth 端点**（登录/token 都有）。
+    #
+    # 需要它的理由不是"防爆破密码"（这枚令牌本身就是凭证），而是两条：
+    # 1. 每次刷新都会 INSERT 一行 refresh_sessions，而清理只在启动时做
+    #    （见 main._prune_refresh_sessions）——不限流的话，一个持有有效令牌的
+    #    客户端可以按请求速率把这张表撑大；
+    # 2. 复用判定是"可用性/安全性"的边界，给它一个成本上限，能让
+    #    "卡着宽容窗口反复重放"这类尝试变得不划算（配合不可变的
+    #    first_rotated_at，见 AuthService.refresh 的说明）。
+    #
+    # 30 次/分 远高于真实浏览器的需要：单标签页靠前端的单飞锁最多每分钟几次，
+    # 多标签页同时刷新也是几秒内一次。正常用户不可能触发。
+    _: None = Depends(rate_limit("refresh", limit=30, window_seconds=60)),
     # body 必须可省略：浏览器手里没有 refresh token（它在 httpOnly Cookie 里），
     # 让它为了满足框架而发一个空 ``{}`` 是纯粹的负担。而且 FastAPI 对
     # Pydantic model 类 body 一律按必填处理（哪怕模型字段全可选），

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 
@@ -23,6 +24,7 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.models import RefreshSession
 from app.repositories.refresh_session_repository import hash_jti
+from app.services import auth_service
 from app.services.auth_service import REFRESH_REUSE_GRACE_SECONDS, AuthService
 from tests.conftest import refresh_cookie_of
 from tests.factories import ADMIN_PASSWORD
@@ -37,14 +39,21 @@ async def _sessions() -> list[RefreshSession]:
 
 
 async def _set_rotated_at(jti: str, *, seconds_ago: float) -> None:
-    """把某条会话的 rotated_at 改到 N 秒前（用来跨过复用宽容窗口）。"""
+    """把某条会话的轮换时刻改到 N 秒前（用来跨过复用宽容窗口）。
+
+    **必须同时改 ``first_rotated_at``**：宽容窗口的判定锚点是「第一次被轮换」的
+    时刻（``first_rotated_at``，不可变），不是最近一次被用的 ``rotated_at``。
+    只改后者的话，这些用例会变成"看起来在测窗口、实际窗口没动"的假测试 ——
+    而窗口能否滑动恰恰是要守住的那条性质。
+    """
     from app.db.session import async_session_factory
 
+    moment = datetime.now(UTC) - timedelta(seconds=seconds_ago)
     async with async_session_factory() as session:
         await session.execute(
             update(RefreshSession)
             .where(RefreshSession.jti_hash == hash_jti(jti))
-            .values(rotated_at=datetime.now(UTC) - timedelta(seconds=seconds_ago))
+            .values(rotated_at=moment, first_rotated_at=moment)
         )
         await session.commit()
 
@@ -53,6 +62,17 @@ def _jti_of(token: str) -> str:
     from app.utils.security import decode_token
 
     return decode_token(token, expected_type="refresh").jti
+
+
+async def _current_first_rotated_at(jti: str) -> datetime | None:
+    """读某条会话的 ``first_rotated_at``（复用窗口的判定锚点）。"""
+    from app.db.session import async_session_factory
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(RefreshSession.first_rotated_at).where(RefreshSession.jti_hash == hash_jti(jti))
+        )
+        return result.scalar_one_or_none()
 
 
 async def _login(client: AsyncClient) -> tuple[dict[str, str], str]:
@@ -202,6 +222,60 @@ class TestReuseDetection:
 
         rows = await _sessions()
         assert all(row.revoked_at is None for row in rows), "窗口内不该触发整族吊销"
+
+    async def test_reuse_window_does_not_slide_under_repeated_replay(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**宽容窗口不能滑动**——本条用例存在的全部理由。
+
+        原实现按 ``rotated_at`` 算窗口，而 ``mark_rotated`` 每次都会把它重置成"现在"，
+        于是窗口跟着走：攻击者拿枚已用过的令牌，只要每 <窗口秒数 重放一次，
+        就永远落在窗口内 ⇒ 无限换出新令牌对，而"复用即吊销整族"永不触发。
+
+        ## 判别点必须落在"反复重放"上（第一版写错在这里）
+
+        第一版是"容忍一次重放 → 睡过窗口 → 再重放一次"，结果**有漏洞的实现也能通过**：
+        第二次重放的年龄是按 `rotated_at`（上一次重放时刻）算的，睡 1.2 秒同样超窗。
+        单次重放不构成攻击，因此测不出滑动。
+
+        真正的攻击形状是**持续重放**：每次重放都把窗口推后，于是永远不超窗。
+        所以这里 monkeypatch 出两个时间尺度（都远小于真实的 30 秒，跑得快）：
+
+        - 窗口 = 0.15 秒，重放间隔 0.08 秒（**比窗口小**，模拟"卡着窗口重放"）；
+        - 累计约 0.3 秒，**大于**窗口 —— 从"第一次轮换"算早已超窗。
+
+        于是判定变得干净：
+        - 窗口不滑动（修好的实现）：锚点第一次轮换后就固定 ⇒ 很快超窗 ⇒ 出现 401；
+        - 窗口会滑动（有漏洞的实现）：每次间隔都小于窗口 ⇒ 一路 200，永不吊销。
+
+        间隔必须小于窗口，否则"最近一次使用"的年龄也会超窗，两种实现都会拒绝，
+        用例就失去了判别力（这是第一版失败的第二个原因）。
+        """
+        monkeypatch.setattr(auth_service, "REFRESH_REUSE_GRACE_SECONDS", 0.15)
+
+        _, first = await _login(client)
+        await _refresh(client, first)
+
+        # 先容忍一次（多标签页场景），窗口起点 = 0.1 秒前（仍在 0.15 秒内）
+        await _set_rotated_at(_jti_of(first), seconds_ago=0.1)
+        assert (await _replay(client, first)).status_code == 200, "窗口内的重放应当被容忍"
+
+        # 卡着窗口持续重放：间隔 0.08 秒 < 窗口 0.15 秒，
+        # 但**从第一次轮换算**累计已远超窗口。有漏洞的实现每次都把锚点推后，
+        # 于是每次都在窗口内 —— 无限续期。
+        statuses: list[int] = []
+        for _ in range(4):
+            await asyncio.sleep(0.08)
+            statuses.append((await _replay(client, first)).status_code)
+
+        assert 401 in statuses, (
+            f"持续重放从未被拒绝（状态码 {statuses}）——说明宽容窗口在滑动："
+            "每次被容忍的重放都把窗口起点推到了当时，攻击者据此可以无限续期，"
+            "而「复用即吊销整个会话族」永不触发。"
+        )
+
+        rows = await _sessions()
+        assert all(row.revoked_at is not None for row in rows), "判定为复用后应当整族被吊销"
 
     async def test_unknown_token_is_rejected(self, client: AsyncClient) -> None:
         """库里没有对应行 ⇒ 拒绝。

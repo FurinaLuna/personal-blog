@@ -148,7 +148,14 @@ class AuthService:
             # 这枚已经用过了。可能是盗用，也可能是**两个标签页同时刷新**
             # （前端的单飞锁只在单个页面内生效，跨标签页无效）。
             # 用时间窗区分：窗口内当作"再来一次"放行，窗口外判定为复用。
-            age = (datetime.now(UTC) - record.rotated_at).total_seconds()
+            #
+            # **窗口必须从「第一次轮换」算起，不能用 record.rotated_at** ——
+            # 后者每次 tolerant 复用都会经 mark_rotated 重置成"现在"，
+            # 于是窗口会滑动：攻击者每 <REFRESH_REUSE_GRACE_SECONDS 秒重放一次，
+            # 就能无限换出新令牌，而"复用即吊销整族"的检测永不触发。
+            # first_rotated_at 只在第一次写入（见仓储的 mark_rotated），滑不动。
+            anchor = record.first_rotated_at or record.rotated_at
+            age = (datetime.now(UTC) - anchor).total_seconds()
             if age > REFRESH_REUSE_GRACE_SECONDS:
                 revoked = await self.sessions.revoke_user_sessions(user.id)
                 await self.session.commit()
@@ -157,7 +164,11 @@ class AuthService:
                     extra={
                         "extra_fields": {
                             "user_id": user.id,
+                            # 从第一次轮换算起的年龄（判定依据），以及最近一次被用的时间
                             "age_seconds": round(age, 1),
+                            "since_last_use_seconds": round(
+                                (datetime.now(UTC) - record.rotated_at).total_seconds(), 1
+                            ),
                             "revoked_sessions": revoked,
                         }
                     },

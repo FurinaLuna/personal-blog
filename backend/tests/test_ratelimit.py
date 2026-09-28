@@ -50,6 +50,51 @@ class TestLoginRateLimit:
         assert blocked.json()["detail"] == "操作过于频繁，请稍后再试"
 
 
+class TestRefreshRateLimit:
+    """``/auth/refresh`` 此前是**唯一一个没有限流的 auth 端点**（登录 / token 都有）。
+
+    需要它的理由不是防密码爆破（那枚令牌本身就是凭证），而是：
+    每次刷新都会 INSERT 一行 ``refresh_sessions``，而清理只在启动时做；
+    不限流的话，一个持有有效令牌的客户端可以按请求速率把那张表撑大。
+    """
+
+    async def test_refresh_is_rate_limited(self, client: AsyncClient) -> None:
+        """配额 30/分钟：第 31 次开始 429。
+
+        令牌本身无效也没关系——**限流依赖在业务逻辑之前执行**，
+        这正是我们想验证的顺序（被挡的请求不该先做一次解密/查库）。
+        """
+        payload = {"refresh_token": "definitely-not-a-valid-token"}
+
+        for _ in range(30):
+            response = await client.post("/api/v1/auth/refresh", json=payload)
+            assert response.status_code == 401, response.text
+
+        blocked = await client.post("/api/v1/auth/refresh", json=payload)
+        assert blocked.status_code == 429
+        assert blocked.json()["code"] == "rate_limited"
+        assert int(blocked.headers["Retry-After"]) >= 1
+
+    async def test_refresh_has_its_own_bucket(self, client: AsyncClient) -> None:
+        """刷新与登录的配额互不影响：把刷新刷满，不该连带把登录也封掉。
+
+        规则名参与限流 key 的构造（见 api/deps.py 的 rate_limit），
+        这条用例守住"每个入口一个桶"这个约定。
+        """
+        for _ in range(31):
+            await client.post("/api/v1/auth/refresh", json={"refresh_token": "bad"})
+
+        # 刷新的桶已满
+        assert (
+            await client.post("/api/v1/auth/refresh", json={"refresh_token": "bad"})
+        ).status_code == 429
+        # 登录的桶不受影响（这里断言"不是 429"即可，401 才是"正常走到业务逻辑"）
+        login = await client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": "wrong"}
+        )
+        assert login.status_code == 401
+
+
 class TestRateLimitIsolation:
     async def test_different_headers_share_bucket_without_trust(self, client: AsyncClient) -> None:
         """默认不信任 XFF：换 header 不能绕过限流。"""
