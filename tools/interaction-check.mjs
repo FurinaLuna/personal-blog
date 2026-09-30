@@ -446,7 +446,7 @@ try {
       `条目 ${emptySubmit.before} → ${emptySubmit.listCount}`,
     )
 
-  // 正常提交 → 成功提示 + 列表刷新
+  // 正常提交 → 成功提示（+ 立即发布时列表刷新）
   const posted = await evalJs(`(async () => {
     const box = document.querySelector('#comment-form')
     if (!box) return { skipped: true }
@@ -455,15 +455,26 @@ try {
     set(box.querySelector('textarea'), '这条评论由 interaction-check 自动生成，用于验证评论链路。')
     const submitBtn = [...box.querySelectorAll('button')].find(b => b.textContent.includes('发表评论'))
     const before = document.querySelectorAll('#comments ul li, #comments ol li').length
+    // 提交**之前**先记下页面上有没有错误文案。
+    // 不这么做就只能看到"此刻页面上存在错误文本"—— 而这一步前面跑的是后台评论审核，
+    // 那边的 toast 常常还没消失，于是这里会把**上一条用例的提示**当成"评论提交失败了"。
+    // 实测就是这么误判的：posted 拿到 {success:true, errorToast:true, after:1}，
+    // 而同一时刻把页面全文抓出来，/评论提交失败|过于频繁/ 一条都匹配不到。
+    const preText = document.body.innerText
     submitBtn?.click()
     await new Promise(r => setTimeout(r, 2600))
     const text = document.body.innerText
     return {
       before,
       after: document.querySelectorAll('#comments ul li, #comments ol li').length,
-      success: /评论已发布|等待站长审核/.test(text),
+      // 成功文案要跟 CommentSection.vue 里那句对齐（needApproval 决定是哪一句）。
+      // 别写"大概能匹配"的片段：原先找的是 /评论已发布|等待站长审核/，而组件输出
+      // 「评论已提交，等待站长审核后显示」——「等待站长审核」后面紧跟一个「后」，
+      // 两个分支都匹配不上，于是这条常年报红，明明提交是成功的。
+      success: /评论已提交|评论已发布/.test(text),
       needApproval: /需要审核后才会公开显示/.test(text),
-      errorToast: /评论提交失败|过于频繁/.test(text),
+      // 只看**新出现**的错误提示：提交前就在的错误文本不算这一次的账
+      errorToast: /评论提交失败|过于频繁/.test(text) && !/评论提交失败|过于频繁/.test(preText),
     }
   })()`, true)
   if (posted.skipped) record('评论提交', false, '未找到评论表单')

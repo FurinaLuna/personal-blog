@@ -6,6 +6,75 @@
 > [`README.md`](../README.md) 的「测试与验证」与
 > [`docs/ROADMAP.md`](ROADMAP.md) 第 0 节的滚动快照。
 
+---
+
+## 登记：2026-09-28 批次（目录改造 + 电梯栏 + 联系二维码）
+
+> 这一节是**当批的验证登记**（仓库约定：新批次要在本文件留痕），
+> 数值来自当时的实测；上方的 2026-09-12 快照保持原样不动。
+
+| 检查 | 结果 | 备注 |
+|---|---|---|
+| `ruff check .` | All checks passed | — |
+| `ruff format --check src tests alembic scripts` | 165 files already formatted | **必须限定目录**：仓库根目录下有两个沙箱拒绝删除的临时目录，`.` 会让 ruff 在遍历时报 `os error 5` |
+| `scripts/lint_imports.py` | Contracts: 2 kept, 0 broken | 分层契约未被破坏 |
+| `pytest tests/test_site.py` | **61 passed**（+7） | 含二维码 22 条 + 本轮补的空白收敛 7 条 |
+| `pytest`（全量） | **822 collected / 809 passed / 8 errors / 5 skipped** | 8 个 ERROR 全是 `tests/test_backup_script.py` 的 `tmp_path` fixture 创建失败（沙箱不允许删目录），**点在测试代码执行之前**，与产品代码无关 |
+| `vue-tsc --noEmit` | exit 0（全仓库） | — |
+| `eslint .` | exit 0 | — |
+| `vitest run` | **52 files / 832 passed** | 实测通过（早前记录的「沙箱跑不了」已在放开权限后消除） |
+| 仓库外进程内 harness（历史替代证据，已不再需要） | 52 个 spec：732 passed / 100 failed | 那 100 条**全部是 harness 的 shim 缺口**（缺 `toMatchObject`、fake timers 等），集中在 16 个未改动文件上。真实 `vitest run` 一跑即 **832/832 全绿**——这条记录保留作为「替身保真度」的教训：**harness 的假红与假绿一样危险** |
+| `tools/smoke-check.mjs` | **44/44** | 实测通过。含移动端几何：390×844 下间距 **24px**（阈值 12px）、水平重叠 40px |
+| `tools/full-check.mjs` | **64/64**，数据基线一致 | 实测通过。含 E5–E8（电梯栏 / 二维码 / 目录改造）+ E7f（侧栏吸住）全绿 |
+| `tools/e2e_live/e2e_run.py` | **64/64**（PASS=64 FAIL=0 ERROR=0） | 实测通过（R08 断言新字段 `contact_qrcodes` 与库内一致） |
+| 迁移探针（临时 SQLite 库） | `upgrade head` → 列在 → `downgrade -1` → 列消失 → `upgrade head` → 列回来；`alembic heads` 单头 | 未触碰 `blog.db` |
+| 反向验证 | 7 组「把修复改坏 → 对应用例变红」全部命中 | 明细见 `docs/devlog/2026-09-28.md` |
+| 收尾追加（P1-1） | `useScrollY` 只在位置真变化时更新 + 卸载取消在途 rAF；新增 `useScrollY.spec.ts` 12 例全绿 | 两条都是**先被用例/探针抓出来**的：① 同步执行的 rAF 桩掩盖了「卸载后仍留一帧」；② 真实栈探针抓到「新订阅者拿不到初值」。详见 devlog 的「踩坑与自我修正」 |
+| 真机发现与修复（2026-09-29） | `blog.db` 缺迁移导致启动 500（已迁移 + 备份）；`full-check` 两个工具 bug（E6a 缺 `setCacheDisabled`、A5c 友链 URL 写死撞唯一约束）；**新增 E7f**：读长文时目录滚没了（`sticky` 的父元素只有目录自己那么高）已修 —— 原布局实测 `scrollY=800` 时目录 `top=-481`（滚没了），修后正文全程 `top=96`；另修 `smoke-check` 一条假断言（按「配置条数」比「按钮个数」，配 2 条时必红） | 详见 `docs/devlog/2026-09-29.md` |
+
+---
+
+## 登记：2026-09-29 批次（Hexo 旧站内容迁移 23 篇 + 目录/分类滚动独立化 + 站点资料换旧站内容）
+
+> 当批的验证登记。数值全部来自本批实测；历史快照保持原样。
+
+| 检查 | 结果 | 备注 |
+|---|---|---|
+| `tools/hexo_import/tests`（本批新增） | **141 passed** | 其中 13 条直接跑真实旧站仓库（`D:\Projects\01_个人项目\blog`） |
+| `pytest`（全量） | **817 passed / 0 failed / 5 skipped** | 需 `SQLITE_TEMP_STORE=MEMORY`，原因见下 |
+| `npx vitest run` | **54 files / 849 passed** | 新增 `utils/uptime.spec.ts`(8)、`SiteUptime.spec.ts`(3)、`useHead` 站点名 3 条、`SiteFooter` 个人介绍 3 条 |
+| `tools/smoke-check.mjs` | **47 / 47** | 新增 **E-H1**（首页分类独立滚动）、**E-H2**（站点名三处一致）、**E-H3**（建站时长格式） |
+| `tools/full-check.mjs` | **66 / 66**，数据基线一致 | 新增 **E7h**（目录滚动独立性）；E7f 判据由「碰到视口」加固为「整体在视口内」并补 95%/100% 采样 |
+| `tools/interaction-check.mjs` | **25 / 25** | 批次 8 修掉两条**陈旧断言**（成功文案与组件脱节 / 把上一条用例残留的 toast 当成本次失败）；此前常年 24/25 |
+| `tools/e2e_live/e2e_run.py` | **64 / 64** | 需 `SQLITE_TEMP_STORE=MEMORY` |
+| `vue-tsc --noEmit` / `eslint .` | exit 0 | — |
+| 目录四视口几何（批次 5） | 目录左 − 正文右 = **56px** 恒定；正文列 **760px** 恒定；零重叠 | 1280/1440/1920/2560 四档实测 |
+| 目录独立滚动（批次 5） | 目录内容 2047px / 可视 772px；滚到底⇄回顶时 `navScrollTop 1275→434`，**页面 scrollY 不变** | 「两处滚动互不干扰」的机器化证据 |
+| 首页分类列表（批次 6） | 四视口下上限恒 **320px**、可滚、滚动条留白 10px、标签与快捷入口卡常驻可见；列表滚到底**页面不动** | 侧栏高由 1075px 降到 931px |
+| 站点资料换旧站内容（批次 7） | 标签页 `首页 · 芙芙\`s Home`、`og:site_name` 一致、页脚含站名/副标题/个人介绍/建站时长、关于页含旧站原文 | 长文页尾目录仍 `panelTop=96`、`572/572`，未破坏批次 5 的修复 |
+| 反向验证（批次 6 / 7） | 删分类上限 → E-H1 变红（44/45）；把站名改回写死 → E-H2 变红并报两条症状（46/47）；恢复均回绿 | 断言有效性有实证，不是"写完就信" |
+| 图片 URL 逐个 HTTP 校验 | 正文 **50/50**、封面 **9/9** → 全部 200 | 迁移过程中曾出现「导入成功但 14/14 全 404」，见 devlog 关键发现 4 |
+| **真实浏览器渲染核验**（CDP 读 `naturalWidth`） | 迁移文章 **4/4** 图片真实解码（1920/1280/1280/1280）、目录 8 项、迁移尾注可见、正文无 h1 | 「URL 返回 200」≠「页面上渲染出来了」；这层同时发现了分类大小写重复 |
+| 逐篇严格比对 | **23 / 23 无差异** | 库里正文 vs 旧站原文，两侧跑同一套变换后比对；围栏代码块逐字节保留 |
+| 反向验证 | 4 轮「把修复改坏 → 对应用例变红」全部命中 | 围栏保护三条路径（`normalize_headings` / `merge_captions_into_alt` / `render_body`）+ 图注去重 |
+| 数据终态 | 文章 **27**（迁移 23：19 已发布 + 4 草稿）、附件 **55**、分类 **19**、标签 **34**、置顶 **4** | 旧站 23 篇全部到位 |
+
+**本批包含一个真实事故**（已修，有回归用例）：`normalize_headings` 的围栏判断漏了一行，
+把 ```python 里的 Python 注释 `# response_model_exclude` 下沉成了 `## response_model_exclude`
+——**代码被篡改，页面上看不出异常**。原有用例因 `in` 的子串语义假通过
+（`"# 注释" in "## 注释"` 为真）。修法与教训见 `docs/devlog/2026-09-29.md` 关键发现 6。
+
+**环境限制（非产品缺陷）**：本机 `TEMP` 指向的目录**可写普通文件、但 SQLite 建不出临时文件**，
+于是所有需要临时表的语句（级联删除、`ORDER BY` 溢出排序、`CREATE INDEX`）都报
+`sqlite3.OperationalError: unable to open database file`。表现为 `pytest` 里 5 条删除类用例
+与 `e2e_live` 的 A08 稳定失败。用仓库预留的 `SQLITE_TEMP_STORE=MEMORY`（见
+`Settings.sqlite_temp_store`）后全绿，根因得到确认。
+**已用 HEAD 未改动的 `e2e_run.py` 复现同一失败**，证明与本次改动无关。
+
+---
+
+> 以下为 2026-09-12 的历史快照原文，未作任何修改。
+
 > 执行时间：2026-09-12 · 基线提交 `cbe5906`（测试期间未改动产品代码）
 > 环境：Windows · Python 3.13 / pytest 183 例 · Node 22 / Vitest 48 例 · Chrome headless（CDP）
 > 覆盖两层：**dev server（5173）** 与 **生产构建包（preview 4173）**
