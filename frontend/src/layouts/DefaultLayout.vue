@@ -2,6 +2,7 @@
 /** 前台布局：顶部导航 + 内容 + 页脚。 */
 import { onMounted } from 'vue'
 
+import ElevatorBar from '@/components/ElevatorBar.vue'
 import SiteFooter from '@/components/SiteFooter.vue'
 import SiteHeader from '@/components/SiteHeader.vue'
 import ToastHost from '@/components/ToastHost.vue'
@@ -55,6 +56,9 @@ onMounted(() => {
     </main>
 
     <SiteFooter />
+    <!-- 全局电梯栏（联系站长 + 返回顶部）：任何公开页滚长之后都能一键回顶。
+         挂在这里而不是文章详情页，见计划 §3.1 决策 D-电梯-1。 -->
+    <ElevatorBar />
     <ToastHost />
   </div>
 </template>
