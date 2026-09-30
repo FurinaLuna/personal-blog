@@ -295,7 +295,25 @@ onMounted(() => {
     <aside class="space-y-6 lg:sticky lg:top-24 lg:self-start">
       <div v-if="categories.length" class="card p-4">
         <h2 class="mb-3 text-sm font-medium text-ink">分类</h2>
-        <ul class="space-y-1">
+        <!-- 分类多起来（本站 19 个）会把侧栏撑到 1075px，比任何常见视口都高：
+             实测 1440×900 时预算只有 772px，超出 303px —— 而侧栏本身不可滚，
+             于是「标签」「快捷入口」在首屏被截掉，用户也够不到分类列表的末尾。
+             所以给**这一块**（而不是整个侧栏）加高度上限 + 自身滚动：
+             标签与快捷入口保持常驻可见，分类列表自己滚。
+
+             高度用视口感知而不是写死数字：侧栏上下夹着固定高度的卡片
+             （实测标签 327 + 快捷入口 170），死数字在矮视口下会把那两张卡挤出屏幕。
+             取值 100dvh−30rem 按实测反推 —— 每项 32px + 4px 间距，
+             900px 视口 ≈ 7 项、1200px ≈ 10 项，都留了「还有更多」的可滚提示。
+
+             `overscroll-contain` 与目录面板同一考量：列表滚到底后继续滑，
+             不把首页一起滚走（两处滚动互不干扰）。
+
+             `pr-2.5` 是给滚动条留位：卡片内边距 16px + 条目自身 px-3(12px) = 28px，
+             再留 10px，滚动条不会压在分类名或右侧的篇数上。 -->
+        <ul
+          class="max-h-[min(20rem,calc(100dvh-30rem))] space-y-1 overflow-y-auto overscroll-contain pr-2.5"
+        >
           <li v-for="item in categories" :key="item.id">
             <RouterLink
               :to="{ path: '/', query: { category: item.slug } }"

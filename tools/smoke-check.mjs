@@ -263,6 +263,26 @@ async function main() {
           cardCount: cards.length,
           firstTitle: cards[0]?.querySelector('h2')?.textContent?.trim() ?? '',
           hasSidebar: !!document.querySelector('aside'),
+          // 分类列表的可滚性：分类多起来（本站 19 个）会把侧栏撑到比视口还高，
+          // 而侧栏自身不可滚 —— 那时「标签」「快捷入口」在首屏被截掉、
+          // 分类列表末尾也够不到。所以给这一块加上限 + 自身滚动，这里守住它。
+          // 判据取「有上限」「overflow 是 auto/scroll」「内容确实超出」三件事：
+          // 只断言类名的话，类名对了但规则没生效（或上限大到不触发）照样是坏的。
+          catList: (() => {
+            const aside = document.querySelector('aside')
+            const ul = aside ? aside.querySelector('div:first-child ul') : null
+            if (!ul) return null
+            const cs = getComputedStyle(ul)
+            return {
+              maxHeight: cs.maxHeight,
+              overflowY: cs.overflowY,
+              overscroll: cs.overscrollBehaviorY,
+              scrollHeight: ul.scrollHeight,
+              clientHeight: ul.clientHeight,
+              hasCap: cs.maxHeight !== 'none',
+              scrollable: ul.scrollHeight > ul.clientHeight,
+            }
+          })(),
           navLinks: Array.from(document.querySelectorAll('header nav a')).map(a => a.textContent.trim()),
           bodyText: document.body.innerText.slice(0, 200),
         }
@@ -271,6 +291,21 @@ async function main() {
     record('首页渲染', home.cardCount > 0, `文章卡片 ${home.cardCount} 篇，首篇「${home.firstTitle}」`)
     record('站点标题', home.title.includes('首页'), home.title)
     record('侧边栏存在', home.hasSidebar, `导航项: ${home.navLinks.join(' / ')}`)
+    record(
+      'E-H1 首页分类列表独立滚动（有高度上限 + 自身可滚 + 不串联页面）',
+      home.catList !== null &&
+        home.catList.hasCap === true &&
+        ['auto', 'scroll'].includes(home.catList.overflowY) &&
+        home.catList.scrollable === true &&
+        home.catList.overscroll === 'contain',
+      home.catList === null
+        ? '找不到分类列表（aside > div > ul）'
+        : `分类列表 ${home.catList.scrollHeight}/${home.catList.clientHeight}` +
+          `，max-height=${home.catList.maxHeight}，overflow-y=${home.catList.overflowY}` +
+          `，overscroll=${home.catList.overscroll}` +
+          `${home.catList.hasCap ? '' : ' ❌ 没有高度上限'}` +
+          `${home.catList.scrollable ? '' : ' ❌ 内容未超出，上限过大等于没生效'}`,
+    )
     ;(await capture(cdp, '01-home')) && record('首页截图', true, '01-home.png')
 
     // ---------------------------------------------------------- 搜索 / 排序（URL 驱动）
@@ -309,8 +344,161 @@ async function main() {
       `${detail.codeBlocks} 个高亮代码块，${detail.headings} 个标题`,
     )
     record('目录生成', detail.tocItems > 0, `${detail.tocItems} 个目录项`)
+
+    // ---------------------------------------------------------- 目录折叠（本轮目录改造）
+    //
+    // 判据刻意不用"按钮点了有没有反应"：那对"按钮在、但什么都不做"的实现是绿的。
+    // 这里同时看三件事 —— 条目数真的变化、按钮文案随之翻转、折叠按钮的 aria-expanded
+    // 与条目数互为证据（全部收起后每个折叠按钮都必须是 false）。
+    //
+    // 两分支是必要的：首页第一篇不一定是嵌套标题的文章（种子数据里有两篇只有 h2），
+    // 而"没有可折叠节点"时正确行为是**幂等**（按钮点不动、条目数不变）。
+    // 硬套"条目必须变少"会在那种文章上给出假红，所以按折叠按钮的数量分流，
+    // 并在详情里写清楚走的是哪一支。
+    //
+    // 只读口径：折叠是纯客户端交互，不写数据；跑完先收起再展开，目录回到默认展开态。
+    const tocFold = await evaluate(
+      cdp,
+      `(async () => {
+        const nav = document.querySelector('nav[aria-label="文章目录"]')
+        if (!nav) return { ok: false, reason: 'nav[aria-label="文章目录"] 未渲染' }
+        const count = () => nav.querySelectorAll('a[data-toc-id]').length
+        const toggles = () => [...nav.querySelectorAll('button[aria-expanded]')]
+        const toggleAll = () => [...nav.querySelectorAll('button')].find(b => /全部(展开|收起)/.test(b.textContent.trim()))
+        const all = toggleAll()
+        if (!all) return { ok: false, reason: '找不到「全部展开/全部收起」按钮' }
+        const before = count()
+        const labelsValid = toggles().every(b => ['true', 'false'].includes(b.getAttribute('aria-expanded')))
+        all.click()
+        await new Promise(r => setTimeout(r, 500))
+        const folded = {
+          links: count(),
+          label: toggleAll().textContent.trim(),
+          allFalse: toggles().every(b => b.getAttribute('aria-expanded') === 'false'),
+        }
+        toggleAll().click()
+        await new Promise(r => setTimeout(r, 700))
+        const unfolded = { links: count(), label: toggleAll().textContent.trim() }
+        return { ok: true, before, toggles: toggles().length, labelsValid, folded, unfolded }
+      })()`,
+    )
+    // 走哪一支要写进详情里：否则"0 个折叠按钮"这条分支看起来和"折叠没生效"一模一样
+    const tocFoldDetail =
+      tocFold.ok !== true
+        ? `（目录状态没读回来：${tocFold?.reason ?? '页面内异常'}）`
+        : tocFold.toggles === 0
+          ? '该文没有嵌套标题（0 个折叠按钮），开关按设计幂等'
+          : `折叠按钮全为 false=${tocFold.folded.allFalse}`
+    record(
+      '目录折叠开关（全部收起 → 全部展开）',
+      tocFold.ok === true &&
+        tocFold.labelsValid === true &&
+        tocFold.before > 0 &&
+        // 收起之后按钮一定翻成「全部展开」：这一条两支都成立
+        tocFold.folded.label === '全部展开' &&
+        (tocFold.toggles === 0
+          ? // 该文章没有嵌套标题：没有可折叠节点，开关点不动 —— 条目数不变、
+            // 按钮**恒为**「全部展开」（allCollapsed 在没有可折叠节点时永远是 true），
+            // 这里若照抄"展开后应变成全部收起"，对这类文章就是一条假红
+            tocFold.folded.links === tocFold.before && tocFold.unfolded.links === tocFold.before
+          : tocFold.folded.links < tocFold.before &&
+            tocFold.folded.allFalse === true &&
+            tocFold.unfolded.links >= tocFold.before &&
+            tocFold.unfolded.label === '全部收起'),
+      tocFold.ok !== true
+        ? tocFold.reason
+        : `折叠按钮 ${tocFold.toggles} 个（aria-expanded 取值合法=${tocFold.labelsValid}，${tocFoldDetail}）；` +
+          `条目 ${tocFold.before} → 全部收起 ${tocFold.folded.links}，按钮=「${tocFold.folded.label}」` +
+          `→ 全部展开 ${tocFold.unfolded.links}，按钮=「${tocFold.unfolded.label}」`,
+    )
     record('评论区挂载', detail.commentSection, '')
     ;(await capture(cdp, '02-detail')) && record('详情页截图', true, '02-detail.png')
+
+    // ---------------------------------------------------------- 电梯栏（返回顶部阈值 + 联系站长一致性）
+    //
+    // 阈值 300（决策 D-电梯-2）必须**双向**断言：只写"滚过之后出现了"的话，一个常驻渲染
+    // 按钮的实现照样绿 —— 所以先证 scrollY=0 时它不存在，再证滚过之后出现，最后证它真的回顶。
+    const elevator = await evaluate(
+      cdp,
+      `(async () => {
+        const topBtns = () => document.querySelectorAll('button[aria-label="返回顶部"]').length
+        window.scrollTo({ top: 0, behavior: 'instant' })
+        await new Promise(r => setTimeout(r, 400))
+        const atZero = topBtns()
+        window.scrollTo({ top: 600, behavior: 'instant' })
+        let appeared = 0
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 200))
+          appeared = topBtns()
+          if (appeared) break
+        }
+        const scrolled = Math.round(window.scrollY)
+        // 真的点一下：回顶是 smooth 滚动，轮询等它走完（而不是固定 sleep 赌）
+        document.querySelector('button[aria-label="返回顶部"]')?.click()
+        let back = scrolled
+        for (let i = 0; i < 25; i++) {
+          await new Promise(r => setTimeout(r, 200))
+          back = Math.round(window.scrollY)
+          if (back < 10) break
+        }
+        return { atZero, appeared, scrolled, back }
+      })()`,
+    )
+    record(
+      '电梯栏「返回顶部」阈值（≤300 不渲染 / 滚过即出现 / 点击真回顶）',
+      elevator.atZero === 0 && elevator.appeared === 1 && elevator.scrolled > 300 && elevator.back < 10,
+      `scrollY=0 时 ${elevator.atZero} 个 → 滚到 ${elevator.scrolled} 后 ${elevator.appeared} 个 → 点击后回到 ${elevator.back}`,
+    )
+
+    // 「联系站长」入口的渲染必须与 /site/profile 的配置**一致**，两个方向都要能红：
+    //   配置有可用项却不渲染按钮（功能坏了）、配置为空却渲染出一颗点了没反应的按钮（脏入口）。
+    // 这样写不依赖"当前演示库到底配没配二维码"，也顺带覆盖了本轮新增的弹层内容。
+    const contact = await evaluate(
+      cdp,
+      `(async () => {
+        const profile = await (await fetch('/api/v1/site/profile', { cache: 'no-store' })).json()
+        const list = Array.isArray(profile.contact_qrcodes) ? profile.contact_qrcodes : []
+        const hasText = (v) => String(v ?? '').trim().length > 0
+        // 前端的过滤规则：image_url 与 value 全空的条目不渲染（后台点了"添加"但还没填）
+        const usable = list.filter(i => hasText(i.image_url) || hasText(i.value))
+        const expectImages = list.filter(i => hasText(i.image_url)).length
+        const expectCopy = list.filter(i => hasText(i.value)).length
+        const btn = document.querySelector('button[aria-label="联系站长"]')
+        const result = { configured: usable.length, expectImages, expectCopy, buttons: btn ? 1 : 0, opened: null, images: null, copy: null, closed: null }
+        if (!btn) return result
+        btn.click()
+        await new Promise(r => setTimeout(r, 500))
+        const dialog = document.querySelector('[role="dialog"][aria-label="联系方式"]')
+        result.opened = Boolean(dialog)
+        result.images = dialog ? dialog.querySelectorAll('img').length : 0
+        result.copy = dialog ? [...dialog.querySelectorAll('button')].filter(b => b.textContent.trim() === '复制').length : 0
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await new Promise(r => setTimeout(r, 300))
+        result.closed = !document.querySelector('[role="dialog"][aria-label="联系方式"]')
+        return result
+      })()`,
+    )
+    // 配置为空时只断言"按钮 0 个"；配置非空时还要弹层真的打得开、图与复制按钮的数量与配置对得上
+    // （逐个 count 比对，而不是"≥1 就算过"：只有号的条目本来就不该有 <img>）
+    //
+    // 按钮个数是 `configured > 0 ? 1 : 0` —— **整个弹层只有一颗入口按钮**，
+    // 配 1 条和配 2 条都是 1 个按钮。这里原先写成 `configured === buttons`，
+    // 那只有在"恰好配 1 条"时成立（配 0 条时靠短路分支绕过、配 2 条时直接红），
+    // 是一条潜伏的假断言 —— 实测：演示库配了 2 条时它报红，而渲染其实完全正确。
+    record(
+      '电梯栏「联系站长」与站点配置一致',
+      contact.buttons === (contact.configured > 0 ? 1 : 0) &&
+        (contact.buttons === 0 ||
+          (contact.opened === true &&
+            contact.images === contact.expectImages &&
+            contact.copy === contact.expectCopy &&
+            contact.closed === true)),
+      `配置可用 ${contact.configured} 条（应渲染图 ${contact.expectImages} 张、复制按钮 ${contact.expectCopy} 个）` +
+        `→ 按钮 ${contact.buttons} 个` +
+        (contact.buttons
+          ? `；点击展开=${contact.opened} 图=${contact.images} 复制=${contact.copy} Esc 关闭=${contact.closed}`
+          : '；配置为空，按设计整颗按钮不渲染'),
+    )
 
     // ---------------------------------------------------------- 归档页
     await navigate(cdp, `${BASE_URL}/archive`)
@@ -365,11 +553,76 @@ async function main() {
 
     // ---------------------------------------------------------- 关于页
     await navigate(cdp, `${BASE_URL}/about`)
+    await sleep(1200)
     const about = await evaluate(
       cdp,
-      `document.querySelector('.prose')?.innerText?.slice(0, 60) ?? ''`,
+      `(() => ({
+        prose: document.querySelector('.prose')?.innerText?.slice(0, 60) ?? '',
+        bodyText: document.body.innerText,
+        title: document.title,
+        ogSiteName: document.head.querySelector('meta[property="og:site_name"]')?.content ?? null,
+        description: document.head.querySelector('meta[name="description"]')?.content ?? null,
+        footerText: document.querySelector('footer')?.innerText ?? '',
+      }))()`,
     )
-    record('关于页内容来自站点档案', about.length > 0, about.replace(/\n/g, ' '))
+    record('关于页内容来自站点档案', about.prose.length > 0, about.prose.replace(/\n/g, ' '))
+
+    // 站点名必须**一处改、处处跟着改**。
+    //
+    // 这条守的是一个真实的「改一半」：站点名此前在三个地方各写死了一遍 ——
+    // `router/index.ts` 的 afterEach、`useHead.ts` 的 SITE_SUFFIX（还兼 og:site_name）、
+    // 以及 useHead 里那个写死的默认描述。于是把站点名改成真实站名后，
+    // 顶栏和页脚变了、**浏览器标签页还是「关于 · 个人博客」**、分享卡片上也是旧名。
+    // 现在三者共用 `useSiteName` / `useSiteDescription`，这里逐步对齐校验。
+    //
+    // 「真实站点名」直接取接口（**必须 `cache: 'no-store'`**：
+    // `/site/profile` 带 `max-age=60`，否则刚改完站点名会读到上一版资料）。
+    // 不用 `cdp.networkLog`：它只记 url 与 status，**不记响应体**。
+    let profileBody = null
+    try {
+      const resp = await fetch(`${BASE_URL}/api/v1/site/profile`, { cache: 'no-store' })
+      profileBody = resp.ok ? await resp.json() : null
+    } catch {
+      profileBody = null
+    }
+    const siteChecks = []
+    if (!profileBody) {
+      siteChecks.push('取不到 /site/profile，无法确定真实站点名')
+    } else {
+      const realName = profileBody.owner_name
+      if (!about.title.endsWith(realName)) {
+        siteChecks.push(`标签页标题「${about.title}」结尾不是站名「${realName}」（可能写死在代码里）`)
+      }
+      if (about.ogSiteName !== realName) {
+        siteChecks.push(`og:site_name=「${about.ogSiteName}」≠ 站名「${realName}」`)
+      }
+      if (!about.footerText.includes(realName)) {
+        siteChecks.push(`页脚里没有站名「${realName}」`)
+      }
+      if (profileBody.headline && about.description !== profileBody.headline) {
+        siteChecks.push(`默认描述「${about.description}」≠ 副标题「${profileBody.headline}」`)
+      }
+      if (profileBody.bio_md && !about.footerText.includes(profileBody.bio_md.slice(0, 12))) {
+        siteChecks.push('页脚里没有个人介绍的首段')
+      }
+    }
+    record(
+      'E-H2 站点名/副标题在标签页、og:site_name、页脚三处一致（不再各自写死）',
+      siteChecks.length === 0,
+      siteChecks.length === 0
+        ? `站名「${profileBody.owner_name}」；标题「${about.title}」、og:site_name、页脚均已对齐` +
+            `；默认描述=「${about.description}」`
+        : siteChecks.join('；'),
+    )
+
+    // 建站时长：对应旧站页脚由 /js/timeDate.js 写入的那一行。
+    // 判据用**格式**而不是具体数字（数字每秒都在变）：能抓住"渲染成了空"或"格式跑偏"。
+    const uptimeMatch = about.bodyText.match(/本站自从搭建已经历\s*(\d+)\s*天\s*(\d{2})\s*小时\s*(\d{2})\s*分\s*(\d{2})\s*秒/)
+    record(
+      'E-H3 页脚显示建站时长（天 + 两位时分秒）',
+      uptimeMatch !== null,
+      uptimeMatch ? uptimeMatch[0].trim() : '页脚里找不到「本站自从搭建已经历 … 天 … 小时 … 分 … 秒」',
+    )
 
     // ---------------------------------------------------------- 404
     await navigate(cdp, `${BASE_URL}/this-page-does-not-exist`)
@@ -558,6 +811,62 @@ async function main() {
     )
     record('移动端汉堡菜单', mobile.hasBurger && mobile.burgerVisible, '')
     ;(await capture(cdp, '09-home-mobile')) && record('移动端截图', true, '09-home-mobile.png')
+
+    // ---------------------------------------------------------- 移动端：电梯栏与目录按钮不重叠
+    //
+    // 计划 §3.4 的避让口径：移动端电梯栏 bottom-24（96px = 24 底边距 + 48 目录按钮 + 12 间距），
+    // 「返回顶部」必须落在目录按钮正上方。原文验收写的是"截图比对：间距 ≥ 12px"，
+    // 这里换成几何量：两个按钮的 getBoundingClientRect() 竖直间距 ≥ 12px。
+    // 两个判据缺一不可 —— 竖直间距之外还要**水平确实重叠**，否则"间距"说的是两个
+    // 根本不在同一列的按钮，数字再大也没有意义。
+    // 注意：目录按钮要在详情页（有目录的长文）上才渲染，首页没有它，所以这里要换页。
+    await navigate(cdp, `${BASE_URL}${slug}`)
+    const gutter = await evaluate(
+      cdp,
+      `(async () => {
+        const toc = document.querySelector('button[aria-label="打开文章目录"]')
+        if (!toc) return { ok: false, reason: 'MobileToc 目录按钮未渲染（xl 断点以下才显示）' }
+        window.scrollTo({ top: 0, behavior: 'instant' })
+        await new Promise(r => setTimeout(r, 400))
+        const atZero = document.querySelectorAll('button[aria-label="返回顶部"]').length
+        window.scrollTo({ top: 600, behavior: 'instant' })
+        let top = null
+        for (let i = 0; i < 25 && !top; i++) {
+          await new Promise(r => setTimeout(r, 200))
+          const el = document.querySelector('button[aria-label="返回顶部"]')
+          // 淡入期间 opacity 还是 0，等它真正可见再量
+          if (el && Number(getComputedStyle(el).opacity) > 0.5) top = el
+        }
+        if (!top) return { ok: false, reason: '滚过 300px 后返回顶部按钮未出现/未完成淡入', atZero }
+        const a = top.getBoundingClientRect()
+        const b = toc.getBoundingClientRect()
+        return {
+          ok: true,
+          atZero,
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+          scrollY: Math.round(window.scrollY),
+          gap: Math.round(b.top - a.bottom),
+          overlap: Math.round(Math.min(a.right, b.right) - Math.max(a.left, b.left)),
+          topBottom: Math.round(a.bottom),
+          topSize: Math.round(a.width) + 'x' + Math.round(a.height),
+          tocTop: Math.round(b.top),
+          tocSize: Math.round(b.width) + 'x' + Math.round(b.height),
+        }
+      })()`,
+    )
+    record(
+      '移动端：电梯栏与目录按钮不重叠（竖直间距 ≥ 12px）',
+      gutter.ok === true && gutter.atZero === 0 && gutter.gap >= 12 && gutter.overlap > 0,
+      gutter.ok !== true
+        ? `原因=${gutter?.reason ?? '几何量没量到（页面内异常）'}`
+        : `视口 ${gutter.vw}×${gutter.vh}，scrollY=${gutter.scrollY}；返回顶部 bottom=${gutter.topBottom}（${gutter.topSize}），` +
+          `目录按钮 top=${gutter.tocTop}（${gutter.tocSize}）：竖直间距=${gutter.gap}px（阈值 12px），水平重叠=${gutter.overlap}px`,
+    )
+
+    // 回到首页：最后一条「页面脚本错误」读的是当前文档上的收集器，而上一条截图也是首页，
+    // 别把落地页留在文章详情页上
+    await navigate(cdp, `${BASE_URL}/`)
 
     // ---------------------------------------------------------- 控制台错误
     const pageErrors = await evaluate(cdp, `window.__smokeErrors ?? []`)
