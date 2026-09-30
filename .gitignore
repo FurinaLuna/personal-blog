@@ -79,11 +79,22 @@ pytest-cache-files-*/
 # 上面那种情况在修复前留下的两个目录名，兜一层避免误提交
 backend/personal_blog_media/
 backend/pytest-of-*/
+# pytest 的 `tmp_path` fixture 默认在 basetemp 下建目录；受限权限下它连自己的工作目录
+# 都删不掉（`shutil.rmtree` → WinError 5），`--basetemp` 指到哪就永久留在哪。
+# 与上面 `backend/pytest-of-*` 同一类，都是「沙箱/只读环境下必然出现」的残留
+backend/.pytest-sandbox-tmp/
+# `tools/e2e_live/e2e_run.py` 用 `tempfile.mkdtemp(prefix="blog-e2e-")` 建工作目录；
+# 在受限沙箱里 `mkdtemp` 建出来的目录会被加上「不可访问」的 ACL（连自己都读不了、
+# 更删不掉），把 TEMP 指到仓库内就会留下这种空壳目录。同样是环境产物，不入库
+.e2e-tmp/
 
 # ---------------- 端到端验证产物 ----------------
 # CDP 脚本的截图/报告统一写入 shots/（make smoke 等目标会传 ./shots/<名称>），
 # 每次运行都会重写，不入库
 shots/
+# Hexo 迁移工具的上传缓存（内容哈希 -> 站内 URL）。重跑时靠它跳过已上传的图片，
+# 是本机产物：URL 里含服务端的月份子目录、且随时可重建，不入库
+tools/hexo_import/.import-cache.json
 # 数据库一致性备份（VACUUM INTO 产物，本地用）
 blog.db.bak-*
 backend/blog.db.bak-*

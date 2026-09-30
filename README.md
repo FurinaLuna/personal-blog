@@ -10,9 +10,12 @@
 [![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
-**写出来能跑、改起来可验证** —— 788 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
-770 个前端单测，外加三个真实浏览器端到端脚本（冒烟 40 项 / 交互 25 项 / 全功能回归 52 项）
+**写出来能跑、改起来可验证** —— 822 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
+54 个前端 spec 文件，外加三个真实浏览器端到端脚本（冒烟 47 项 / 交互 25 项 / 全功能回归 66 项）
 与两套数据库方言的真实链路端到端（SQLite 64 条 / PostgreSQL 63 条）。
+
+内容也不是空的：仓库自带一个 **Hexo 旧站迁移工具**（`tools/hexo_import/`，141 条用例），
+已用它把 23 篇历史文章连同图片一起迁进本站 —— 见 [从 Hexo 旧站迁移内容](#从-hexo-旧站迁移内容)。
 
 ---
 
@@ -23,6 +26,7 @@
 - [界面预览](#界面预览)
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
+- [从 Hexo 旧站迁移内容](#从-hexo-旧站迁移内容)
 - [常用命令](#常用命令)
 - [目录结构](#目录结构)
 - [配置项](#配置项)
@@ -44,6 +48,9 @@
    仓库里那些「只有真实浏览器才能发现」的坑（登录后被弹回登录页、
    后台布局嵌套导致子页面不渲染）都写进了文档，不是靠运气修好的。
 
+它不是空壳模板：**本站正在跑的就是这份代码**，23 篇历史文章已经从 Hexo 旧站迁进来
+（含 50 张图片和站点档案），所以 README 里的数字都是真站上量出来的。
+
 默认 SQLite 零依赖启动，需要时一个环境变量切到 PostgreSQL。
 
 ## 功能一览
@@ -56,6 +63,7 @@
 | Markdown 渲染 | `marked → DOMPurify 白名单消毒 → 增强`（标题锚点、代码高亮、外链 `rel`、图片懒加载） |
 | 代码块 | 按需注册 17 种语言（比 `lib/common` 省 60% 体积）、右上复制按钮、右下语言标签 |
 | 阅读体验 | 自动目录（桌面侧栏 + 移动端浮动抽屉）、阅读进度条、相关文章推荐 |
+| **目录与侧栏的滚动独立性** | 桌面目录是 `position: fixed` 的面板、**自身可滚**（`max-height: calc(100dvh - 8rem)` + `overscroll-behavior: contain`），长目录（实测 1990px）能滚到底，且滚它**不会带走正文**；首页侧栏的分类列表同理（上限 `min(20rem, calc(100dvh - 30rem))`），标签与快捷入口始终可见 |
 | 组织方式 | 分类（一对一）、标签（多对多）、按月归档、关键词搜索 |
 | 搜索 | **两种方言各有自己的加速路径**：SQLite 走 FTS5（trigram 分词 + bm25 + 高亮片段），PostgreSQL 走 `pg_trgm` + 3 条 GIN 索引；1–2 字的短查询两边都退回 LIKE 兜底（三元组索引的固有限制），端点单独限流 30/分 |
 | 系列 / 合集 | 多篇文章编成一个系列；详情页显示系列导航（上下篇），前台有系列聚合页与系列详情页，后台可增删改；删除系列只解关联，文章保留 |
@@ -130,7 +138,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 599 例（SQLite + PostgreSQL 双方言）、前端 690 例 |
+| 测试 | pytest / Vitest | 后端 822 例（SQLite + PostgreSQL 双方言）、前端 54 个 spec 文件 / 849 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -173,8 +181,12 @@ npm run dev
 
 首次启动会自动建表并写入 4 篇演示文章；不想要演示数据就把 `.env` 里的
 `SEED_DEMO_DATA` 设为 `false`。
+（**演示数据只在库为空时写入**：站点档案、站长账号、演示文章、友链、留言板各有自己的
+「已存在就跳过」守卫，所以改过站点设置或删过演示文章之后，重启不会把它们变回来。
+迁移进来的真实内容同理，不会被 seed 覆盖。）
 
 装了 `make` 的话，`make install` + `make dev` 可以一步到位。
+已经有一个 Hexo 旧站？跳到 [从 Hexo 旧站迁移内容](#从-hexo-旧站迁移内容)。
 
 ## 常用命令
 
@@ -185,15 +197,130 @@ make dev           # 同时启动前后端
 make check         # 提交前跑这个：ruff + 格式 + 后端测试 + 前端单测
 make test-all      # 前后端测试
 make build         # 前端类型检查 + 生产构建
-make smoke         # 真实浏览器冒烟（34 项，需先 make dev）
-make interaction   # 真实点击的交互验证（22 项，需先 make dev）
-make full-check    # 全功能回归 + 数据基线核对（41 项，自清理，需先 make dev）
-make migrate       # 应用数据库迁移
+make migrate       # 应用数据库迁移（拉取了新代码后**先跑这个**，见下方「升级已有开发库」）
+make smoke         # 真实浏览器冒烟（47 项，需先 make dev）
+make interaction   # 真实点击的交互验证（25 项，需先 make dev）
+make full-check    # 全功能回归 + 数据基线核对（66 项，自清理，需先 make dev）
 make migration m="add xxx field"   # 生成迁移
 make docker-up     # 容器化启动
 ```
 
 Windows 上没有 `make` 时，每个目标的原始命令都写在 `Makefile` 里。
+
+> **升级已有开发库**：拉取带新迁移的代码后，`backend/blog.db` 还停在旧版本，
+> 而**模型已经按新结构查询**。此时直接 `make dev` 会在启动期就炸：
+>
+> ```
+> sqlalchemy.exc.OperationalError: no such column: site_profile.contact_qrcodes
+> ERROR:    Application startup failed. Exiting.
+> ```
+>
+> 前台看到的现象是「后端起来了但 `POST /auth/login` 返回 500」（其实进程根本没起来）。
+> 修法是先迁移再启动：
+>
+> ```bash
+> make migrate      # alembic upgrade head
+> make dev
+> ```
+
+## 从 Hexo 旧站迁移内容
+
+仓库自带 `tools/hexo_import/`（**独立于 `backend/` 的 venv**，只用标准库 + Pillow）：
+
+| 模块 | 职责 |
+|---|---|
+| `parse_hexo.py` | 读旧站仓库：文章 front-matter、本地图片资源、`_config.yml` |
+| `transform.py` | 正文归一化成新站安全渲染器接受的形式 |
+| `preflight.py` | 干跑体检 → Markdown 报告 |
+| `import_hexo.py` | 走 HTTP API 写数据（默认 dry-run） |
+
+### 为什么走 HTTP API 而不是直接写库
+
+1. **复用整套服务层校验**：图片过 Pillow 真解码（不是看扩展名）、像素炸弹上限、体积上限、
+   正文长度、slug 唯一化、标签自动创建 —— 直插 DB 等于把这些全部绕过；
+2. **顺带拿到衍生数据**：缩略图与多尺寸变体（AVIF/WEBP）、附件记录都由 `AttachmentService` 生成，
+   直插 DB 只能得到一个"能显示的原图"；
+3. **可重跑、可对任何环境用**：本地 / 预发 / 线上只是 `--api` 不同；
+4. **留痕**：附件与文章都有真实创建记录，事后能查、能删、能回滚。
+
+代价是慢（50 张图要真编码变体）且依赖服务在跑；对一次性迁移值得。
+
+### 幂等性
+
+- **图片**：先按内容 SHA-256 查本地缓存（`--cache`，默认 `.import-cache.json`）；没有再上传。
+  服务端文件名由脚本指定为 `{sha256[:16]}{ext}`，同一份内容重复上传只会得到同一个 URL（覆盖写），
+  不会产生垃圾文件；
+- **文章**：导入前拉一次含草稿的全站列表，拿到已有 slug 集合。slug 已存在默认跳过，
+  加 `--update` 则改用 `PATCH` 覆盖正文。两种模式重复跑都收敛到同一结果。
+
+### 怎么用
+
+```bash
+# 1) 预检：把必须知道的事先算清楚（不发任何写请求）
+python tools/hexo_import/preflight.py --hexo /path/to/hexo-site \
+    --out deliverables/hexo-migration-preflight.md
+
+# 2) 干跑：只打印将要发生什么
+python tools/hexo_import/import_hexo.py --hexo /path/to/hexo-site
+
+# 3) 试几篇（按文件名或 stem 指定，可重复）
+python tools/hexo_import/import_hexo.py --hexo /path/to/hexo-site --apply \
+    --only 后端学习路线 --only 农大迷你马拉松
+
+# 4) 全量导入
+python tools/hexo_import/import_hexo.py --hexo /path/to/hexo-site --apply \
+    --report deliverables/hexo-migration-report.json
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--apply` | 真的写数据。**默认是 dry-run**，不加就什么都不发 |
+| `--only 名字` | 只处理指定文章（可重复），用来先拿几篇试水 |
+| `--limit N` | 最多处理前 N 篇 |
+| `--update` | 已存在的文章改用 `PATCH` 覆盖；默认跳过 |
+| `--top-threshold N` | 旧站 `sticky >= N` 才保留为置顶（默认 24）。传 `0` 表示"有 sticky 就置顶" |
+| `--cache` / `--report` | 上传缓存文件 / 逐篇结果 JSON |
+
+凭据从**环境变量**取（`ADMIN_USERNAME` / `ADMIN_PASSWORD`），不从命令行取 ——
+命令行参数会进 shell 历史与进程列表。图片缺失时**不中断**，如实记进尾注后继续下一篇
+（迁移最怕"跑到第 17 篇崩了"）。
+
+### 本站的实际迁移结果（23 篇）
+
+| 项 | 实测 |
+|---|---|
+| 文章 | **23 篇**（其中 `hide: true` 的 4 篇按**草稿**迁入，前台不出现） |
+| 正文图片 | 引用 54 处，**去重后 50 张 / 13.9 MB**，全部上传成功 |
+| 封面 | 9 篇 |
+| 分类 / 标签 | 13 / 27 |
+| 置顶 | **4 篇**（旧站 16 篇带 `sticky`，但阈值 24 只留 3 篇迁移文章 + 1 篇演示文章） |
+| **无法恢复的图片** | **4 张**，都在 `FastAPI框架` 一篇里 |
+
+### 迁移中真正踩到的坑（都不是"搬文件"能想到的）
+
+1. **新站安全渲染器禁 `style` 属性** —— 这让整件事从"文件搬运"变成"内容归一化"：
+   旧文里靠内联样式实现的圆角/阴影无法保留，得逐类判断是丢掉还是转成语义标记。
+2. **图片 URL 绝不能自己拼**。旧站图片在 `source/_posts/<name>/` 下，而新站附件路径多一层月份目录；
+   第一版自己拼路径 → **14/14 全 404，且导入过程不报任何错**。必须让服务端返回真实 URL。
+3. **标题层级要整体下沉**。旧文里有悬空的 H4（前面没有 H2/H3），直接搬进新站的目录组件
+   会让分支挂错父级；迁移时统一下沉一级。
+4. **Python 注释被当成 Markdown 标题改写**：围栏代码块的判断漏了一行，
+   于是 `# 这是注释` 被当作 H1 加锚点。旧用例还因为用了 `in` 的子串断言而**假通过**。
+5. **本地 slug 估算必须与服务端一致**，否则重跑会重复导入（服务端会另起一个 `-1` 后缀）。
+6. **置顶必须远少于每页条数**。旧站 16 篇有 `sticky` 权重，全保留会让首页第一页几乎全是置顶徽标，
+   头条机制失效。改用阈值 24 只留 3 篇；原始权重写进每篇尾注，将来想改可反悔。
+7. **4 张图彻底无法恢复**：旧站 git 全历史、`public/`、线上站点都没有（线上返回 404）。
+   不静默跳过 —— 在受影响文章的尾注里如实列出，并写进 `deliverables/hexo-migration-report.json`。
+
+迁移工具的 141 条用例里，有 13 条**直接跑真实旧站仓库**，所以上面这些判断都有回归网兜着：
+
+```bash
+cd backend && .venv/Scripts/python -m pytest ../tools/hexo_import/tests -q
+```
+
+> 迁移的是**文章内容 + 站点档案**。旧站的「关于 / Lab / 播放列表」页面、友链数据、
+> Twikoo 评论都不在迁移范围内。站点档案（站名、副标题、个人介绍、社交链接、邮箱）
+> 已按旧站的值填好，要再改就在后台「站点设置」里改。
 
 ## 目录结构
 
@@ -205,13 +332,13 @@ personal-blog/
 │   │   ├── config.py               # 配置（全部来自环境变量）
 │   │   ├── api/                    # 路由、依赖注入、限流、请求上下文中间件
 │   │   │   └── v1/                 # 按资源分组的端点
-│   │   ├── models/                 # SQLAlchemy 模型（11 张表）
+│   │   ├── models/                 # SQLAlchemy 模型（15 张表：13 个实体 + 2 张关联表）
 │   │   ├── schemas/                # Pydantic 请求/响应模型
 │   │   ├── services/               # 业务规则唯一所在地
 │   │   ├── repositories/           # 数据访问（只 flush，不 commit）
 │   │   ├── db/                     # 会话 / 基类 / 自定义类型 / 种子数据
 │   │   └── utils/                  # 安全 / 存储 / 日志 / 限流 / 异常
-│   ├── tests/                      # 599 个 pytest 用例（SQLite / PostgreSQL 双方言）
+│   ├── tests/                      # 822 个 pytest 用例（SQLite / PostgreSQL 双方言）
 │   ├── alembic/                    # 数据库迁移
 │   ├── README.md                   # 后端说明（分层职责 / 迁移 / 运维端点）
 │   └── storage/                    # 上传的图片与附件（内容不入库）
@@ -219,15 +346,16 @@ personal-blog/
 │   ├── src/
 │   │   ├── api/                    # HTTP 客户端 + 各模块接口
 │   │   ├── components/             # 可复用组件
-│   │   ├── composables/            # useAsyncData / useAction / useHead / useDraftAutosave …
+│   │   ├── composables/            # useAsyncData / useAction / useHead / useSiteName / useTocTree …
 │   │   ├── layouts/                # Default / Admin / Blank 三套布局
 │   │   ├── router/                 # 路由表 + 守卫
-│   │   ├── stores/                 # Pinia：auth / site / theme
+│   │   ├── stores/                 # Pinia：auth / site / theme（3 个）
 │   │   ├── styles/                 # ★ 样式：tokens / base / components / prose / vendor
-│   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 状态元数据
-│   │   └── views/                  # 前台 9 页 + 后台 8 页（★ views 层暂无单测）
-│   └── src/**/*.spec.ts            # 200 个 Vitest 用例（20 个 spec 文件）
-├── deploy/                         # Dockerfile × 2 + nginx.conf
+│   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 建站时长 / 状态元数据
+│   │   └── views/                  # 前台 14 页 + 后台 11 页
+│   └── src/**/*.spec.ts            # 54 个 spec 文件 / 849 个 Vitest 用例
+├── deploy/                         # Dockerfile × 2 + nginx.conf / nginx.https.conf /
+│                                   #   nginx-common.inc / nginx-server.inc / security-headers.inc
 ├── docs/
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
 │   ├── ASSESSMENT.md               # 全面评估（风险 / 升级 / 功能 / 性能）
@@ -236,19 +364,24 @@ personal-blog/
 │   ├── ROADMAP.md                  # 迭代路线图与进度
 │   ├── MODULES.md                  # ★ 模块边界权威说明（职责 / 依赖方向 / 禁止事项 / 扩展点）
 │   ├── OPTIMIZE-QUICK-WINS.md      # 前端优化「1-2 天见效」清单（改哪个文件、改什么、为什么）
-│   ├── TEST-REPORT.md              # 2026-09-12 全功能回归报告（dev + 生产包两层环境 × E2E 脚本）
+│   ├── TEST-REPORT.md              # 全功能回归测试报告（2026-09-12 历史快照 + 后续批次登记，最新一批含目录/分类滚动与旧站内容迁移）
 │   ├── devlog/                     # 逐日开发日志（决策 / 验证 / 踩坑）
 │   ├── test-reports/               # full-check 各环境的运行报告（JSON）
 │   └── screenshots/                # 界面截图
 ├── tools/
+│   ├── hexo_import/                # ★ Hexo 旧站内容迁移（parse / transform / preflight / import）
+│   │   ├── preflight.py            # 干跑体检 → Markdown 报告
+│   │   ├── import_hexo.py          # 走 HTTP API 导入（默认 dry-run，幂等）
+│   │   └── tests/                  # 141 条用例（其中 13 条直接跑真实旧站仓库）
 │   ├── e2e_live/
 │   │   ├── e2e_run.py              # 真实环境端到端：临时空库 + alembic 建表 + 独立
-│   │   │                           # uvicorn 进程，62/61 条用例（HTTP 断言 + 直连库复核）；
+│   │   │                           # uvicorn 进程，64 条用例（HTTP 断言 + 直连库复核）；
 │   │   │                           # E2E_DB=postgres 切 PostgreSQL 方言（默认是 SQLite）
 │   │   └── probe.py                # 定点复现某个 500 并抓取服务端堆栈
-│   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互（34 项，只读）
-│   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径（22 项，对称还原）
-│   ├── full-check.mjs              # CDP 全功能回归：写操作生命周期 + 数据基线核对（41 项，自清理）
+│   ├── smoke-check.mjs             # CDP 冒烟：逐页渲染与关键交互（47 项，只读）
+│   ├── interaction-check.mjs       # CDP 交互：写操作与失败路径（25 项，对称还原）
+│   ├── full-check.mjs              # CDP 全功能回归：写操作生命周期 + 数据基线核对（66 项，自清理）
+│   ├── deploy-check.mjs            # 真构建镜像 + 真起 compose 栈，逐条验证部署行为（49 项）
 │   ├── showcase-demo.mjs           # CDP 功能演示：用户视角完整旅程回放（11 步截图断言）
 │   ├── style-baseline.mjs          # 采集关键元素的计算样式（样式重构前/后比对）
 │   ├── style-diff.mjs              # 比对两份样式基线，有差异即报
@@ -352,22 +485,49 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 
 当前基线：
 
+> **口径说明**：下表里标注「实测」的行是本轮在**当前工作区**跑出来的；
+> 涉及远端 CI 的行是历史运行记录（本地未提交的改动还没经过 CI）。
+> 数字都会随代码变动而漂移 —— 要判断"此刻到底绿不绿"，请自己跑一遍 `make check` 与三个浏览器脚本，
+> 而不是从这里抄一个数。逐批的实测登记在 [`docs/TEST-REPORT.md`](docs/TEST-REPORT.md)。
+
 | 检查 | 结果 |
 |---|---|
 | `ruff check` / `ruff format --check` | 全部通过 |
 | `import-linter` | 2 条分层契约 KEPT（api → services → … → config；utils 叶子） |
-| `pytest`（默认 SQLite） | **735 passed, 5 skipped**（740 collected，40 个文件；跳过的 5 条是 `pg_only`，见下一行），覆盖率 **83.37%**（门槛 80%） |
-| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | **598 passed, 1 skipped**（实测于 postgres:16；1 条跳过的是 `sqlite_only`）。⚠️ 这是**留言板之前**的数字：SQLite 侧已随留言板涨到 665+5，PG 侧待下次跑 `backend-postgres` 作业时回填 |
-| `vue-tsc --noEmit` | 0 报错 |
-| `vitest run` | **745 passed / 46 files**（每个视图都有 spec；含「凭证只进内存不进 localStorage」「启动静默续期」「hint Cookie 不是授权依据」三组防回归用例，以及 `layouts/DefaultLayout.spec.ts` —— 它钉在**真实调用方**上：匿名访客挂载前台布局时 `/auth/refresh` 一次都不发） |
+| `pytest`（默认 SQLite） | **822 collected / 817 passed / 5 skipped**（0 failed / 0 errors） |
+| `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | 与 SQLite **共用同一套 822 条用例**，差别只在 `sqlite_only` 那几条跳过数（SQLite 跳 5 条，PG 跳 1 条）。⚠️ 本机没起 PostgreSQL，所以此处的**具体通过数以上面 CI 的 `backend-postgres` 作业为准**，不在 README 里钉一个必然过期的数字 |
+| `vue-tsc --noEmit` | 0 报错（全仓库） |
+| `eslint .` | 0 报错 |
+| `vitest run` | **54 files / 849 passed**（含 `useTocTree` / `useScrollY` / `ElevatorBar` / `useSiteName`（经 `useHead`）/ `uptime` / `SiteUptime` 等新增 spec） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
-| `alembic upgrade head` / `downgrade base` | 12 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
-| `tools/smoke-check.mjs` | **40/40**（真实 Chrome，页面错误 0） |
-| `tools/interaction-check.mjs` | **25/25**（登录失败路径 / 匿名留言待审 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截） |
-| `tools/full-check.mjs` | **51/51** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息；结束核对数据基线。A0 直接断言刷新 Cookie 以 `httpOnly` 种在 `/api/v1/auth` 下——它是整套凭证方案的地基，失败时不希望靠「某个后台页面挂了」倒推 |
-| `tools/e2e_live/e2e_run.py` | **63/63**：真实进程 + 真实数据库的全链路端到端（6 条主流程 + 异常边界）。A01 断言「响应体没有 refresh_token 且 Cookie 以 httpOnly 下发」，A01b 走浏览器路径（不带 body 靠 Cookie 续期并要求令牌轮换）。运行前后比对 `blog.db` 指纹确保零污染 |
+| `alembic upgrade head` / `downgrade base` | 18 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；本轮新增的 `contact_qrcodes` 是 `site_profile` 上的加列，不新增表。SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
+| `tools/smoke-check.mjs` | **47/47**。含移动端几何实测：390×844 下电梯栏与目录按钮竖直间距 **24px**（阈值 12px）、水平重叠 40px；**E-H1** 首页分类列表独立滚动（有高度上限 + 自身可滚 + 不串联页面）；**E-H2** 站点名在标签页 / `og:site_name` / 页脚三处一致（不再各自写死）；**E-H3** 页脚建站时长格式 |
+| `tools/interaction-check.mjs` | **25/25**（登录失败路径 / 匿名留言待审 / 评论审核 / 状态切换 / 设置保存 / 窄屏布局 / 草稿恢复 / 评论链路与空值拦截）。其中两条用例此前常年报红、本批才修掉，都是**断言写错而不是产品缺陷**：① 成功文案的断言只匹配「评论已发布」与「等待站长审核」两个片段，而组件实际输出的是「评论已提交，等待站长审核后显示」—— 第二个片段后面紧跟一个「后」，于是两个分支都落空；② 「有没有错误提示」只看"此刻页面上存在错误文本"，于是把**上一条用例残留的 toast** 算到了本次头上 —— 改成只看**新出现**的错误提示 |
+| `tools/full-check.mjs` | **66/66** ×2 环境（dev 5173 + 生产包 4173）：后台写操作生命周期 / 认证与主题 / 列表边界 / 详情页交互 / 站点元信息 / **E5–E8 电梯栏 + 二维码 + 目录改造**；结束核对数据基线。`A0` 断言刷新 Cookie 以 `httpOnly` 种在 `/api/v1/auth` 下——它是整套凭证方案的地基，失败时不希望靠「某个后台页面挂了」倒推。五条**几何/时序**断言实测通过：`E7e`（`aria-current` 跟随滚动）、`E7f`（侧栏吸住：读长文时目录**整体**留在视口内，采样含 95%/100%）、`E7g`（正文列 760px、一行 42 个中文字）、`E7h`（目录自身可滚 + `overscroll: contain` + 面板不随页面漂移）、`E8`（移动端不重叠） |
+| `tools/e2e_live/e2e_run.py` | **64/64**：真实进程 + 真实数据库的全链路端到端（6 条主流程 + 异常边界）。R08 断言站点档案字段与库内一致（含新增的 `contact_qrcodes`：**键必须存在**、类型为数组或 null、条目只允许 `kind`/`label`/`image_url`/`value` 四个键），因此它同时证明新迁移真的跑过了。A01 断言「响应体没有 refresh_token 且 Cookie 以 httpOnly 下发」。运行前后比对 `blog.db` 指纹确保零污染 |
 | **GitHub Actions（8 个作业）** | **全部通过**（run #53，2026-09-24）—— 本项目历史上第一次远端 CI 全绿。账单锁期间（run #42~#47）所有作业都是 `steps=0` 启动即失败，那段时间的结论只能靠本地实测；解锁后的第一批反馈抓到 3 个真问题（迁移未格式化 / 部署配置测试写死旧布局 / 部署脚本隐式依赖本地 `.env`），见 `docs/devlog/2026-09-22.md` 批次 15 |
 | `tools/deploy-check.mjs` | **49/49**：真构建两个镜像、真用 compose 起一套完整栈（HTTP + HTTPS 两套外壳），逐条验证容器形态与部署行为（见「部署产物验证」） |
+
+> **一个环境注意点**（不是代码问题）：
+> `tools/e2e_live/e2e_run.py` 用 `tempfile.mkdtemp()` 建工作目录。在受限环境（沙箱 / 只读 TEMP）里，
+> mkdtemp 建出来的目录可能被加上不可访问的 ACL —— 表现是脚本刚起步就
+> `PermissionError: [WinError 5] .../blog-e2e-xxxx/storage`。这不是脚本缺陷，
+> **换台机器或换 TEMP 即可**；详见 [`docs/devlog/2026-09-29.md`](docs/devlog/2026-09-29.md)。
+
+> **另一个环境注意点**：在 Windows 上改 `frontend/src/styles/*.css` 时，
+> Vite 的 dev server 可能被 Tailwind 写临时文件撞上 watcher 而**整个进程退出**：
+>
+> ```
+> Error: EBUSY: resource busy or locked, watch
+>   '.../styles/.components.css.<pid>.<uuid>.tmpdir/components.css.tmp'
+> → Node.js v24.20.0（进程退出）
+> ```
+>
+> 连带症状是**编辑静默失败**（`ReplaceFileW EIO` / `Win32 32`）——文件没写进去，
+> 而多数编辑器的返回值看不出异常，于是验证跑出与代码无关的假红。
+> 可靠流程：**停 dev server → 改 CSS → 读回文件核对 → 清掉 `*tmpdir*` 残留 → 重启**。
+> 改 `.vue` / `.ts` 不容易触发，但一样建议先停再改。
+
 
 **为什么要浏览器脚本**：单测与类型检查都是绿的情况下，
 项目里仍然出现过「登录后被弹回登录页」「后台侧边栏渲染两遍」和
