@@ -47,17 +47,27 @@ export default {
         mono: ['var(--font-mono)'],
       },
       maxWidth: {
-        // 中文正文每行 38~42 字是舒适区，760px 偏宽
+        // 中文正文每行 38~42 字是舒适区，760px 偏宽。
+        // 这个刻度是给**通栏**正文的（关于页 / 留言板 / 友链 / 404 等单列页面）。
         content: '700px',
         shell: '1120px',
+        // 文章详情页的外壳：比 shell 宽，因为它是**两栏**（正文 + 目录），
+        // 通栏宽度不再等于正文宽度 —— 详情页需要自己的刻度。
+        // 正文列自己在组件里用 `article-column` 限宽（见 components.css）。
+        article: '1280px',
       },
       typography: (theme) => ({
         DEFAULT: {
           css: {
             maxWidth: 'none',
             color: 'rgb(var(--c-ink))',
-            // 中文正文 1.85 偏松，1.75 在「不局促」和「读得下去」之间更合适
-            lineHeight: '1.75',
+            // 正文字号 18px：实测参考站就是 18px，16px 在中文长文里偏小。
+            // 配合下面的行高，760px 列宽下一行约 42 个中文字，
+            // 落在仓库 maxWidth.content 注释认可的 38~42 舒适区。
+            fontSize: '18px',
+            // 中文正文 1.85 偏松，1.75 在「不局促」和「读得下去」之间更合适。
+            // 18 × 1.85 = 33.3px，比 1.75（31.5px）更接近参考站的 1.9。
+            lineHeight: '1.85',
             a: {
               color: theme('colors.brand.600'),
               textDecoration: 'none',

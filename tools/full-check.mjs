@@ -264,6 +264,14 @@ const startedAt = Date.now()
 let before = null
 let after = null
 let consoleErrors = []
+/**
+ * 本轮浏览器里 `/api/v1/site/profile` 的响应状态码。
+ *
+ * E5 断言的是「配置为空 → 联系站长按钮不渲染」，而**档案没加载出来**（接口挂了、
+ * 被缓存挡住、被拦截）也会让按钮不渲染 —— 只看 DOM 的话两者一模一样，是一条假绿。
+ * 记下响应状态，才能把「读到的是空配置」和「什么都没读到」分开。
+ */
+const profileResponses = []
 
 try {
   if (!existsSync(OUT)) mkdirSync(OUT, { recursive: true })
@@ -279,6 +287,12 @@ try {
     const m = JSON.parse(ev.data)
     if (m.method === 'Runtime.exceptionThrown') {
       consoleErrors.push(m.params?.exceptionDetails?.exception?.description ?? 'unknown')
+    }
+    if (
+      m.method === 'Network.responseReceived' &&
+      String(m.params?.response?.url ?? '').includes('/api/v1/site/profile')
+    ) {
+      profileResponses.push(m.params.response.status)
     }
     if (m.id && pending.has(m.id)) {
       pending.get(m.id)(m.result)
@@ -576,7 +590,13 @@ try {
   // 这条链路值得进浏览器回归，因为它跨了「后台写 → 前台缓存读」两层：
   // 公开的 GET /links 带 Cache-Control/ETag，如果 Vary 或缓存口径写错，
   // 站长改完友链在前台看到的仍是旧结果（本项目在文章列表上踩过同类问题）。
+  //
+  // **URL 必须和名字一样带 RUN**：友链地址上有唯一约束，写成固定值的话，
+  // 上一次运行留下的记录（或任何一次异常中断）会把本次创建顶成 409，
+  // 表现为 A5c-1 报「id=undefined」、后面三条连锁失败 —— 而失败信息完全不提
+  // 「地址重复」，排查方向会被带偏（踩过：见 docs/devlog/2026-09-29.md）。
   const linkName = `E2E 友链 ${RUN}`
+  const linkUrl = `https://example.com/e2e-link-${RUN}`
   await goto('/admin/links', 2600)
   const a5cCreate = await evalJs(`(async () => {
     const set = (label, value) => {
@@ -587,7 +607,7 @@ try {
       return true
     }
     if (!set('站点名称', ${JSON.stringify(linkName)})) return { ok: false, reason: '找不到站点名称输入框' }
-    if (!set('站点地址', 'https://example.com/e2e-link')) return { ok: false, reason: '找不到站点地址输入框' }
+    if (!set('站点地址', ${JSON.stringify(linkUrl)})) return { ok: false, reason: '找不到站点地址输入框' }
     const submit = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '添加友链')
     if (!submit) return { ok: false, reason: '找不到「添加友链」按钮' }
     submit.click()
@@ -1479,6 +1499,817 @@ try {
     `关：HTTP ${e4Off?.status} 字段=${e4Off?.body?.show_login_entry} 渲染 ${e4Hidden} 个；` +
       `开：HTTP ${e4On?.status} 字段=${e4On?.body?.show_login_entry} 渲染 ${e4Shown} 个（初始 ${e4Before}）`,
   )
+
+  // ================================================================ E5–E8 电梯栏 + 二维码 + 目录改造
+  //
+  // 计划 Phase 2 的明文验收（deliverables/article-detail-upgrade-plan-2026-09-27.md §五）：
+  //   ① 配置为空 → 联系按钮不渲染、返回顶部仍可用；
+  //   ② 配置齐全 → 桌面 hover/点击展开弹层，含二维码图与复制按钮；
+  //   ③ 移动端电梯栏与 MobileToc 按钮不重叠（原文口径是"截图比对 ≥ 12px"，这里换成
+  //      getBoundingClientRect 的几何量：截图既脆又读不出数字，几何量还能写进失败信息）；
+  //   ④ 目录：默认折叠 depth≥3、折叠按钮可切换、点章节改 hash（replaceState 语义）、滚动高亮。
+  //
+  // 三个容易写出假绿的地方，这里都堵上了：
+  //   - **不写"存在即通过"**：返回顶部在 scrollY=0 时必须是 0 个、滚过 300 之后才 1 个；
+  //     目录默认折叠要同时证「折叠按钮 aria-expanded=false」与「收起分支的子项根本没渲染」——
+  //     只查前者的话，一个永远渲染全部条目的实现照样绿。
+  //   - **切配置必须关 HTTP 缓存**：`/api/v1/site/profile` 是 max-age=60 的公开接口，复用缓存
+  //     会拿到改配置之前的档案（E4 第一版就是这么假失败的，见 docs/devlog/2026-09-28.md）。
+  //   - **改配置必须自清理**：段内先读一次真实值，finally 里还原并**复核**（E6c），否则一次
+  //     失败就会把测试用的二维码配置永久留在站点上。
+  //
+  // 为什么自建一篇长文、而不是挑一篇演示文章：种子文章的层级只到 h3（## → ###），而"默认折叠"
+  // 的判据是「depth ≥ 3 **且有子节点**」——演示文章里没有任何这种节点，折叠按钮根本不会渲染，
+  // 计划原文那句"挑一篇标题层级够多的演示文章"在真实种子数据上无法成立。所以这里自建
+  // h2→h3→h4 三层长文（登记进 registry，收尾一并回收），层级与长度都可控。
+  const tocArticleTitle = `E2E 目录长文 ${RUN}`
+  const filler = (count, tag) =>
+    Array.from(
+      { length: count },
+      (_, index) =>
+        `第 ${index + 1} 段${tag}填充文本：用来撑开正文高度，让"返回顶部"阈值与滚动高亮有真实的滚动距离。`,
+    ).join('\n\n')
+  const tocArticleBody = [
+    '## 第一节 概览',
+    '',
+    '### 1.1 子节甲',
+    '',
+    '#### 1.1.1 细节一',
+    '',
+    filler(6, 'A'),
+    '',
+    '#### 1.1.2 细节二',
+    '',
+    filler(6, 'B'),
+    '',
+    '### 1.2 子节乙',
+    '',
+    '#### 1.2.1 细节三',
+    '',
+    filler(6, 'C'),
+    '',
+    '## 第二节 实践',
+    '',
+    '### 2.1 子节丙',
+    '',
+    '#### 2.1.1 细节四',
+    '',
+    filler(6, 'D'),
+    '',
+    '### 2.2 子节丁',
+    '',
+    filler(20, 'E'),
+    '',
+    '## 第三节 结论',
+    '',
+    filler(40, 'F'),
+  ].join('\n')
+  const tocCreate = await api('/api/v1/articles', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: tocArticleTitle,
+      content_md: tocArticleBody,
+      status: 'published',
+    }),
+  })
+  const tocArticleId = tocCreate.body?.id
+  if (tocArticleId) registry.articles.push(tocArticleId)
+  const tocSlug = tocArticleId
+    ? ((await api(`/api/v1/articles/${tocArticleId}`)).body?.slug ?? '')
+    : ''
+  record(
+    'E5-0 前置：自建三层目录长文（h2→h3→h4，供 E5–E8 使用）',
+    tocCreate.status === 201 && Boolean(tocSlug),
+    `HTTP ${tocCreate.status} id=${tocArticleId} slug=${tocSlug}`,
+  )
+
+  if (!tocSlug) {
+    record('E5–E8 电梯栏与目录', false, '三层目录长文没建出来，整段无法进行')
+    uncovered.push('E5–E8 电梯栏与目录 — 前置长文创建失败')
+  } else {
+    const ARTICLE = `/article/${encodeURIComponent(tocSlug)}`
+    const CONTACT_BTN = 'button[aria-label="联系站长"]'
+    const TOP_BTN = 'button[aria-label="返回顶部"]'
+    const PANEL = '[role="dialog"][aria-label="联系方式"]'
+
+    /** 改站点档案（401 时换一枚令牌再试，与 E4 的 patchLoginEntry 同款）。 */
+    const patchProfile = async (payload) => {
+      let resp = await api('/api/v1/site/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      })
+      if (resp.status === 401) {
+        await relogin()
+        resp = await api('/api/v1/site/profile', {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        })
+      }
+      return resp
+    }
+    const contactButtons = () => evalJs(`document.querySelectorAll('${CONTACT_BTN}').length`)
+    const topButtons = () => evalJs(`document.querySelectorAll('${TOP_BTN}').length`)
+    /**
+     * 立刻跳转（显式 behavior:'instant' 绕开 base.css 的 `scroll-behavior: smooth`）。
+     * 平滑滚动会让页面经过一串中间位置，IntersectionObserver 会对着中间态回调，
+     * 断言就变成"碰运气命中最后一次回调"；一次跳到位的语义则完全确定。
+     */
+    const jumpScroll = async (y) => {
+      await evalJs(
+        `(() => { window.scrollTo({ top: ${y}, behavior: 'instant' }); return Math.round(window.scrollY) })()`,
+      )
+      await sleep(600)
+      return evalJs(`Math.round(window.scrollY)`)
+    }
+
+    // ---- E5 配置为空 → 联系按钮不渲染、返回顶部仍可用 ------------------------------
+    // 两侧都要断言：只写"滚过之后返回顶部出现了"的话，一个常驻渲染的实现也是绿的 ——
+    // 阈值 300（决策 D-电梯-2）必须在 scrollY=0 时表现为"没有这颗按钮"。
+    await send('Network.setCacheDisabled', { cacheDisabled: true }).catch(() => {})
+    const contactBefore = (await api('/api/v1/site/profile')).body?.contact_qrcodes ?? null
+    const profileHitsBefore = profileResponses.length
+    let e5Off = null
+    let e5ContactCount = -1
+    let e5TopAtZero = -1
+    let e5TopAfterScroll = -1
+    let e5BackTo = -1
+    try {
+      e5Off = await patchProfile({ contact_qrcodes: [] })
+      await goto(ARTICLE, 2800)
+      await waitFor(evalJs, `!!document.querySelector('.prose h2')`, 20000)
+      await jumpScroll(0)
+      e5TopAtZero = await topButtons()
+      e5ContactCount = await contactButtons()
+      await jumpScroll(420)
+      await waitFor(evalJs, `document.querySelectorAll('${TOP_BTN}').length === 1`, 8000)
+      e5TopAfterScroll = await topButtons()
+      // 点一下要真的回顶：组件用的是 smooth 滚动，轮询等它走完再读
+      await evalJs(`(() => { document.querySelector('${TOP_BTN}')?.click(); return true })()`)
+      await waitFor(evalJs, `window.scrollY < 60`, 8000)
+      e5BackTo = await evalJs(`Math.round(window.scrollY)`)
+    } finally {
+      await patchProfile({ contact_qrcodes: contactBefore })
+      await send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {})
+    }
+    const e5ProfileSeen = profileResponses.slice(profileHitsBefore)
+    record(
+      'E5 配置为空 → 联系按钮不渲染，返回顶部仍可用（阈值 300 双向）',
+      e5Off?.status === 200 &&
+        Array.isArray(e5Off?.body?.contact_qrcodes) &&
+        e5Off.body.contact_qrcodes.length === 0 &&
+        e5ProfileSeen.includes(200) &&
+        e5ContactCount === 0 &&
+        e5TopAtZero === 0 &&
+        e5TopAfterScroll === 1 &&
+        e5BackTo >= 0 &&
+        e5BackTo < 20,
+      `PATCH=${e5Off?.status} 字段=${JSON.stringify(e5Off?.body?.contact_qrcodes)}` +
+        `（本轮该页档案响应 ${JSON.stringify(e5ProfileSeen)}，证明是"读到空配置"而不是"档案没加载"）；` +
+        `联系按钮 ${e5ContactCount} 个；scrollY=0 时回顶按钮 ${e5TopAtZero} 个、滚过 300 后 ${e5TopAfterScroll} 个；` +
+        `点击回顶后 scrollY=${e5BackTo}`,
+    )
+
+    // ---- E6 配置齐全 → 联系站长弹层（hover / 点击 / 二维码图 / 复制 / Esc 还原焦点） ----
+    // 这条同时是 E5 的**正向对照**：档案链路真的能影响渲染时，按钮必须出现 1 个。
+    // 少了它，E5 的"0 个"有可能只是"档案没加载"（失败模式同样是 0 个）——正是 E4 踩过的坑。
+    const CONTACT_FIXTURE = [
+      { kind: 'wechat', label: 'E2E 微信', image_url: '/favicon.svg', value: 'e2e-wechat' },
+      { kind: 'qq', label: '', image_url: null, value: '123456789' },
+    ]
+    let e6On = null
+    let e6 = null
+    let e6copy = null
+    let e6Restore = null
+    try {
+      // 必须**自己**关缓存，不能指望 E5 留下。
+      //
+      // `/api/v1/site/profile` 是 `public, max-age=60`，而 E5 的 finally 在收尾时把
+      // `cacheDisabled` 设回了 false —— 于是本段 PATCH 完整配置后再导航，浏览器直接
+      // 复用 E5 期间缓存的那份**空配置**，组件按设计不渲染联系按钮，断言就变成了
+      // 「配置齐全但按钮没渲染」这种极具误导性的失败。
+      // 实测过 A/B 对照：不关缓存 → 0 个按钮（页面 fetch 到 0 条）；
+      // 关缓存 → 1 个按钮（fetch 到 2 条）。详见 docs/devlog/2026-09-29.md。
+      await send('Network.setCacheDisabled', { cacheDisabled: true }).catch(() => {})
+      e6On = await patchProfile({ contact_qrcodes: CONTACT_FIXTURE })
+      // 「桌面悬停展开」这条路径取决于组件读到 `(hover: none)` 的判定，而无头浏览器
+      // 可能自报 hover: none（没有真实指针设备），于是悬停分支被组件按设计关掉 ——
+      // 断言会退化成"条件分支"，验收明文里那句"桌面 hover 展开"就没人守着了。
+      // 这里尽力把媒体特性覆盖成 hover: hover；CDP 若不支持会静默无效，
+      // 断言自动退回条件分支（detail 里会写明读到的 hover 能力）。
+      await send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'hover' },
+          { name: 'pointer', value: 'fine' },
+        ],
+      }).catch(() => {})
+      await goto(ARTICLE, 2800)
+      await waitFor(evalJs, `document.querySelectorAll('${CONTACT_BTN}').length === 1`, 20000)
+      e6 = await evalJs(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const btn = document.querySelector('${CONTACT_BTN}')
+        if (!btn) return { ok: false, reason: '配置齐全但联系按钮没渲染' }
+        const root = btn.parentElement
+        const dialog = () => document.querySelector('${PANEL}')
+        const hoverCapable = !window.matchMedia('(hover: none)').matches
+        const detail = {}
+        const initial = {
+          haspopup: btn.getAttribute('aria-haspopup'),
+          expanded: btn.getAttribute('aria-expanded'),
+        }
+
+        if (hoverCapable) {
+          // 桌面：悬停展开 → 移开收起。触屏设备这条路径按设计不存在
+          // （tap 会合成 mouseenter，一视同仁会出现"点一下先开后关"）
+          root.dispatchEvent(new MouseEvent('mouseenter'))
+          await wait(250)
+          detail.hoverOpen = Boolean(dialog()) && btn.getAttribute('aria-expanded') === 'true'
+          root.dispatchEvent(new MouseEvent('mouseleave'))
+          await wait(250)
+          detail.hoverClose = !dialog()
+        }
+
+        // 点击 = 钉住：之后移开鼠标仍然开着（这正是 pinned 相对 hovering 的意义）
+        root.dispatchEvent(new MouseEvent('mouseenter'))
+        btn.click()
+        await wait(250)
+        root.dispatchEvent(new MouseEvent('mouseleave'))
+        await wait(250)
+        detail.pinnedOpen = Boolean(dialog()) && btn.getAttribute('aria-expanded') === 'true'
+
+        const box = dialog()
+        if (!box) return { ok: false, reason: '点击后弹层没有出现', hoverCapable, initial, ...detail }
+        const cards = [...box.querySelectorAll('li')]
+        const img = box.querySelector('img')
+        const copyCount = [...box.querySelectorAll('button')].filter((b) => b.textContent.trim() === '复制').length
+        // 二维码必须**真的加载出来**（naturalWidth > 0）：只查 <img> 存在的话，
+        // src 写错、图片 404 也算通过 —— 那是"有二维码图"这句话的反面
+        let loaded = false
+        for (let i = 0; i < 25 && !loaded; i += 1) {
+          const el = box.querySelector('img')
+          if (el && el.naturalWidth > 0) { loaded = true; break }
+          await wait(200)
+        }
+        const cardText = box.textContent.replace(/\\s+/g, ' ').trim()
+        // Esc 关闭 + 焦点还给触发按钮（关闭路径也是 Phase 2 验收的一部分）
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await wait(300)
+        return {
+          ok: true,
+          hoverCapable,
+          initial,
+          ...detail,
+          cards: cards.length,
+          cardText,
+          imgSrc: img ? img.getAttribute('src') : '',
+          imgAlt: img ? img.getAttribute('alt') : '',
+          imgLoaded: loaded,
+          copyCount,
+          closedByEsc: !dialog(),
+          focusBack: document.activeElement === btn,
+        }
+      })()`, true)
+
+      // 复制按钮：真的点一下，看有没有明确结果（成功提示，或 D4 同款的降级提示）
+      e6copy = await evalJs(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        if (!document.querySelector('${PANEL}')) {
+          document.querySelector('${CONTACT_BTN}')?.click()
+          await wait(300)
+        }
+        const box = document.querySelector('${PANEL}')
+        const copy = [...(box ? box.querySelectorAll('button') : [])].find((b) => b.textContent.trim() === '复制')
+        if (!copy) return { ok: false, reason: '弹层里没有「复制」按钮' }
+        copy.click()
+        await wait(700)
+        const text = document.body.innerText
+        return { ok: true, success: /已复制/.test(text), fallback: /不允许自动复制|请手动选中/.test(text) }
+      })()`, true)
+    } finally {
+      e6Restore = await patchProfile({ contact_qrcodes: contactBefore })
+      // 媒体特性覆盖也要还原：留着 hover: hover 会让后面的用例看到的不是本机真实能力
+      await send('Emulation.setEmulatedMedia', { features: [] }).catch(() => {})
+      await send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {})
+    }
+    const e6Text = e6?.cardText ?? ''
+    record(
+      'E6a 配置齐全 → 弹层含二维码图与复制按钮（hover/点击展开、Esc 关闭并归还焦点）',
+      e6On?.status === 200 &&
+        e6On?.body?.contact_qrcodes?.length === 2 &&
+        e6?.ok === true &&
+        e6?.initial?.haspopup === 'true' &&
+        e6?.initial?.expanded === 'false' &&
+        e6?.pinnedOpen === true &&
+        e6?.cards === 2 &&
+        /favicon\.svg$/.test(e6?.imgSrc ?? '') &&
+        e6?.imgAlt === 'E2E 微信二维码' &&
+        e6?.imgLoaded === true &&
+        e6?.copyCount === 2 &&
+        /E2E 微信/.test(e6Text) &&
+        /e2e-wechat/.test(e6Text) &&
+        /QQ/.test(e6Text) &&
+        /123456789/.test(e6Text) &&
+        e6?.closedByEsc === true &&
+        e6?.focusBack === true &&
+        (e6?.hoverCapable === false || (e6?.hoverOpen === true && e6?.hoverClose === true)),
+      e6?.ok !== true
+        ? `原因=${e6?.reason ?? '弹层状态没读回来（页面内异常）'}（hover 能力=${e6?.hoverCapable}）`
+        : `PATCH=${e6On?.status} 回读 ${e6On?.body?.contact_qrcodes?.length} 条；初始 aria-haspopup=${e6?.initial?.haspopup} expanded=${e6?.initial?.expanded}；` +
+          `hover 能力=${e6?.hoverCapable} 悬停展开=${e6?.hoverOpen} 悬停收起=${e6?.hoverClose} 点击钉住=${e6?.pinnedOpen}；` +
+          `卡片=${e6?.cards} img=${e6?.imgSrc}（已加载=${e6?.imgLoaded} alt=${e6?.imgAlt}）复制按钮=${e6?.copyCount}；` +
+          `Esc 关闭=${e6?.closedByEsc} 焦点归还=${e6?.focusBack}；文案=「${e6Text}」`,
+    )
+    record(
+      'E6b 点「复制」有明确结果（成功提示，或 headless 下的降级提示）',
+      e6copy?.ok === true && (e6copy?.success === true || e6copy?.fallback === true),
+      e6copy?.ok !== true
+        ? (e6copy?.reason ?? '复制结果没读回来（页面内异常）')
+        : `成功提示=${e6copy?.success} 降级提示=${e6copy?.fallback}` +
+          (e6copy?.success ? '' : '（剪贴板不可用，走了与 D4 同口径的降级提示）'),
+    )
+    // 自清理复核：改配置的用例失败时最容易留下的就是"站点被改了"，所以复原本身也是一条断言
+    record(
+      'E6c 段内改过的二维码配置已复原（自清理）',
+      e6Restore?.status === 200 &&
+        JSON.stringify(e6Restore?.body?.contact_qrcodes ?? null) === JSON.stringify(contactBefore ?? null),
+      `PATCH=${e6Restore?.status} 现为 ${JSON.stringify(e6Restore?.body?.contact_qrcodes ?? null)}` +
+        `（本轮开始时是 ${JSON.stringify(contactBefore ?? null)}）`,
+    )
+
+    // ---- E7 目录改造（折叠 / hash / 高亮） ----------------------------------------
+    await goto(ARTICLE, 2800)
+    await waitFor(evalJs, `!!document.querySelector('nav[aria-label="文章目录"]')`, 20000)
+
+    // E7f 侧栏是否"吸住"：读长文时目录必须**整体**可见。
+    //
+    // 这条守过两个真 bug：
+    //   1. 侧栏原先用绝对定位 + 内层 sticky，而 sticky 的 top 只在**父元素高度范围内**
+    //      生效 —— 父元素只有目录自己那么高，滑过几百像素目录就被带出视口。
+    //   2. （本批）sticky 的包含块是那个两列 flex 行，实测到文档 8940px 结束，
+    //      而文章本体到 9652px、文档到 9972px —— 最后约 1000px 里目录被父容器带走。
+    //      同时长目录（实测 1990px）比视口还高，底部压根够不到。
+    //
+    // 判据刻意用**整体在视口内**（`fullyVisible`）而不是"碰到视口就算可见"：
+    // 后者的下限太松 —— 目录高 1990px 而视口 900px 时 `bottom > 0 && top < innerHeight`
+    // 依然成立，目录被裁掉一半也照样判通过。第 2 个 bug 就是这样溜过去的。
+    // 采样点也必须覆盖 **95% 与 100%**：包含块失效只发生在文章尾部，
+    // 只测 25/40/55 三个中段位置的话，正好绕开了出问题的那一段。
+    const e7f = await evalJs(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const nav = document.querySelector('nav[aria-label="文章目录"]')
+      if (!nav) return { ok: false, reason: '目录未渲染' }
+      const article = document.querySelector('article')
+      const samples = []
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight
+      for (const pct of [0.25, 0.4, 0.55, 0.95, 1]) {
+        window.scrollTo({ top: Math.round(scrollable * pct), behavior: 'instant' })
+        await wait(280)
+        const r = nav.getBoundingClientRect()
+        samples.push({
+          pct,
+          scrollY: Math.round(window.scrollY),
+          top: Math.round(r.top),
+          bottom: Math.round(r.bottom),
+          // 整体在视口内：上边缘不越顶、下边缘不越底
+          fullyVisible: r.top >= 0 && r.bottom <= window.innerHeight,
+          // 目录是否自身可滚（内容超出可视高度时，底部只能靠滚它自己到达）
+          selfScrollable: nav.scrollHeight > nav.clientHeight,
+        })
+      }
+      return {
+        ok: true,
+        samples,
+        allFullyVisible: samples.every((s) => s.fullyVisible),
+        maxTop: Math.max(...samples.map((s) => s.top)),
+        articleHeight: article ? Math.round(article.getBoundingClientRect().height) : null,
+        viewportH: window.innerHeight,
+      }
+    })()`, true)
+    record(
+      'E7f 侧栏吸住：读长文时目录**整体**可见（含 95%/100%，sticky 的包含块必须撑满全文）',
+      e7f?.ok === true && e7f.allFullyVisible === true && e7f.maxTop < e7f.viewportH / 2,
+      e7f?.ok !== true
+        ? (e7f?.reason ?? '目录几何读不回来')
+        : `正文 ${e7f.articleHeight}px / 视口 ${e7f.viewportH}px；` +
+          e7f.samples
+            .map(
+              (s) =>
+                `${Math.round(s.pct * 100)}% top=${s.top}/bottom=${s.bottom}` +
+                `${s.fullyVisible ? '' : ' ❌超出视口'}` +
+                `${s.selfScrollable ? '(目录可滚)' : ''}`,
+            )
+            .join('，') +
+          `；全部整体可见=${e7f.allFullyVisible}`,
+    )
+
+    // E7h 目录滚动与正文滚动互不干扰（用户报的问题本身，此前没有任何断言守它）。
+    //
+    // 四条判据，全部与「目录有多长」无关：
+    //   1. **面板不漂移**：同一 scrollY 下两次采样几何必须一致。
+    //      只比"两次是否相同"不够 —— 基线（sticky 被父容器带走）在深滚处也是稳定值，
+    //      只是 top 变成 -2122，所以要再断言下面第 2 条。
+    //   2. **钉住**：面板 top 在三个不同滚动位置必须**完全相同**。
+    //      这是"吸住"的定义。注意不能拿 top 跟某个小常数比 —— 设计值就是
+    //      `top: 6rem`（=96px），第一版写成 `|top| <= 4` 是把 `<=` 看成了别的，
+    //      结果断言恒假（96px 永不 ≤ 4）。判据只能是"与滚动位置无关"。
+    //   3. **页尾仍整体可见**：滚到页尾时 top/bottom 都要落在视口内。
+    //      包含块失效时 top 会变成很大的负数（基线实测 -2122），这条会立刻红。
+    //   4. **滚动链的闸已装**：`overscroll-behavior-y === 'contain'`。
+    //      断言计算样式而不是"真的滑一下看页面动不动"：浏览器没有脚本接口能触发
+    //      滚动链（赋 scrollTop 与合成 wheel 事件都不产生滚动链），可判定的只剩"闸装没装"。
+    //
+    // 刻意**不**在此处断言「目录必须可滚」：本段造数文章 `E2E-目录长文` 只有 11 个标题
+    // （H2x3 + H3x3 + H4x5），展开到不动点实测约 233px，在 1200px 视口里永远不可能滚动 ——
+    // 拿它断言"可滚"是前提错误（第一版就是这么写红的）。
+    // 长目录的可滚动性由 E7f 承担：它用的长文目录实测 1163~1990px，
+    // 一旦不能滚动，bottom 就会冲出视口，E7f 的"整体可见"会立刻红。
+    const e7h = await evalJs(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const nav = document.querySelector('nav[aria-label="文章目录"]')
+      if (!nav) return { ok: false, reason: '目录未渲染' }
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight
+      const overscroll = getComputedStyle(nav).overscrollBehaviorY
+      const rect = () => nav.getBoundingClientRect()
+      const at = async (frac) => {
+        window.scrollTo({ top: Math.round(scrollable * frac), behavior: 'instant' })
+        await wait(320)
+        const r = rect()
+        return { frac, top: Math.round(r.top), bottom: Math.round(r.bottom) }
+      }
+      const s20 = await at(0.2)
+      const s90 = await at(0.9)
+      const s20again = await at(0.2)
+      const sEnd = await at(1)
+      window.scrollTo({ top: 0, behavior: 'instant' })
+      await wait(280)
+      const tops = [s20.top, s90.top, s20again.top, sEnd.top]
+      return {
+        ok: true,
+        overscroll,
+        geomA: [s20.top, s20.bottom],
+        geomB: [s20again.top, s20again.bottom],
+        geomDeep: [s90.top, s90.bottom],
+        drift: Math.max(
+          Math.abs(s20.top - s20again.top),
+          Math.abs(s20.bottom - s20again.bottom),
+        ),
+        tops,
+        pinned: tops.every((t) => t === tops[0]),
+        deepTop: sEnd.top,
+        deepBottom: sEnd.bottom,
+        deepFullyVisible: sEnd.top >= 0 && sEnd.bottom <= window.innerHeight,
+        navDims: nav.scrollHeight + '/' + nav.clientHeight,
+      }
+    })()`, true)
+    record(
+      'E7h 目录滚动与正文滚动互不干扰（面板不漂移 + overscroll:contain 切断滚动链）',
+      e7h?.ok === true &&
+        e7h.overscroll === 'contain' &&
+        e7h.drift === 0 &&
+        e7h.pinned === true &&
+        e7h.deepFullyVisible === true,
+      e7h?.ok !== true
+        ? (e7h?.reason ?? '目录几何读不回来')
+        : `overscroll-behavior-y=${e7h.overscroll}` +
+          `${e7h.overscroll === 'contain' ? '' : ' [BAD] 未切断滚动链，目录滚到底会带走正文'}；` +
+          `同一 scrollY 两次采样 top/bottom=${JSON.stringify(e7h.geomA)}->${JSON.stringify(e7h.geomB)}` +
+          `（深滚处 ${JSON.stringify(e7h.geomDeep)}），漂移=${e7h.drift}` +
+          `${e7h.drift !== 0 ? ' [BAD] 面板随页面漂移' : ''}；` +
+          `面板 top 在三个滚动位置为 ${JSON.stringify(e7h.tops)}（钉住=${e7h.pinned}）` +
+          `${e7h.pinned ? '' : ' [BAD] 位置随滚动变化 → 没吸住'}；` +
+          `滚到页尾时 top=${e7h.deepTop}/bottom=${e7h.deepBottom}` +
+          `${e7h.deepFullyVisible ? '' : ' [BAD] 未整体留在视口内 → 被父容器带走了'}；` +
+          `目录 ${e7h.navDims}`,
+    )
+
+    // E7g 正文列宽与行宽：**"感觉正文好窄"这类问题只有量出来才守得住**。
+    //
+    // 一行多少字不硬编码：用 span 实测「一个汉字多宽」，再用 列宽 / 字宽 算出来。
+    // 字号或字体一变，这个比值就跟着变 —— 那正是我们要盯的东西。
+    // 目标区间来自仓库自己的口径（tailwind.config.js 里 maxWidth.content 写着
+    // 「中文正文每行 38~42 字是舒适区」）与参考站实测（873px / 18px / 45 字）的交集。
+    const e7g = await evalJs(`(() => {
+      const article = document.querySelector('article')
+      const col = article?.querySelector('.article-column')
+      const p = article?.querySelector('.prose p')
+      const aside = article?.querySelector('aside')
+      if (!col || !p) return { ok: false, reason: '找不到正文列或正文段落' }
+      const cs = getComputedStyle(p)
+      const span = document.createElement('span')
+      span.style.cssText = 'position:absolute;visibility:hidden;font:' + cs.font
+      span.textContent = '测'.repeat(50)
+      document.body.appendChild(span)
+      const charWidth = span.getBoundingClientRect().width / 50
+      span.remove()
+      const colWidth = col.getBoundingClientRect().width
+      return {
+        ok: true,
+        columnWidth: Math.round(colWidth),
+        charWidth: Math.round(charWidth * 100) / 100,
+        charsPerLine: Math.floor(colWidth / charWidth),
+        fontSize: cs.fontSize,
+        lineHeight: cs.lineHeight,
+        asideVisible: Boolean(aside) && getComputedStyle(aside).display !== 'none',
+        asideWidth: aside ? Math.round(aside.getBoundingClientRect().width) : 0,
+        viewport: window.innerWidth,
+      }
+    })()`)
+    record(
+      'E7g 正文列宽与行宽：760px 列 / 一行 38~46 个中文字（"正文太窄"的几何判据）',
+      e7g?.ok === true &&
+        e7g.columnWidth >= 740 &&
+        e7g.columnWidth <= 900 &&
+        e7g.charsPerLine >= 38 &&
+        e7g.charsPerLine <= 46 &&
+        // xl 以上必须有目录列；它是详情页两栏的一半，缺了说明断点判断写错
+        e7g.asideVisible === true &&
+        e7g.asideWidth >= 200,
+      e7g?.ok !== true
+        ? (e7g?.reason ?? '正文列几何读不回来')
+        : `${e7g.viewport}px 视口：正文列 ${e7g.columnWidth}px、单字 ${e7g.charWidth}px → ` +
+          `一行 ${e7g.charsPerLine} 字；字号/行高 ${e7g.fontSize}/${e7g.lineHeight}；` +
+          `目录 ${e7g.asideWidth}px（可见=${e7g.asideVisible}）`,
+    )
+
+    // E7a–E7e 断言的是目录的**初始/默认折叠状态**（可见条目数、每个分支的 aria-expanded）。
+    // 那是一个「刚进页面」的状态，而它前面几条用例都会滚动页面 ——
+    // E7f 现在采样到 100%，把激活项带到文章最后一节，`revealActive` 于是展开了它的祖先分支，
+    // 于是 E7a 拿到 8 条而不是期望的 7 条（实测：E7a/E7b/E7c 一起红）。
+    // 这里显式重新进入文章，让折叠状态回到确定的初始值 ——
+    // 该段本来就是个新用例族，从干净状态开始才是它应有的前提。
+    await goto(ARTICLE, 2800)
+
+    const readToc = () => evalJs(`(() => {
+      const nav = document.querySelector('nav[aria-label="文章目录"]')
+      if (!nav) return { ok: false, reason: 'nav[aria-label="文章目录"] 未渲染' }
+      const links = [...nav.querySelectorAll('a[data-toc-id]')]
+      const toggles = [...nav.querySelectorAll('button[aria-expanded]')]
+      const toggleAll = [...nav.querySelectorAll('button')].find((b) => /全部(展开|收起)/.test(b.textContent.trim()))
+      return {
+        ok: true,
+        links: links.length,
+        ids: links.map((a) => a.getAttribute('data-toc-id')),
+        collapsed: toggles.filter((b) => b.getAttribute('aria-expanded') === 'false').length,
+        expanded: toggles.filter((b) => b.getAttribute('aria-expanded') === 'true').length,
+        toggleAllText: toggleAll ? toggleAll.textContent.trim() : '',
+        // 用 textContent 而不是 innerText：xl 以下侧栏是 display:none，innerText 会读成空串
+        text: nav.textContent.replace(/\\s+/g, ' '),
+      }
+    })()`)
+
+    // E7a 默认折叠：depth ≥ 3 的节点有折叠按钮且 aria-expanded=false，且它的子项**没有渲染**
+    const e7a = await readToc()
+    record(
+      'E7a 目录渲染 + 默认折叠：depth≥3 有折叠按钮且 aria-expanded=false，收起分支的子项不渲染',
+      e7a?.ok === true &&
+        e7a.links === 7 &&
+        e7a.collapsed === 3 &&
+        e7a.expanded === 2 &&
+        e7a.toggleAllText === '全部收起' &&
+        /子节甲/.test(e7a.text) &&
+        !/细节一/.test(e7a.text) &&
+        !/细节三/.test(e7a.text),
+      e7a?.ok !== true
+        ? (e7a?.reason ?? '目录状态没读回来（页面内异常）')
+        : `可见条目 ${e7a?.links} 条（全展开应为 11）；折叠按钮 aria-expanded=false ${e7a?.collapsed} 个 / true ${e7a?.expanded} 个；` +
+          `「全部收起」按钮文案=「${e7a?.toggleAllText}」；收起分支的 h4 不在 DOM 里=` +
+          `${!/细节一/.test(e7a?.text ?? '') && !/细节三/.test(e7a?.text ?? '')}`,
+    )
+
+    // E7b 折叠按钮：点击展开（aria-expanded 翻转 + 子项真的出现）、再点收回，且不误动同层别的分支
+    const e7b = await evalJs(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const nav = document.querySelector('nav[aria-label="文章目录"]')
+      if (!nav) return { ok: false, reason: 'nav[aria-label="文章目录"] 未渲染' }
+      const count = () => nav.querySelectorAll('a[data-toc-id]').length
+      const btn = nav.querySelector('button[aria-expanded="false"]')
+      if (!btn) return { ok: false, reason: '没有 aria-expanded=false 的折叠按钮（默认折叠没生效？）' }
+      const label = btn.getAttribute('aria-label') || ''
+      const before = count()
+      btn.click()
+      await wait(400)
+      const afterOpen = {
+        expanded: btn.getAttribute('aria-expanded'),
+        links: count(),
+        text: nav.textContent.replace(/\\s+/g, ' '),
+      }
+      btn.click()
+      await wait(400)
+      const afterClose = {
+        expanded: btn.getAttribute('aria-expanded'),
+        links: count(),
+        text: nav.textContent.replace(/\\s+/g, ' '),
+      }
+      return { ok: true, label, before, afterOpen, afterClose }
+    })()`, true)
+    record(
+      'E7b 折叠按钮：点击展开（aria-expanded=true 且子项出现）、再点收回，不误动别的分支',
+      e7b?.ok === true &&
+        /^展开/.test(e7b?.label ?? '') &&
+        e7b?.afterOpen?.expanded === 'true' &&
+        e7b?.afterOpen?.links === e7b?.before + 2 &&
+        /细节一/.test(e7b?.afterOpen?.text ?? '') &&
+        /细节二/.test(e7b?.afterOpen?.text ?? '') &&
+        !/细节三/.test(e7b?.afterOpen?.text ?? '') &&
+        e7b?.afterClose?.expanded === 'false' &&
+        e7b?.afterClose?.links === e7b?.before &&
+        !/细节一/.test(e7b?.afterClose?.text ?? ''),
+      e7b?.ok !== true
+        ? (e7b?.reason ?? '折叠状态没读回来（页面内异常）')
+        : `按钮 aria-label=「${e7b?.label}」；条目 ${e7b?.before} → 展开 ${e7b?.afterOpen?.links}` +
+          `（aria-expanded=${e7b?.afterOpen?.expanded}）→ 收回 ${e7b?.afterClose?.links}（aria-expanded=${e7b?.afterClose?.expanded}）；` +
+          `展开时同层另一分支仍收起（不含「细节三」）=${!/细节三/.test(e7b?.afterOpen?.text ?? '')}`,
+    )
+
+    // E7c 全部收起 / 全部展开。
+    // 「全部展开」必须跑到不动点：visibleNodes 只含"路径上没人收起"的节点，一轮快照展开不完，
+    // 只跑一轮会留下 h3 出现但仍收着、最深 h4 不出现的半开状态（本轮对计划原文的修正 1）。
+    // 所以判据取"最深 h4 是否出现"，而不是"按钮点了有没有反应"。
+    const e7c = await evalJs(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const nav = document.querySelector('nav[aria-label="文章目录"]')
+      if (!nav) return { ok: false, reason: 'nav[aria-label="文章目录"] 未渲染' }
+      const count = () => nav.querySelectorAll('a[data-toc-id]').length
+      const toggleAll = () => [...nav.querySelectorAll('button')].find((b) => /全部(展开|收起)/.test(b.textContent.trim()))
+      const before = count()
+      toggleAll().click()
+      await wait(500)
+      const folded = { links: count(), label: toggleAll().textContent.trim(), text: nav.textContent.replace(/\\s+/g, ' ') }
+      toggleAll().click()
+      await wait(700)
+      const unfolded = { links: count(), label: toggleAll().textContent.trim(), text: nav.textContent.replace(/\\s+/g, ' ') }
+      return { ok: true, before, folded, unfolded }
+    })()`, true)
+    record(
+      'E7c 「全部收起 / 全部展开」：收起只剩顶层，展开要跑到不动点（含最深 h4）',
+      e7c?.ok === true &&
+        e7c.before === 7 &&
+        e7c.folded.links === 3 &&
+        e7c.folded.label === '全部展开' &&
+        e7c.unfolded.links === 11 &&
+        e7c.unfolded.label === '全部收起' &&
+        /细节一/.test(e7c.unfolded.text) &&
+        /细节四/.test(e7c.unfolded.text),
+      e7c?.ok !== true
+        ? (e7c?.reason ?? '全部展开/收起状态没读回来（页面内异常）')
+        : `条目 ${e7c?.before} → 全部收起 ${e7c?.folded?.links}（按钮=「${e7c?.folded?.label}」）` +
+          `→ 全部展开 ${e7c?.unfolded?.links}（按钮=「${e7c?.unfolded?.label}」）；` +
+          `最深 h4 出现=${/细节一/.test(e7c?.unfolded?.text ?? '') && /细节四/.test(e7c?.unfolded?.text ?? '')}`,
+    )
+
+    // E7d 点章节：hash 变化 + 真的滚动 + **replaceState 语义**。
+    // replaceState 只能用"后退键去了哪里"来判：换成 pushState 或原生锚点，后退会停在
+    // 同一篇文章（只是把 hash 去掉）；用 replaceState 则回到上一篇页面。
+    // history.length 在 Chromium 里会被截断到 50，本脚本跑到这里必然到顶 —— 所以它只当
+    // 参考证据，不当判据（拿它当判据就是一条永远绿的假绿）。
+    await goto('/', 2200)
+    await goto(ARTICLE, 2400)
+    const e7d = await evalJs(`(async () => {
+      const nav = document.querySelector('nav[aria-label="文章目录"]')
+      const links = [...(nav ? nav.querySelectorAll('a[data-toc-id]') : [])]
+      const link = links[links.length - 1]
+      if (!link) return { ok: false, reason: '目录里没有可点击的章节' }
+      const href = link.getAttribute('href')
+      const historyBefore = history.length
+      const scrollBefore = Math.round(window.scrollY)
+      link.click()
+      await new Promise((r) => setTimeout(r, 1400))
+      return {
+        ok: true,
+        href,
+        hash: location.hash,
+        historyBefore,
+        historyAfter: history.length,
+        scrollBefore,
+        scrollAfter: Math.round(window.scrollY),
+      }
+    })()`, true)
+    // history.back() 会让当前执行上下文失效，所以分两步（与 C4c 同一处理）
+    await evalJs(`(() => { history.back(); return true })()`)
+    await sleep(2800)
+    const e7dBack = await evalJs(`(() => ({ path: location.pathname, hash: location.hash }))()`)
+    const e7dHashMatch =
+      Boolean(e7d?.hash) &&
+      decodeURIComponent(e7d?.hash ?? 'x') === decodeURIComponent(e7d?.href ?? 'y')
+    record(
+      'E7d 点章节：hash 变化 + 真的滚动 + replaceState 语义（后退回上一篇，而不是只去掉 hash）',
+      e7d?.ok === true &&
+        e7dHashMatch &&
+        e7d.scrollAfter > e7d.scrollBefore + 200 &&
+        e7dBack?.path === '/',
+      e7d?.ok !== true
+        ? (e7d?.reason ?? '章节点击结果没读回来（页面内异常）')
+        : `点击 href=${e7d?.href} → hash=${e7d?.hash}（一致=${e7dHashMatch}）；scrollY ${e7d?.scrollBefore} → ${e7d?.scrollAfter}；` +
+          `history.length ${e7d?.historyBefore} → ${e7d?.historyAfter}（Chromium 截断到 50，仅参考）；` +
+          `history.back() 落到 pathname=${e7dBack?.path}（replaceState 应为 /；pushState/原生锚点会停在 ${ARTICLE}）`,
+    )
+
+    // E7e 滚动高亮：当前章节必须带 aria-current="location"，而且是**视口顶部那一节**。
+    // 目标取正文最后一个标题（末章），并把它的位置精确摆进高亮带（rootMargin '-80px 0px -70% 0px'
+    // → 桌面 1200 高时高亮带是 y∈[80, 360]），所以 rectTop 也被当成断言的一部分：
+    // 位置没摆对时给出的失败信息是"前提不成立"，而不是让"没有高亮"背锅。
+    await goto(ARTICLE, 2600)
+    await waitFor(evalJs, `!!document.querySelector('.prose h2')`, 20000)
+    const e7e = await evalJs(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const headings = [...document.querySelectorAll('.prose h2, .prose h3, .prose h4')]
+      const target = headings[headings.length - 1]
+      if (!target || !target.id) return { ok: false, reason: '正文里找不到带 id 的标题' }
+      // 先回顶：让目标从"未进视口"变成"进入视口"，IntersectionObserver 才有回调
+      window.scrollTo({ top: 0, behavior: 'instant' })
+      await wait(500)
+      const absoluteTop = target.getBoundingClientRect().top + window.scrollY
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight
+      const desired = Math.max(0, Math.min(absoluteTop - 120, maxScroll))
+      window.scrollTo({ top: desired, behavior: 'instant' })
+      await wait(1400)
+      const rect = target.getBoundingClientRect()
+      const active = [...document.querySelectorAll('nav[aria-label="文章目录"] [aria-current="location"]')]
+      return {
+        ok: true,
+        id: target.id,
+        text: target.textContent.trim(),
+        rectTop: Math.round(rect.top),
+        desired: Math.round(desired),
+        maxScroll: Math.round(maxScroll),
+        activeCount: active.length,
+        activeIds: active.map((el) => el.getAttribute('data-toc-id')),
+      }
+    })()`, true)
+    record(
+      'E7e 滚动正文后当前章节带 aria-current="location"，且就是视口顶部那一节',
+      e7e?.ok === true &&
+        e7e.activeCount === 1 &&
+        e7e.activeIds[0] === e7e.id &&
+        e7e.rectTop >= 60 &&
+        e7e.rectTop <= 400,
+      e7e?.ok !== true
+        ? (e7e?.reason ?? '高亮状态没读回来（页面内异常）')
+        : `目标「${e7e?.text}」#${e7e?.id} 落在视口 y=${e7e?.rectTop}（高亮带 80–360px，maxScroll=${e7e?.maxScroll}）；` +
+          `aria-current="location" ${e7e?.activeCount} 个，id=${JSON.stringify(e7e?.activeIds)}`,
+    )
+
+    // ---- E8 移动端：电梯栏与 MobileToc 目录按钮不重叠 ------------------------------
+    // 计划原文的"截图比对 ≥ 12px"换成几何量：量两个按钮的 getBoundingClientRect()。
+    // 两个判据缺一不可：竖直间距 ≥ 12px（避让是否生效），水平方向确实重叠（否则"间距"
+    // 说的是两个不在同一列的东西，没有意义）。
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    })
+    await sleep(800)
+    await goto(ARTICLE, 2800)
+    const e8 = await evalJs(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const toc = document.querySelector('button[aria-label="打开文章目录"]')
+      if (!toc) return { ok: false, reason: 'MobileToc 目录按钮未渲染（<1280px 才显示）' }
+      window.scrollTo({ top: 0, behavior: 'instant' })
+      await wait(400)
+      const atZero = document.querySelectorAll('button[aria-label="返回顶部"]').length
+      window.scrollTo({ top: 520, behavior: 'instant' })
+      let top = null
+      for (let i = 0; i < 25 && !top; i += 1) {
+        await wait(200)
+        const el = document.querySelector('button[aria-label="返回顶部"]')
+        // 淡入期间 opacity 还是 0，等它真正可见再量
+        if (el && Number(getComputedStyle(el).opacity) > 0.5) top = el
+      }
+      if (!top) return { ok: false, reason: '滚过 300px 后返回顶部按钮未出现/未完成淡入', atZero }
+      const a = top.getBoundingClientRect()
+      const b = toc.getBoundingClientRect()
+      return {
+        ok: true,
+        atZero,
+        scrollY: Math.round(window.scrollY),
+        topRect: { left: Math.round(a.left), right: Math.round(a.right), top: Math.round(a.top), bottom: Math.round(a.bottom), w: Math.round(a.width), h: Math.round(a.height) },
+        tocRect: { left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), bottom: Math.round(b.bottom), w: Math.round(b.width), h: Math.round(b.height) },
+        gap: Math.round(b.top - a.bottom),
+        overlap: Math.round(Math.min(a.right, b.right) - Math.max(a.left, b.left)),
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+      }
+    })()`, true)
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 1200,
+      deviceScaleFactor: 1,
+      mobile: false,
+    })
+    await sleep(800)
+    record(
+      'E8 移动端（390×844）电梯栏不压住目录按钮：竖直间距 ≥ 12px 且同列重叠',
+      e8?.ok === true &&
+        e8?.atZero === 0 &&
+        (e8?.gap ?? -1) >= 12 &&
+        (e8?.overlap ?? 0) > 0,
+      e8?.ok !== true
+        ? `原因=${e8?.reason ?? '移动端按钮几何量没量到（页面内异常）'}`
+        : `视口 ${e8?.vw}×${e8?.vh}，scrollY=${e8?.scrollY}；返回顶部矩形 bottom=${e8?.topRect?.bottom}` +
+          `（${e8?.topRect?.w}×${e8?.topRect?.h}），目录按钮矩形 top=${e8?.tocRect?.top}` +
+          `（${e8?.tocRect?.w}×${e8?.tocRect?.h}）：竖直间距=${e8?.gap}px（阈值 12px），水平重叠=${e8?.overlap}px`,
+    )
+  }
 
   await shot('99-final')
 

@@ -17,6 +17,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useToast } from '@/composables/useToast'
 import { scheduleEnhancement } from '@/utils/codeHighlight'
+import { copyToClipboard } from '@/utils/clipboard'
 
 defineProps<{ html: string }>()
 
@@ -28,34 +29,6 @@ const DONE_MS = 1400
 
 /** 取消按需高亮的观察者（组件卸载时调用，避免 observer 泄漏）。 */
 let cancelEnhancement: (() => void) | null = null
-
-/**
- * 把代码写进剪贴板。
- *
- * `navigator.clipboard` 只在安全上下文（HTTPS / localhost）可用；
- * 局域网 IP 访问开发服务器时它会变成 undefined，所以要降级到隐藏 textarea 方案。
- */
-async function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // 权限被拒或焦点问题，继续走降级路径
-    }
-  }
-
-  const helper = document.createElement('textarea')
-  helper.value = text
-  helper.setAttribute('readonly', '')
-  helper.style.position = 'fixed'
-  helper.style.opacity = '0'
-  document.body.append(helper)
-  helper.select()
-  const ok = document.execCommand('copy')
-  helper.remove()
-  return ok
-}
 
 /** 事件委托：整块正文只挂一个监听器，几十个代码块也只有一个监听器开销。 */
 async function handleClick(event: MouseEvent): Promise<void> {
@@ -71,7 +44,7 @@ async function handleClick(event: MouseEvent): Promise<void> {
     return
   }
 
-  const ok = await copyText(source)
+  const ok = await copyToClipboard(source)
   if (!ok) {
     toast.error('浏览器不允许自动复制，请手动选中复制')
     return

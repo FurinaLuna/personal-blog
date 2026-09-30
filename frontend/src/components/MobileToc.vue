@@ -13,7 +13,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import TableOfContents from '@/components/TableOfContents.vue'
 import type { TocItem } from '@/utils/markdown'
 
-const props = defineProps<{ items: TocItem[] }>()
+const props = defineProps<{
+  items: TocItem[]
+  /**
+   * 浮动按钮的额外下边距（px）。
+   *
+   * 右下角可能不止一个悬浮件（当前是电梯栏，未来可能还有别的），
+   * 组件之间**不跨组件通信**，排布靠纯 CSS 常量约定（见 `ElevatorBar.vue` §3.4 的注释）。
+   * 这个 prop 留给「将来真有第三个悬浮件压上来时，由调用方统一算一次高度」的场景，
+   * 本期保持默认 0 —— 电梯栏用固定常量排在目录按钮正上方，不需要它。
+   */
+  bottomOffset?: number
+}>()
 
 const open = ref(false)
 const button = ref<HTMLButtonElement | null>(null)
@@ -75,6 +86,16 @@ watch(
 <template>
   <!-- xl 断点以下才显示：桌面端有常驻侧栏目录，两套并存只会互相干扰 -->
   <div v-if="hasToc" class="xl:hidden">
+    <!--
+      层叠顺序（改这里之前请先读完整段）：
+        遮罩 z-30 —— 压住正文，但**在**右下角悬浮件（电梯栏 z-40）之下。
+                      原先遮罩是 z-40，与电梯栏同级、DOM 又更靠前，于是电梯栏的
+                      「联系站长」弹层（困在电梯栏自己的 z-40 层叠上下文里）会被
+                      遮罩盖住 —— 抽屉开着时点联系站长，弹层根本不出现。
+        面板 z-50 —— 模态抽屉在最上层，盖过遮罩与电梯栏。
+        悬浮按钮（本组件的目录按钮、电梯栏）z-40 —— 高于遮罩：抽屉开着时点目录
+                      按钮能直接关掉它，这是既有交互，别改回 z-30 以下。
+    -->
     <Teleport to="body">
       <Transition
         enter-active-class="transition duration-150 ease-out"
@@ -84,7 +105,7 @@ watch(
       >
         <div
           v-if="open"
-          class="fixed inset-0 z-40 bg-ink/40 backdrop-blur-sm"
+          class="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm"
           @click="close"
         />
       </Transition>
@@ -122,11 +143,13 @@ watch(
       </Transition>
     </Teleport>
 
-    <!-- 浮动触发按钮 -->
+    <!-- 浮动触发按钮。竖直位置用内联 style 而不是 `bottom-6` 类：
+         基准值 24px（= bottom-6）加上调用方给的偏移量，两者只有一个来源 -->
     <button
       ref="button"
       type="button"
-      class="fixed bottom-6 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-brand-600 text-white shadow-lg transition-transform active:scale-95"
+      class="fixed right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-brand-600 text-white shadow-lg transition-transform active:scale-95"
+      :style="{ bottom: `${(props.bottomOffset ?? 0) + 24}px` }"
       :aria-expanded="open"
       aria-label="打开文章目录"
       @click="toggle"

