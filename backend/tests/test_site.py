@@ -314,6 +314,361 @@ class TestProfileUrlSafety:
         assert response.status_code == 422
 
 
+class TestProfileContactQrcodes:
+    """「联系站长」二维码弹层的配置（``site_profile.contact_qrcodes``）。
+
+    这一列与 ``social_links`` 完全同构，所以用例口径也照抄 ``TestProfileUrlSafety``：
+    **``image_url`` 是用户可控的 ``<img :src>``**，伪协议一律 422；
+    同时因为它是**读模型也会用到**的字段，校验只能待在写模型上（见下
+    ``test_legacy_dirty_qrcode_still_readable``）。
+    """
+
+    async def test_contact_qrcodes_roundtrip(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """四个字段（kind / label / image_url / value）必须原样落库并读得回来。
+
+        刻意覆盖两种 ``image_url``：绝对地址与站内相对路径 —— 后者是二维码图片
+        上传到本站媒体目录后的自然形态，不能只测外链。
+        """
+        payload = [
+            {
+                "kind": "wechat",
+                "label": "微信",
+                "image_url": "https://cdn.example.com/wechat.png",
+                "value": "my-wechat-id",
+            },
+            {"kind": "qq", "label": "QQ", "image_url": "/media/qq-qr.png", "value": "12345678"},
+        ]
+
+        response = await client.patch(
+            "/api/v1/site/profile", json={"contact_qrcodes": payload}, headers=admin_headers
+        )
+
+        assert response.status_code == 200
+        assert response.json()["contact_qrcodes"] == payload
+        # 回读公开 GET：只信写接口的返回值等于没验证落库
+        readback = (await client.get("/api/v1/site/profile")).json()
+        assert readback["contact_qrcodes"] == payload
+
+    async def test_label_defaults_to_empty_string(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """``label`` 可省略，缺省是空串（不是 ``None``）。
+
+        前端按 ``kind`` 显示「微信」/「QQ」；这里钉住的是**前后端接口约定**：
+        前端只需要判 ``label === ''``，不用同时处理 ``null``。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "wechat", "value": "me"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["contact_qrcodes"][0]["label"] == ""
+        readback = (await client.get("/api/v1/site/profile")).json()
+        assert readback["contact_qrcodes"][0]["label"] == ""
+
+    async def test_both_blank_entry_is_accepted(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """``image_url`` 与 ``value`` 都空**在数据层是合法的**（前端不渲染这一项）。
+
+        计划里写的「两者至少填一个」是**渲染约定**，不是写入约束：后台表单上
+        一行刚点「添加」还没填完就保存是常态，把它做成 422 只会让这种中间状态
+        存不下来，而这两项都空本身没有任何风险（前端直接跳过不渲染）。
+        这里把这个取舍钉住，避免以后有人"顺手"加一条至少填一个的校验。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "qq"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        entry = response.json()["contact_qrcodes"][0]
+        assert entry["image_url"] is None
+        assert entry["value"] is None
+
+    @pytest.mark.parametrize("bad_kind", ["weibo", "WECHAT", "wechat ", "", "wechat,qq"])
+    async def test_unknown_kind_rejected(
+        self, client: AsyncClient, admin_headers: dict[str, str], bad_kind: str
+    ) -> None:
+        """``kind`` 是白名单而不是自由文本：前端靠它选图标。
+
+        多一个取值就是在渲染层多一个「没图标可画」的分支，所以非 wechat / qq
+        一律 422（大写与带空格也拒——前端下拉框只会给出小写规范值，
+        放行变体只会让库里出现两种形态）。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": bad_kind, "value": "x"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 422
+        # 演示档案的初始值是空列表（见 seed），失败的那次写入不该留下任何条目
+        assert (await client.get("/api/v1/site/profile")).json()["contact_qrcodes"] == []
+
+    @pytest.mark.parametrize(
+        ("field", "too_long"),
+        [
+            ("label", "微" * 21),
+            # 20（前缀）+ 485 = 505 > 500
+            ("image_url", "https://example.com/" + "a" * 485),
+            ("value", "1" * 51),
+        ],
+    )
+    async def test_field_length_caps_enforced(
+        self, client: AsyncClient, admin_headers: dict[str, str], field: str, too_long: str
+    ) -> None:
+        """三个文本字段的上限与读模型 ``Field(max_length=...)`` 是同一组数字。
+
+        上限本身是**契约**：数据库列没有长度约束（JSON 里存着），
+        它是唯一一道闸；改了这里就必须同步改前端输入框的 maxlength，
+        所以用参数化把三个上限都变成可执行的断言。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "wechat", field: too_long}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "javascript:alert(1)",
+            "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+            "//evil.test/x",  # 协议相对地址：看着像站内路径，实际是跨域绝对地址
+            "java\nscript:alert(1)",  # 浏览器会把换行剥掉，等价于 javascript:
+        ],
+    )
+    async def test_dangerous_scheme_in_qrcode_rejected(
+        self, client: AsyncClient, admin_headers: dict[str, str], bad_url: str
+    ) -> None:
+        """二维码图片同样直接绑到 ``<img :src>``，伪协议必须 422 且不落库。
+
+        先存一条合法数据再发恶意请求：这样「回读确认没落库」才有意义 ——
+        空库上做这个断言是恒真的，等于没测。
+        """
+        good = [
+            {
+                "kind": "wechat",
+                "label": "微信",
+                "image_url": "https://example.com/qr.png",
+                "value": "me",
+            }
+        ]
+        saved = await client.patch(
+            "/api/v1/site/profile", json={"contact_qrcodes": good}, headers=admin_headers
+        )
+        assert saved.status_code == 200
+
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "wechat", "label": "恶意", "image_url": bad_url}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 422
+        # 整条 PATCH 被整体拒绝：库里仍然是上一次那条合法数据，没有部分写入
+        assert (await client.get("/api/v1/site/profile")).json()["contact_qrcodes"] == good
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\t", "\n  "])
+    async def test_blank_value_converges_to_null(
+        self, client: AsyncClient, admin_headers: dict[str, str], blank: str
+    ) -> None:
+        """只有空白的 ``value`` 也要收敛成 ``None``——它决定前台渲不渲染那一行。
+
+        前台的判据是 ``value !== null`` 才画「账号 + 复制」那一行，所以一个 ``"   "``
+        会渲染出**空文本 + 复制按钮**：用户点复制复制到空白，而且那一行看起来像
+        「二维码加载失败」。后端把「全为空白」当「没填」，前端那句 ``!== null``
+        才是可信的。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={
+                "contact_qrcodes": [
+                    {"kind": "wechat", "image_url": "https://example.com/qr.png", "value": blank}
+                ]
+            },
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["contact_qrcodes"][0]["value"] is None
+        assert (await client.get("/api/v1/site/profile")).json()["contact_qrcodes"][0][
+            "value"
+        ] is None
+
+    async def test_valid_value_keeps_inner_and_outer_spacing(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """**有效内容一律原样存**，只把「全为空白」判成没填。
+
+        收敛逻辑刻意用 ``not value.strip()`` 判空、而不是 ``value.strip()`` 再存：
+        「站长填什么就存什么」比「我们猜他想去掉空格」安全 —— 微信号里真出现空格时，
+        静默 trim 会让读者复制到一个**看起来一样但加不上**的号。
+        """
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "qq", "value": "  123 456  "}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["contact_qrcodes"][0]["value"] == "  123 456  "
+
+    @pytest.mark.parametrize("blank", ["   ", "\t"])
+    async def test_blank_avatar_converges_to_null(
+        self, client: AsyncClient, admin_headers: dict[str, str], blank: str
+    ) -> None:
+        """``avatar_url`` 的空白也必须收敛成 ``None``（修复「注释与行为不一致」）。
+
+        ``_clean_avatar`` 的 docstring 一直写着「空白视为没填、统一收敛成 ``None``」，
+        但实现只写了一行 ``_normalize_site_url``，而它对「非空但全是空白」是**报错**。
+        于是后台把头像输入框清空（提交 ``"  "``）会换来 422 —— 前端表现成「保存失败」，
+        站长改不了这个表单。这与二维码 ``image_url`` 是同一类字段、同一类坑，
+        所以用同一条规则；以前那条路径从来没有用例守着，这就是它一直没被发现的原因。
+        """
+        await client.patch(
+            "/api/v1/site/profile",
+            json={"avatar_url": "https://example.com/a.png"},
+            headers=admin_headers,
+        )
+
+        response = await client.patch(
+            "/api/v1/site/profile", json={"avatar_url": blank}, headers=admin_headers
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["avatar_url"] is None
+        assert (await client.get("/api/v1/site/profile")).json()["avatar_url"] is None
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\t"])
+    async def test_blank_image_url_converges_to_null(
+        self, client: AsyncClient, admin_headers: dict[str, str], blank: str
+    ) -> None:
+        """空串收敛成 ``None``，**不是 422**。
+
+        这是本字段与 ``avatar_url`` 刻意不同的地方（详见
+        ``ContactQrcodeInput._clean_image_url``）：后台「清空输入框 → 保存」是
+        撤下已上传二维码的唯一入口，如果照抄 ``avatar_url`` 的"空白即报错"，
+        站长就换不来"保存失败"以外的任何反馈。这条用例把该决定钉死 ——
+        以后谁改回 422，它会立刻变红。
+        """
+        url = "https://example.com/qr.png"
+        first = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "wechat", "image_url": url, "value": "me"}]},
+            headers=admin_headers,
+        )
+        assert first.status_code == 200
+        assert first.json()["contact_qrcodes"][0]["image_url"] == url
+
+        response = await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "wechat", "image_url": blank, "value": "me"}]},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["contact_qrcodes"][0]["image_url"] is None
+        readback = (await client.get("/api/v1/site/profile")).json()
+        assert readback["contact_qrcodes"][0]["image_url"] is None
+        # 只清掉图片：同一行里的微信号不受影响
+        assert readback["contact_qrcodes"][0]["value"] == "me"
+
+    async def test_contact_qrcodes_can_be_cleared_with_null(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """显式 ``null`` 清空整列（它必须在 ``site_service.NULLABLE_FIELDS`` 里）。
+
+        不在白名单里的可空字段收到 ``null`` 会被当作「不修改」，表现是
+        「点了清空但数据还在」—— 所以这条用例同时守住「清空真的生效」。
+        """
+        await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "qq", "value": "12345"}]},
+            headers=admin_headers,
+        )
+
+        response = await client.patch(
+            "/api/v1/site/profile", json={"contact_qrcodes": None}, headers=admin_headers
+        )
+
+        assert response.status_code == 200
+        assert response.json()["contact_qrcodes"] is None
+        assert (await client.get("/api/v1/site/profile")).json()["contact_qrcodes"] is None
+
+    async def test_contact_qrcodes_can_be_emptied_with_empty_list(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """空列表同样是「清空」：后台常见的形态是删掉每一行而不是传 null。
+
+        与 ``null`` 在展示层等价（前端判 falsy），两者都必须能存进去 ——
+        这里钉住的是「别把它当成"没填"跳过」。
+        """
+        await client.patch(
+            "/api/v1/site/profile",
+            json={"contact_qrcodes": [{"kind": "qq", "value": "12345"}]},
+            headers=admin_headers,
+        )
+
+        response = await client.patch(
+            "/api/v1/site/profile", json={"contact_qrcodes": []}, headers=admin_headers
+        )
+
+        assert response.status_code == 200
+        assert response.json()["contact_qrcodes"] == []
+        assert (await client.get("/api/v1/site/profile")).json()["contact_qrcodes"] == []
+
+    async def test_new_profile_starts_with_empty_qrcodes(self, client: AsyncClient) -> None:
+        """新建档案的初始值是可读的空列表，不是"字段缺失"。
+
+        前端拿到未配置的站点时不该看到 ``null`` 与"字段不存在"两种形态；
+        ``[]`` 与 ``null`` 在渲染层等价，但统一成一种能让前端只判 falsy 一次。
+        """
+        response = await client.get("/api/v1/site/profile")
+        assert response.status_code == 200
+        assert response.json()["contact_qrcodes"] == []
+
+    async def test_legacy_dirty_qrcode_still_readable(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """库里直接写进一条伪协议旧数据，读接口不能 500。
+
+        与 ``test_legacy_dirty_url_still_readable`` 同一个回归点：把校验器加到
+        ``ContactQrcode``（读模型）上，``SiteProfileRead.model_validate`` 就会在
+        序列化历史数据时抛错，表现为 ``GET /api/v1/site/profile`` 整站 500。
+        所以校验只属于 ``ContactQrcodeInput``。
+        """
+        # 绕开写入校验，模拟「校验上线之前就已经存在的行」：直接写库
+        from app.db.session import async_session_factory
+        from app.repositories import SiteRepository
+
+        async with async_session_factory() as session:
+            profile = await SiteRepository(session).get_or_create_profile()
+            profile.contact_qrcodes = [
+                {
+                    "kind": "wechat",
+                    "label": "旧数据",
+                    "image_url": "javascript:alert(1)",
+                    "value": None,
+                }
+            ]
+            await session.commit()
+
+        response = await client.get("/api/v1/site/profile")
+
+        assert response.status_code == 200
+        # 读得出来（前端有 safeExternalUrl 兜底，不会把它渲染成图片）
+        assert response.json()["contact_qrcodes"][0]["image_url"] == "javascript:alert(1)"
+
+
 class TestStats:
     async def test_stats_require_admin(
         self, client: AsyncClient, author_headers: dict[str, str]

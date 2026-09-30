@@ -17,6 +17,9 @@ const FALLBACK: SiteProfile = {
   icp: null,
   social_links: null,
   skills: null,
+  // 没有配置二维码就**不显示**入口：默认空数组/空值，前台自然不渲染联系站长按钮。
+  // 不在这里塞任何示例账号 —— 那会把「站长没配」变成一个错误展示的假联系方式。
+  contact_qrcodes: null,
   comment_need_approval: true,
   allow_guest_comment: true,
   // 档案取不到时**默认显示**登录入口：降级路径要和"站点默认行为"一致，
@@ -43,6 +46,14 @@ export const useSiteStore = defineStore('site', () => {
   const headline = computed(() => profile.value.headline ?? '')
   const socialLinks = computed(() => profile.value.social_links ?? [])
   const skills = computed(() => profile.value.skills ?? [])
+  /**
+   * 电梯栏「联系站长」弹层的条目。
+   *
+   * 与 `socialLinks` / `skills` 同构：把 `null` 收敛成空数组，组件里就不用到处写
+   * `?? []`，「没有配置」与「配置成空数组」两种等价状态在渲染层也自然合并成
+   * 同一个分支（都不渲染按钮）。
+   */
+  const contactQrcodes = computed(() => profile.value.contact_qrcodes ?? [])
   /**
    * 前台顶栏要不要显示「登录」入口。
    *
@@ -115,6 +126,7 @@ export const useSiteStore = defineStore('site', () => {
     headline,
     socialLinks,
     skills,
+    contactQrcodes,
     showLoginEntry,
     stats,
     statsError,

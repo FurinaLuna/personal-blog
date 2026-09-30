@@ -41,6 +41,13 @@ export type {
   UserRole,
   UserUpdatePayload,
 } from './user'
-export type { SiteProfile, SiteProfilePayload, SiteStats, SocialLink } from './site'
+export type {
+  ContactQrcode,
+  ContactQrcodeKind,
+  SiteProfile,
+  SiteProfilePayload,
+  SiteStats,
+  SocialLink,
+} from './site'
 export type { DailyViewStats } from './stats'
 export type { Revision, RevisionAuthorBrief } from './revision'

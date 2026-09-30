@@ -24,6 +24,7 @@ from app.schemas.series import SeriesBrief, SeriesCreate, SeriesRead, SeriesUpda
 from app.schemas.site import (
     ArchiveGroup,
     ArchiveItem,
+    ContactQrcode,
     SiteProfileRead,
     SiteProfileUpdate,
     SiteStats,
@@ -70,6 +71,7 @@ __all__ = [
     "CommentCreate",
     "CommentModerate",
     "CommentRead",
+    "ContactQrcode",
     "DailyViewStats",
     "ErrorBody",
     "GuestbookMessageAdminRead",

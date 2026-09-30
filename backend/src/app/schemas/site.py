@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -80,6 +81,63 @@ class SocialLinkInput(SocialLink):
         return cleaned
 
 
+class ContactQrcode(BaseModel):
+    """「联系站长」弹层里的一张二维码卡片。
+
+    **读模型**：只声明类型与长度上限，不放 ``@field_validator`` —— 理由与
+    ``SocialLink`` 完全相同（见模块 docstring 第 1 条）：这一层会被
+    ``SiteProfileRead.model_validate`` 用在**库里的旧数据**上，
+    校验器加在这里等于让历史数据把读接口打成 500。
+    """
+
+    kind: Literal["wechat", "qq"] = Field(description="决定图标与缺省展示名")
+    label: str = Field(default="", max_length=20, description="展示名，留空则前端按 kind 显示")
+    image_url: str | None = Field(default=None, max_length=500, description="二维码图片地址")
+    value: str | None = Field(default=None, max_length=50, description="微信号 / QQ 号")
+
+
+class ContactQrcodeInput(ContactQrcode):
+    """**写模型**：只在这里判定 ``image_url`` 的协议。"""
+
+    @field_validator("image_url")
+    @classmethod
+    def _clean_image_url(cls, value: str | None) -> str | None:
+        """空白输入收敛成 ``None``，而不是像 ``avatar_url`` 那样报「不能为空」。
+
+        差别来自**这个字段在表单里的用法**：它天然可空（「只填微信号不传二维码」
+        是常态），后台又是「清空输入框 → 保存」而不是「删掉整行」——
+        这里若照抄 ``_normalize_site_url`` 的空白即报错，站长就**没法把已上传的
+        二维码撤下来**：输入框留空提交换来一个 422，而 422 在前端看起来就是
+        「保存失败」。收敛成 NULL 后，「清空」这条路径与 ``avatar_url`` 传 ``null``
+        等价，前后端都只需要判一次 ``image_url === null``。
+
+        协议判定本身仍然复用 ``_normalize_site_url``：二维码地址同样是直接绑到
+        ``<img :src>`` 的用户可控值，``javascript:`` / ``data:`` / ``//host``
+        一个都不能放行。
+        """
+        if value is not None and not value.strip():
+            return None
+        return _normalize_site_url(value, field="二维码图片地址")
+
+    @field_validator("value")
+    @classmethod
+    def _clean_value(cls, value: str | None) -> str | None:
+        """同样的空白收敛，但理由不同：**它决定前台渲不渲染那一行**。
+
+        前台的门槛是 ``value !== null`` 才显示「账号 + 复制」那一行，所以一个
+        ``"   "`` 的 value 会渲染出一行**空文本 + 复制按钮**——用户点「复制」复制到
+        空白，而且看起来像二维码加载失败。后端把「只有空白」当成「没填」，
+        前端的 ``!== null`` 判断才是可信的。
+
+        注意**不 trim 中间与两端的有效内容**：微信号里的空格虽然少见，但
+        「站长填什么就存什么」比「我们猜他想去掉空格」更安全 —— 只在**全为空白**时
+        才收敛成 NULL。
+        """
+        if value is not None and not value.strip():
+            return None
+        return value
+
+
 class SiteProfileRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -93,6 +151,7 @@ class SiteProfileRead(BaseModel):
     icp: str | None = None
     social_links: list[SocialLink] | None = None
     skills: list[str] | None = None
+    contact_qrcodes: list[ContactQrcode] | None = None
     comment_need_approval: bool
     allow_guest_comment: bool
     show_login_entry: bool
@@ -110,6 +169,7 @@ class SiteProfileUpdate(BaseModel):
     icp: str | None = Field(default=None, max_length=100)
     social_links: list[SocialLinkInput] | None = None
     skills: list[str] | None = None
+    contact_qrcodes: list[ContactQrcodeInput] | None = None
     comment_need_approval: bool | None = None
     allow_guest_comment: bool | None = None
     show_login_entry: bool | None = None
@@ -123,7 +183,15 @@ class SiteProfileUpdate(BaseModel):
         让「前端用首字占位」只需要判断一次 ``avatar_url === null``。
         这里复用社交链接的规则（允许站内路径、拦伪协议）——两者是同一类字段，
         分成两套判定只会让其中一个慢慢漂移。
+
+        **空白串要显式收敛成 ``None``**（这里曾与文档不符）：``_normalize_site_url``
+        对「非空但全是空白」是**报错**，所以只写一行 ``return _normalize_site_url(...)``
+        的话，这段 docstring 承诺的语义根本没兑现——后台清空头像输入框（提交 ``"  "``）
+        会拿到一个 422，前端表现成「保存失败」，站长**存不了**这个表单。
+        现在与二维码的 ``image_url`` 用同一条规则：空白 → ``None``。
         """
+        if value is not None and not value.strip():
+            return None
         return _normalize_site_url(value, field="头像地址")
 
 
@@ -159,6 +227,8 @@ class ArchiveGroup(BaseModel):
 __all__ = [
     "ArchiveGroup",
     "ArchiveItem",
+    "ContactQrcode",
+    "ContactQrcodeInput",
     "SiteProfileRead",
     "SiteProfileUpdate",
     "SiteStats",

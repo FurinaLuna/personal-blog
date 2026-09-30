@@ -56,6 +56,7 @@ const PROFILE: SiteProfile = {
   comment_need_approval: true,
   allow_guest_comment: false,
   show_login_entry: true,
+  contact_qrcodes: null,
   updated_at: '2026-01-01T00:00:00Z',
 }
 
@@ -321,6 +322,11 @@ describe('SettingsView · 保存的 payload 口径', () => {
       show_login_entry: true,
       bio_md: '第一段简介',
       about_md: '## 关于我',
+      // 表单里没配二维码时提交**空数组**（不是 null）：后端的可空字段用 null 表示
+      // 「清空」，而「一个都没配」与「配过又被删光」在展示层完全等价，
+      // 统一成 [] 能让前台只判断一次 items.length。这条也顺手钉住
+      // 「保存设置不会把该字段整个漏掉」——漏掉会让站长的二维码配置永远存不进去。
+      contact_qrcodes: [],
     })
   })
 
@@ -553,6 +559,151 @@ describe('SettingsView · 社交链接增删', () => {
     await socialAddButton(wrapper).trigger('click')
     expect(socialSection(wrapper).text()).not.toContain('还没有添加链接。')
     expect(socialNames(wrapper)).toEqual([''])
+  })
+})
+
+/* ------------------------------------------------------------ 联系二维码 */
+
+/** 与 socialSection 同法：按区块标题文字定位。 */
+function qrcodeSection(wrapper: VueWrapper): DOMWrapper<Element> {
+  const found = wrapper
+    .findAll('section')
+    .find((item) => item.text().includes('联系二维码'))
+  if (!found) throw new Error('找不到「联系二维码」区块')
+  return found
+}
+
+function qrcodeAddButton(wrapper: VueWrapper): DOMWrapper<Element> {
+  const found = qrcodeSection(wrapper)
+    .findAll('button')
+    .find((item) => item.text().trim() === '添加')
+  if (!found) throw new Error('找不到二维码区块的「添加」按钮')
+  return found
+}
+
+function qrcodeRemoveButtons(wrapper: VueWrapper): DOMWrapper<Element>[] {
+  return qrcodeSection(wrapper)
+    .findAll('button')
+    .filter((item) => item.text().trim() === '移除')
+}
+
+function qrcodeField(wrapper: VueWrapper, index: number, label: string): DOMWrapper<Element> {
+  return qrcodeSection(wrapper).findAll(`input[aria-label="${label}"]`)[index] as DOMWrapper<Element>
+}
+
+describe('SettingsView · 联系二维码', () => {
+  it('未配置时显示空态文案，点「添加」追加一条默认微信行', async () => {
+    const { wrapper } = await mountSettings()
+
+    expect(qrcodeSection(wrapper).text()).toContain('还没有添加二维码。')
+
+    await qrcodeAddButton(wrapper).trigger('click')
+
+    expect(qrcodeSection(wrapper).text()).not.toContain('还没有添加二维码。')
+    expect(qrcodeRemoveButtons(wrapper)).toHaveLength(1)
+    // 默认给微信：绝大多数站长第一个要放的就是微信
+    const select = qrcodeSection(wrapper).get('select').element as HTMLSelectElement
+    expect(select.value).toBe('wechat')
+  })
+
+  it('最多 2 条：第 3 次只提示、不加行（D-电梯-5 的上限）', async () => {
+    const { wrapper } = await mountSettings()
+
+    await qrcodeAddButton(wrapper).trigger('click')
+    await qrcodeAddButton(wrapper).trigger('click')
+    expect(qrcodeRemoveButtons(wrapper)).toHaveLength(2)
+
+    await qrcodeAddButton(wrapper).trigger('click')
+
+    expect(qrcodeRemoveButtons(wrapper)).toHaveLength(2)
+    expect(lastToastMessage()).toBe('最多添加 2 个联系二维码')
+    expect(lastToastKind()).toBe('error')
+  })
+
+  it('点「移除」只删掉那一行', async () => {
+    const { wrapper } = await mountSettings()
+    vi.spyOn(siteApi, 'updateProfile').mockResolvedValue({ ...PROFILE })
+
+    await qrcodeAddButton(wrapper).trigger('click')
+    await qrcodeAddButton(wrapper).trigger('click')
+    await qrcodeField(wrapper, 0, '二维码图片地址').setValue('/media/qrcodes/wechat.png')
+    await qrcodeField(wrapper, 1, '二维码图片地址').setValue('/media/qrcodes/qq.png')
+
+    await qrcodeRemoveButtons(wrapper)[0]?.trigger('click')
+    await flushPromises()
+
+    expect(qrcodeRemoveButtons(wrapper)).toHaveLength(1)
+    expect((qrcodeField(wrapper, 0, '二维码图片地址').element as HTMLInputElement).value).toBe(
+      '/media/qrcodes/qq.png',
+    )
+  })
+
+  it('保存：空白输入收敛成 null，两项都空的行被丢掉，label 原样提交', async () => {
+    const update = vi.spyOn(siteApi, 'updateProfile').mockResolvedValue({ ...PROFILE })
+    const { wrapper } = await mountSettings()
+
+    // 第一行：只填了号，图片地址留空 → image_url 必须是 null（后端写模型会把
+    // 空白串当错误，而且「只填微信号」本来就是常态）
+    await qrcodeAddButton(wrapper).trigger('click')
+    await qrcodeField(wrapper, 0, '展示名').setValue('  加我微信  ')
+    await qrcodeField(wrapper, 0, '联系账号').setValue('  code-cat  ')
+
+    // 第二行：两项都空 → 整行丢弃（否则前台会渲染出一张什么都没有的空卡片）
+    await qrcodeAddButton(wrapper).trigger('click')
+
+    await save(wrapper)
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contact_qrcodes: [
+          { kind: 'wechat', label: '加我微信', image_url: null, value: 'code-cat' },
+        ],
+      }),
+    )
+  })
+
+  it('保存：kind 跟随下拉选择（把微信那行改成 QQ 就按 qq 提交）', async () => {
+    const update = vi.spyOn(siteApi, 'updateProfile').mockResolvedValue({ ...PROFILE })
+    const { wrapper } = await mountSettings()
+
+    await qrcodeAddButton(wrapper).trigger('click')
+    await qrcodeSection(wrapper).get('select').setValue('qq')
+    await qrcodeField(wrapper, 0, '二维码图片地址').setValue('/media/qrcodes/qq.png')
+    await save(wrapper)
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contact_qrcodes: [
+          { kind: 'qq', label: '', image_url: '/media/qrcodes/qq.png', value: null },
+        ],
+      }),
+    )
+  })
+
+  it('回填：服务端已有的二维码进表单，且是副本（改表单不会改到 store）', async () => {
+    vi.spyOn(siteApi, 'profile').mockResolvedValue({
+      ...PROFILE,
+      contact_qrcodes: [
+        { kind: 'qq', label: '答疑群', image_url: null, value: '123456789' },
+      ],
+    })
+
+    const { wrapper, site } = await mountSettings()
+
+    expect(qrcodeRemoveButtons(wrapper)).toHaveLength(1)
+    expect((qrcodeField(wrapper, 0, '展示名').element as HTMLInputElement).value).toBe('答疑群')
+    expect((qrcodeField(wrapper, 0, '联系账号').element as HTMLInputElement).value).toBe(
+      '123456789',
+    )
+    expect((qrcodeSection(wrapper).get('select').element as HTMLSelectElement).value).toBe('qq')
+
+    await qrcodeField(wrapper, 0, '展示名').setValue('改过了')
+    expect(site.profile.contact_qrcodes?.[0]?.label).toBe('答疑群')
+  })
+
+  it('回填：contact_qrcodes 为 null 时不报错，显示空态', async () => {
+    const { wrapper } = await mountSettings()
+    expect(qrcodeSection(wrapper).text()).toContain('还没有添加二维码。')
   })
 })
 

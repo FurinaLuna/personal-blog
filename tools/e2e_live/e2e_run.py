@@ -777,6 +777,23 @@ def c_r08():
     check(entry == truthy(db_entry),
           f"登录入口开关与库内不一致：接口 {entry!r} / 库内 {db_entry!r}")
 
+    # 电梯栏的「联系站长」入口按 contact_qrcodes 决定渲不渲染。两个坑必须一起钉住：
+    #   1. `.get()` 拿到 None 时前端把它当「没配」→ 入口静默消失，所以**先断言键存在**，
+    #      不能直接断言 `is None`（那样字段整列缺失也会通过）；
+    #   2. 列是 JSON，各库（SQLite / PostgreSQL）都要能读出 list 或 NULL。
+    # 同时证明迁移真的跑了：这条键在升级前根本不存在，缺列时读接口不会返回它。
+    check("contact_qrcodes" in r.json(),
+          "站点档案缺少 contact_qrcodes 字段（前台「联系站长」二维码配置，新迁移的那一列）")
+    qrcodes = r.json()["contact_qrcodes"]
+    check(qrcodes is None or isinstance(qrcodes, list),
+          f"contact_qrcodes 类型不对（应为数组或 null）：{type(qrcodes).__name__}")
+    if isinstance(qrcodes, list):
+        for item in qrcodes:
+            check(isinstance(item, dict) and item.get("kind") in ("wechat", "qq"),
+                  f"contact_qrcodes 条目结构不对：{item!r}")
+            check(set(item) <= {"kind", "label", "image_url", "value"},
+                  f"contact_qrcodes 条目出现了计划外的键：{sorted(item)}")
+
 
 @case("R09", "访客读取", "P0",
       "阅读计数走独立端点，且详情条件请求真能命中 304（ETag 生效）")

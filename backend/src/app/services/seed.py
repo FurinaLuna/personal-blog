@@ -403,6 +403,12 @@ def _site_profile_values() -> dict:
             {"label": "RSS", "url": "/api/v1/articles", "icon": "rss"},
         ],
         "skills": ["Python", "FastAPI", "Vue", "PostgreSQL", "Docker"],
+        # 二维码刻意留空：演示档案可以编一条"看起来像"的社交链接，
+        # 但二维码是**图片**，编出来的地址只会是一张打不开的裂图——
+        # 而站长第一件事就是点开自己的「联系站长」弹层。
+        # 空列表与 NULL 在展示层等价（都表示"没配"），取空列表是因为
+        # 它的语义更明确："这个字段存在，只是还没有条目"。
+        "contact_qrcodes": [],
         "comment_need_approval": True,
         "allow_guest_comment": True,
     }

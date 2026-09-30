@@ -28,6 +28,7 @@ NULLABLE_FIELDS = frozenset(
         "icp",
         "social_links",
         "skills",
+        "contact_qrcodes",
     }
 )
 

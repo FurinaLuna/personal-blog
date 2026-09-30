@@ -70,6 +70,7 @@ function makeProfile(overrides: Partial<SiteProfile> = {}): SiteProfile {
     comment_need_approval: true,
     allow_guest_comment: true,
     show_login_entry: true,
+    contact_qrcodes: null,
     updated_at: '2026-09-14T00:00:00Z',
     ...overrides,
   }

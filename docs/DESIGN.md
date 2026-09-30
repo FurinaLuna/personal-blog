@@ -475,11 +475,22 @@ Store (stores/)          跨页面共享的状态：登录态 / 主题 / 站点�
 
 #### site_profile（单行表）
 
-`owner_name`、`headline`、`avatar_url`、`bio_md`、`about_md`、`email`、`location`、`icp`、`social_links`(JSON)、`skills`(JSON)、`comment_need_approval`(bool)、`allow_guest_comment`(bool)、`show_login_entry`(bool)。
+`owner_name`、`headline`、`avatar_url`、`bio_md`、`about_md`、`email`、`location`、`icp`、`social_links`(JSON)、`skills`(JSON)、`contact_qrcodes`(JSON)、`comment_need_approval`(bool)、`allow_guest_comment`(bool)、`show_login_entry`(bool)。
 
 > `show_login_entry` 是**入口开关而不是权限开关**：它只决定前台顶栏渲不渲染「登录」链接，
 > `/login` 路由与 `/auth/login` 接口始终可用 —— 那正是站长自己还能进得去的保证
 > （已有回归用例钉住这条分界线）。已登录时的「后台」入口不受它影响。
+
+> `contact_qrcodes` 是电梯栏「联系站长」弹层的数据源，元素形状为
+> `{ kind: "wechat"|"qq", label: str, image_url: str|null, value: str|null }`。
+> 两条与 `social_links` 同源的设计约束：
+>
+> 1. **读写模型必须分离**（`ContactQrcode` 读 / `ContactQrcodeInput` 写）。校验器只能加在
+>    写模型上：响应模型会 `model_validate` **库里的旧数据**，校验器加到读模型会让一条历史
+>    脏数据把 `GET /site/profile` 打成整站 500 —— 这个坑 `social_links[].url` 已经踩过一次。
+> 2. **空白输入收敛成 `null`，不报 422**。前台按 `value !== null` 决定画不画「账号 + 复制」
+>    那一行，所以一个 `"   "` 会渲染出空文本 + 复制按钮。只在「全为空白」时收敛，
+>    有效内容原样存。（`avatar_url` 的同类不一致也在同一轮修掉了。）
 
 **为什么用单行表而不是 key-value 配置表？** 这些字段有明确的结构（数组、布尔），KV 表存进去就得手动序列化/反序列化，还会丢掉类型校验。单行表的查询也更简单（`WHERE id = 1`）。
 
