@@ -39,6 +39,7 @@ function makeProfile(overrides: Partial<SiteProfile> = {}): SiteProfile {
     comment_need_approval: true,
     allow_guest_comment: true,
     show_login_entry: true,
+    contact_qrcodes: null,
     updated_at: '2026-01-01T00:00:00Z',
     ...overrides,
   }
@@ -134,5 +135,58 @@ describe('SiteFooter · 社交链接', () => {
     const external = wrapper.findAll('a[target="_blank"]')
     expect(external).toHaveLength(1)
     expect(external[0]?.text()).toBe('RSS')
+  })
+})
+
+/**
+ * 个人介绍首段。
+ *
+ * 页脚只放得下一句话，而 `bio_md` 是完整的 Markdown（本站的写法是
+ * 「一句自我介绍 + 一段 C 代码的比喻」）。这几条守的就是"只取第一句、
+ * 且不把 Markdown 源码或代码块漏到页面上"。
+ */
+describe('SiteFooter · 个人介绍', () => {
+  it('只取首段，丢掉围栏代码块与行内标记', async () => {
+    vi.spyOn(siteApi, 'profile').mockResolvedValue(
+      makeProfile({
+        bio_md: [
+          '本人是**一个**喜欢写代码的码农。',
+          '',
+          '```c',
+          'int main() { return 0; }',
+          '```',
+        ].join('\n'),
+      }),
+    )
+
+    const { wrapper } = await mountFooter()
+
+    // 加粗标记要抹掉（页脚是纯文本，不渲染 Markdown）
+    expect(wrapper.text()).toContain('本人是一个喜欢写代码的码农。')
+    // 代码块既不显示，也不能把 ``` 或 int main 漏出来
+    expect(wrapper.text()).not.toContain('int main')
+    expect(wrapper.text()).not.toContain('```')
+  })
+
+  it('开头是空行时跳过，取第一段有内容的行', async () => {
+    vi.spyOn(siteApi, 'profile').mockResolvedValue(
+      makeProfile({ bio_md: '\n\n  真正的第一句。  \n\n第二句不该出现在页脚。' }),
+    )
+
+    const { wrapper } = await mountFooter()
+
+    expect(wrapper.text()).toContain('真正的第一句。')
+    expect(wrapper.text()).not.toContain('第二句不该出现在页脚')
+  })
+
+  it('没有个人介绍时不渲染空段落', async () => {
+    vi.spyOn(siteApi, 'profile').mockResolvedValue(makeProfile({ bio_md: null }))
+
+    const { wrapper } = await mountFooter()
+
+    // 副标题仍然在（它来自 headline），但不该多出一个空的介绍段
+    expect(wrapper.text()).toContain('小站')
+    expect(wrapper.findAll('p').length).toBeGreaterThan(0)
+    expect(wrapper.text()).not.toContain('null')
   })
 })

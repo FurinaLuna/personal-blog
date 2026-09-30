@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import SiteUptime from '@/components/SiteUptime.vue'
 import { useSiteStore } from '@/stores/site'
 import { safeExternalUrl } from '@/utils/format'
 
@@ -22,6 +23,28 @@ const links = computed(() =>
     .map((link) => ({ ...link, href: safeExternalUrl(link.url) }))
     .filter((link): link is typeof link & { href: string } => link.href !== null),
 )
+
+/**
+ * 个人介绍的首段（页脚用）。
+ *
+ * `bio_md` 是 Markdown，页脚只放得下一句话，所以取**第一个段落**：
+ * 先去掉代码块（旧站的个人介绍里紧跟一段 C 代码的比喻），
+ * 再取第一个非空行，最后抹掉 `**加粗**` 这类行内标记。
+ *
+ * 为什么不用 MarkdownRenderer：页脚是每个页面都渲染的地方，
+ * 为一行文字引入完整渲染 + 消毒管线，收益远小于成本；
+ * 而且渲染出的 `<p>` 嵌在 `<p>` 里会产生非法 HTML。
+ */
+const intro = computed(() => {
+  const firstParagraph = (site.profile.bio_md ?? '')
+    // 围栏代码块整体丢弃（``` 到 ``` 之间，含语言标注那行）
+    .replace(/```[\s\S]*?```/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+
+  return (firstParagraph ?? '').replace(/\*\*/g, '')
+})
 </script>
 
 <template>
@@ -32,6 +55,16 @@ const links = computed(() =>
           <p class="text-sm font-medium text-ink">{{ site.title }}</p>
           <p class="mt-2 text-sm leading-relaxed text-ink-soft">
             {{ site.headline || '记录技术、生活，以及一切值得写下来的东西。' }}
+          </p>
+          <!-- 个人介绍（旧站「关于」页首段），只取第一段：
+               `bio_md` 里还跟着一段 C 代码的比喻，两行正文放不下，
+               完整内容在「关于」页。这里用 firstParagraph 而不是直接渲染 markdown ——
+               页脚只需要一句话，引入渲染器会把 `site-uptime` 这类无害内容也变成 DOM。 -->
+          <p
+            v-if="intro"
+            class="mt-2 text-sm leading-relaxed text-ink-soft"
+          >
+            {{ intro }}
           </p>
         </div>
 
@@ -62,7 +95,11 @@ const links = computed(() =>
       <div
         class="mt-8 flex flex-col gap-2 border-t border-border pt-5 text-xs text-ink-faint sm:flex-row sm:items-center sm:justify-between"
       >
-        <p>© {{ year }} {{ site.title }}. 保留所有权利。</p>
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
+          <p>© {{ year }} {{ site.title }}. 保留所有权利。</p>
+          <!-- 建站时长：对应旧站页脚由 /js/timeDate.js 写入的那一行 -->
+          <SiteUptime />
+        </div>
         <p v-if="site.profile.icp">{{ site.profile.icp }}</p>
       </div>
     </div>

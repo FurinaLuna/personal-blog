@@ -41,6 +41,7 @@ function makeProfile(overrides: Partial<SiteProfile> = {}): SiteProfile {
     comment_need_approval: true,
     allow_guest_comment: true,
     show_login_entry: true,
+    contact_qrcodes: null,
     updated_at: '2026-01-01T00:00:00Z',
     ...overrides,
   }
@@ -329,6 +330,9 @@ describe('AboutView · 自我介绍（Markdown）', () => {
 describe('AboutView · head', () => {
   it('浏览器标题为「关于」', async () => {
     await mountAbout()
-    expect(document.title).toBe('关于 · 个人博客')
+    // 标题里的站点名跟随站名，而不是某个写死在代码里的常量：
+    // 这里 mock 的 owner_name 是 '小站'，就应该是 '关于 · 小站'。
+    // 此前 useHead / router 各自写死 '个人博客'，把站名改成别的也永远显示旧名。
+    expect(document.title).toBe('关于 · 小站')
   })
 })

@@ -11,6 +11,8 @@
 import { onBeforeUnmount, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { useSiteDescription, useSiteName } from '@/composables/useSiteName'
+
 /** schema.org 的结构化数据对象。字段随类型不同，这里不做收窄。 */
 export type JsonLd = Record<string, unknown>
 
@@ -33,8 +35,6 @@ export interface PageMeta {
   jsonLd?: JsonLd | null
 }
 
-const SITE_SUFFIX = '个人博客'
-const DEFAULT_DESCRIPTION = '记录技术、生活，以及一切值得写下来的东西。'
 /** 固定 id：管理同一个节点比每次插入再清理要可靠得多 */
 const JSON_LD_ID = 'blog-json-ld'
 
@@ -109,10 +109,16 @@ export function useHead(meta: MaybeRefOrGetter<PageMeta>): void {
   // 卸载时还原到（可能已经切换的）新路由标题，而不是粗暴重置为站点名。
   const route = useRoute()
 
-  function apply(value: PageMeta): void {
+  // 站点名与兜底描述都来自 store（见 useSiteName 的说明：这两处以前各自写死）。
+  // **必须是响应式的**：站点资料是异步加载的，首帧拿到的还是兜底名；
+  // 写成模块级常量的话，「标签页标题跟站点名」这件事只在刷新后才偶尔正确。
+  const siteName = useSiteName()
+  const siteDescription = useSiteDescription()
+
+  function apply(value: PageMeta, name: string, fallbackDescription: string): void {
     const baseTitle = value.title ?? (route.meta.title as string | undefined)
-    const title = baseTitle ? `${baseTitle} · ${SITE_SUFFIX}` : SITE_SUFFIX
-    const description = value.description?.trim() || DEFAULT_DESCRIPTION
+    const title = baseTitle ? `${baseTitle} · ${name}` : name
+    const description = value.description?.trim() || fallbackDescription
 
     document.title = title
     setMeta('meta[name="description"]', { name: 'description' }, description)
@@ -121,7 +127,7 @@ export function useHead(meta: MaybeRefOrGetter<PageMeta>): void {
     setMeta('meta[property="og:type"]', { property: 'og:type' }, value.type ?? 'website')
     setMeta('meta[property="og:url"]', { property: 'og:url' }, window.location.href)
     // 站点名与语言：分享卡片上会显示「来自哪个站」，缺了会显得很粗糙
-    setMeta('meta[property="og:site_name"]', { property: 'og:site_name' }, SITE_SUFFIX)
+    setMeta('meta[property="og:site_name"]', { property: 'og:site_name' }, name)
     setMeta('meta[property="og:locale"]', { property: 'og:locale' }, 'zh_CN')
     setMeta('meta[name="twitter:card"]', { name: 'twitter:card' }, 'summary')
     setMeta('meta[name="twitter:title"]', { name: 'twitter:title' }, title)
@@ -140,9 +146,12 @@ export function useHead(meta: MaybeRefOrGetter<PageMeta>): void {
     setJsonLd(value.jsonLd)
   }
 
+  // 把「页面 meta」与「站点名 / 兜底描述」一起作为依赖：站点资料异步到位后，
+  // 这里会重跑一次，把 <title>、og:title、og:site_name 换成真实站名。
+  // 只监听 meta 是不够的 —— 那样首帧之后就再也没人修正那几个标签了。
   const stop = watch(
-    () => toValue(meta),
-    (value) => apply(value),
+    () => [toValue(meta), siteName.value, siteDescription.value] as const,
+    ([value, name, fallbackDescription]) => apply(value, name, fallbackDescription),
     { immediate: true, deep: true },
   )
 
@@ -150,6 +159,6 @@ export function useHead(meta: MaybeRefOrGetter<PageMeta>): void {
     stop()
     // 卸载时新路由往往已生效，route.meta.title 取到的是新页面的标题，
     // 正好把标题交还给路由层管理
-    apply({})
+    apply({}, siteName.value, siteDescription.value)
   })
 }

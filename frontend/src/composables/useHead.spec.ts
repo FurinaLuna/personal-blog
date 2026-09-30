@@ -6,11 +6,13 @@
  * 所以要专门锁住「以路由标题为底、业务标题为盖」这条契约。
  */
 import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
 import { useHead, type PageMeta } from '@/composables/useHead'
+import { useSiteStore } from '@/stores/site'
 
 function makeRouter(): Router {
   return createRouter({
@@ -43,6 +45,11 @@ function metaContent(selector: string): string | null {
 }
 
 beforeEach(() => {
+  // useHead 的站点名/兜底描述来自 site store（`useSiteName`），所以要有激活的 Pinia。
+  // 按仓库约定**不 mock 业务模块，只替换网络出口**：spy 掉 `siteApi.profile` 即可。
+  // 这里刻意让它保持未加载状态 —— 此时 store 用的是兜底名，
+  // 于是下面那些「· 个人博客」的断言测的正是"资料还没到"这一帧。
+  setActivePinia(createPinia())
   // 每个用例前清掉上一轮留下的标签，避免相互污染
   for (const el of document.head.querySelectorAll('meta[property^="og:"], meta[name="twitter:card"]')) {
     el.remove()
@@ -51,6 +58,7 @@ beforeEach(() => {
 
 afterEach(() => {
   document.title = ''
+  vi.restoreAllMocks()
 })
 
 describe('useHead 标题', () => {
@@ -236,5 +244,58 @@ describe('useHead JSON-LD', () => {
       mount(makeHost(() => ({ jsonLd: circular })), { global: { plugins: [router] } }),
     ).not.toThrow()
     expect(jsonLdText()).toBeNull()
+  })
+})
+
+/**
+ * 站点名的那条契约。
+ *
+ * 它守的是一个**真实的半改**：`router/index.ts` 与 `useHead.ts` 各自写死了
+ * '个人博客'，所以把站点名改成真实站名时，标签页仍然是「关于 · 个人博客」——
+ * 宿主改得动 store，改不动这两个常量。现在两者共用 `useSiteName`。
+ *
+ * 第二条用例还锁住了**异步**这件事：站点资料是挂载之后才回来的，
+ * 写成模块级常量的话首帧就再也修正不了。
+ */
+describe('useHead 站点名', () => {
+  it('站点资料未到位时用兜底名（不渲染成空标题）', async () => {
+    const router = makeRouter()
+    await router.push('/about')
+    await router.isReady()
+
+    mount(makeHost(() => ({})), { global: { plugins: [router] } })
+    expect(document.title).toBe('关于 · 个人博客')
+  })
+
+  it('站点资料到位后重写 <title>、og:title 与 og:site_name', async () => {
+    const site = useSiteStore()
+    const router = makeRouter()
+    await router.push('/about')
+    await router.isReady()
+
+    mount(makeHost(() => ({})), { global: { plugins: [router] } })
+    expect(document.title).toBe('关于 · 个人博客')
+
+    // 模拟 profile 加载完成（真实站点名来自库里的 owner_name）
+    site.$patch({ profile: { ...site.profile, owner_name: '芙芙`s Home' } as never })
+    await nextTick()
+
+    expect(document.title).toBe('关于 · 芙芙`s Home')
+    expect(metaContent('meta[property="og:title"]')).toBe('关于 · 芙芙`s Home')
+    expect(metaContent('meta[property="og:site_name"]')).toBe('芙芙`s Home')
+  })
+
+  it('没传 description 时用站点副标题兜底，而不是写死的演示文案', async () => {
+    const site = useSiteStore()
+    const router = makeRouter()
+    await router.push('/about')
+    await router.isReady()
+
+    mount(makeHost(() => ({})), { global: { plugins: [router] } })
+    site.$patch({ profile: { ...site.profile, headline: 'Something for nothing' } as never })
+    await nextTick()
+
+    expect(metaContent('meta[name="description"]')).toBe('Something for nothing')
+    expect(metaContent('meta[property="og:description"]')).toBe('Something for nothing')
   })
 })

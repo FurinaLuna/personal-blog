@@ -8,9 +8,12 @@
  * 2. **两个出口都要在**：回首页（不知道去哪时最稳）与看归档（想找回某篇旧文时）；
  * 3. 浏览器标题为「页面不存在」——多开几个标签页时不该显示成站名或上一个页面的标题。
  *
- * 说明：本组件不碰接口，所以没有网络出口要替换。
+ * 说明：本组件不碰接口，所以没有网络出口要替换。但**标题那条用例需要 Pinia** ——
+ * 标题由路由的 `afterEach` 写入，而站点名取自 `useSiteName()`（读 site store）。
+ * 这里刻意不 mock 站名：要覆盖的正是「资料还没加载时用兜底名」这条路径。
  */
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
@@ -42,6 +45,7 @@ async function mountNotFound() {
 
 beforeEach(() => {
   document.title = ''
+  setActivePinia(createPinia())
 })
 
 /* ------------------------------------------------------------ 用例 */

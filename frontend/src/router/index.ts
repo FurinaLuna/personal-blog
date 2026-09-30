@@ -15,6 +15,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { setAuthRequiredProbe } from '@/api/http'
+import { useSiteName } from '@/composables/useSiteName'
 import { useAuthStore } from '@/stores/auth'
 
 declare module 'vue-router' {
@@ -303,7 +304,11 @@ router.beforeEach(async (to) => {
 setAuthRequiredProbe(() => Boolean(router.currentRoute.value.meta.requiresAuth))
 
 router.afterEach((to) => {
-  const base = '个人博客'
+  // 站点名取自唯一来源（`useSiteName`）—— 这里原本写死 '个人博客'，
+  // 于是「改站点名」只改得动 store 那半边，标签页仍是旧名。
+  // 用 `useSiteName()` 而不是直接读 store：兜底值（空值 / 资料未加载）
+  // 与 useHead 共用同一份判断，不会两处漂移。
+  const base = useSiteName().value
   document.title = to.meta.title ? `${to.meta.title} · ${base}` : base
 })
 
