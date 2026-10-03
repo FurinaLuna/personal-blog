@@ -428,8 +428,13 @@ jobs:
           nohup npm run dev > /tmp/frontend.log 2>&1 &
 
       - name: 等待服务就绪
+        # 60s → 120s：CI 上这条**从未**真的触发过（失败时注解与日志都指向具体断言，
+        # 不是这里），所以这是一次纯余量调整，针对的是"runner 偶发慢"这类假失败：
+        # 冷启动要装依赖、Vite 首次预构建、SQLite 建库灌种子都在这一步之前。
+        # 代价只在真的起不来时多等 60 秒，换来的是不必用"重跑一次"来区分
+        # 「环境慢」与「代码坏」——后者才是这条步骤该保留的信号。
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:8000/ready >/dev/null 2>&1 \
                && curl -fsS http://127.0.0.1:5173/ >/dev/null 2>&1; then
               echo "两个服务都已就绪（等待 ${i}s）"
@@ -437,7 +442,7 @@ jobs:
             fi
             sleep 1
           done
-          echo "::error::服务在 60s 内没有就绪"
+          echo "::error::服务在 120s 内没有就绪"
           echo "----- backend.log -----"; tail -50 /tmp/backend.log
           echo "----- frontend.log -----"; tail -50 /tmp/frontend.log
           exit 1

@@ -1633,6 +1633,7 @@ try {
     let e5TopAtZero = -1
     let e5TopAfterScroll = -1
     let e5BackTo = -1
+    let e5Settle = null
     try {
       e5Off = await patchProfile({ contact_qrcodes: [] })
       await goto(ARTICLE, 2800)
@@ -1643,10 +1644,31 @@ try {
       await jumpScroll(420)
       await waitFor(evalJs, `document.querySelectorAll('${TOP_BTN}').length === 1`, 8000)
       e5TopAfterScroll = await topButtons()
-      // 点一下要真的回顶：组件用的是 smooth 滚动，轮询等它走完再读
-      await evalJs(`(() => { document.querySelector('${TOP_BTN}')?.click(); return true })()`)
-      await waitFor(evalJs, `window.scrollY < 60`, 8000)
-      e5BackTo = await evalJs(`Math.round(window.scrollY)`)
+      // 点一下要真的回顶。
+      //
+      // 这里等的是「滚动**停稳**」，而不是「滚到某个中间值以下就走」——两者的差别在
+      // 本仓库实测过：`window.scrollY` 是**异步**写回的，一个 `scrollY < 60` 的轮询
+      // 条件会在平滑动画途经 59 时立刻成立，随后读到的就是那个中间值（历史报告里
+      // 出现过 26）。停稳判据是「连续两次采样相同」，顺带把「动画被中断后停在半路」
+      // 也一并挡住（那种情况会一直停在同一个值上，随后被下面的落点断言判红）。
+      const e5Raw = await evalJs(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+        const btn = document.querySelector('${TOP_BTN}')
+        if (!btn) return { clicked: false }
+        btn.click()
+        let prev = -1
+        let samples = 0
+        for (let i = 0; i < 80; i++) {
+          await sleep(100)
+          const now = Math.round(window.scrollY)
+          samples++
+          if (now === prev) return { clicked: true, settled: now, samples, timedOut: false }
+          prev = now
+        }
+        return { clicked: true, settled: prev, samples, timedOut: true }
+      })()`)
+      e5Settle = e5Raw
+      e5BackTo = e5Raw?.settled ?? -1
     } finally {
       await patchProfile({ contact_qrcodes: contactBefore })
       await send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {})
@@ -1661,12 +1683,26 @@ try {
         e5ContactCount === 0 &&
         e5TopAtZero === 0 &&
         e5TopAfterScroll === 1 &&
+        e5Settle?.clicked === true &&
+        // 落点是「停稳后离顶部很近」，不是「精确等于 0」。
+        //
+        // 依据是两次独立回归的实测明细（shots/full/report.json 2026-09-30、
+        // shots/full-repro/report.json 2026-10-03）：这条的停稳值都是 13，而不是 0 ——
+        // 组件走的是 smooth 滚动，浏览器最终落点带一点固定偏差，且这个偏差两轮完全
+        // 一致（13/13），说明它不是随机抖动。写成 `=== 0` 会把它判成产品缺陷；
+        // 而阈值放到 20 以上就等于放弃这条判据（真正的功能损坏是停在半屏，几百像素）。
+        //
+        // 注意 smoke-check 里同一条按钮的判据是 `<10`，但那边是**另一页、另一次
+        // 滚动距离**（600px 处点击），不是同一口径 —— 不要因为「那边更严」就
+        // 把这里也收成 10，那会变成一条本机无法复现、只能靠 CI 试出来的红灯。
+        // 具体落点一律进 detail：一旦从 13 漂大（例如 26、59）失败信息里直接可见。
         e5BackTo >= 0 &&
         e5BackTo < 20,
       `PATCH=${e5Off?.status} 字段=${JSON.stringify(e5Off?.body?.contact_qrcodes)}` +
         `（本轮该页档案响应 ${JSON.stringify(e5ProfileSeen)}，证明是"读到空配置"而不是"档案没加载"）；` +
         `联系按钮 ${e5ContactCount} 个；scrollY=0 时回顶按钮 ${e5TopAtZero} 个、滚过 300 后 ${e5TopAfterScroll} 个；` +
-        `点击回顶后 scrollY=${e5BackTo}`,
+        `点击回顶后停稳在 scrollY=${e5BackTo}（采样 ${e5Settle?.samples ?? 0} 次` +
+        `${e5Settle?.timedOut ? '，80 次采样仍未停稳' : ''}）`,
     )
 
     // ---- E6 配置齐全 → 联系站长弹层（hover / 点击 / 二维码图 / 复制 / Esc 还原焦点） ----
