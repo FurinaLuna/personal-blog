@@ -893,6 +893,15 @@ async function main() {
     if (failed.length) {
       console.log('\n失败项:')
       for (const item of failed) console.log(`  - ${item.name} ${item.detail}`)
+      // CI 上把每条失败用 ::error:: 变成 job 注解：job 页与 annotations API 直接可读
+      // （本地运行没有 GITHUB_ACTIONS，输出不变）。% 与换行按转义规则编码。
+      if (process.env.GITHUB_ACTIONS) {
+        for (const item of failed) {
+          const title = item.name.replace(/[,:%"\n]/g, ';').slice(0, 100)
+          const detail = String(item.detail ?? '').replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A').slice(0, 400)
+          console.log(`::error title=${title}::${detail}`)
+        }
+      }
       process.exitCode = 1
     }
   } finally {

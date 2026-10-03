@@ -60,7 +60,8 @@ async function waitFor(evalJs, expression, timeoutMs = 12000) {
 
 const results = []
 const record = (name, ok, detail = '') => {
-  results.push(ok)
+  // 存对象而不是布尔：失败时还得知道**哪条**失败（CI 上要转成 job 注解）
+  results.push({ ok, name, detail })
   console.log(`${ok ? '✅' : '❌'} ${name}${detail ? ' — ' + detail : ''}`)
 }
 
@@ -532,6 +533,15 @@ try {
 } finally {
   chrome.kill()
 }
-const failed = results.filter((r) => !r).length
+const failed = results.filter((r) => !r.ok).length
 console.log(`\n${results.length - failed}/${results.length} 通过`)
+// CI 上把每条失败用 ::error:: 变成 job 注解：job 页与 annotations API 直接可读
+// （本地运行没有 GITHUB_ACTIONS，输出不变）。% 与换行按转义规则编码。
+if (failed && process.env.GITHUB_ACTIONS) {
+  for (const r of results.filter((x) => !x.ok)) {
+    const title = r.name.replace(/[,:%"\n]/g, ';').slice(0, 100)
+    const detail = String(r.detail ?? '').replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A').slice(0, 400)
+    console.log(`::error title=${title}::${detail}`)
+  }
+}
 process.exit(failed ? 1 : 0)

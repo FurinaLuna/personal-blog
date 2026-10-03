@@ -2349,6 +2349,16 @@ try {
   console.log('='.repeat(56))
   console.log(`${passed} / ${results.length} 通过`)
   if (failed) console.log(`失败：\n${results.filter((r) => !r.ok).map((r) => `  - ${r.name} (${r.detail})`).join('\n')}`)
+  // CI 上把每条失败用 ::error:: 变成 job 注解：job 页与 annotations API 直接可读，
+  // 不必下载 artifact 里的报告才能定位（本地运行没有 GITHUB_ACTIONS，输出不变）。
+  // % 与换行按 workflow command 的转义规则编码，title 去掉会破坏属性解析的字符。
+  if (failed && process.env.GITHUB_ACTIONS) {
+    for (const r of results.filter((x) => !x.ok)) {
+      const title = r.name.replace(/[,:%"\n]/g, ';').slice(0, 100)
+      const detail = String(r.detail ?? '').replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A').slice(0, 400)
+      console.log(`::error title=${title}::${detail}`)
+    }
+  }
   console.log(`数据基线：${diffs.length === 0 ? '一致 ✅' : `不一致 ⚠️  ${diffs.join('；')}`}`)
   console.log(`清理：${cleanupLog.filter((l) => !l.includes(':204')).length ? cleanupLog.join(' ') : '全部成功'}`)
   if (uncovered.length) console.log(`未覆盖：${uncovered.join('；')}`)
