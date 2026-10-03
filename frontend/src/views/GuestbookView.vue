@@ -220,7 +220,7 @@ async function submit(): Promise<void> {
               :href="safeExternalUrl(message.author_site)!"
               target="_blank"
               rel="noopener noreferrer nofollow"
-              class="text-xs text-brand-600 hover:text-brand-700"
+              class="text-xs text-link hover:text-link-hover"
             >
               网站
             </a>

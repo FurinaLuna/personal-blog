@@ -68,7 +68,7 @@ function scrollToTop(): void {
       <button
         v-if="showTop"
         type="button"
-        class="btn--icon flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-ink-soft shadow-lg transition-colors hover:text-brand-600"
+        class="btn--icon flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-ink-soft shadow-md transition-all hover:text-link hover:shadow-lg"
         aria-label="返回顶部"
         @click="scrollToTop"
       >

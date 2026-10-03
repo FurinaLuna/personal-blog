@@ -247,11 +247,11 @@ watch(
             <tbody class="divide-y divide-border">
               <tr v-for="item in articles.data.value.items" :key="item.id" class="hover:bg-surface-muted/60">
                 <td class="px-4 py-3">
-                  <RouterLink :to="`/article/${item.slug}`" class="font-medium text-ink hover:text-brand-600">
+                  <RouterLink :to="`/article/${item.slug}`" class="font-medium text-ink hover:text-link">
                     {{ item.title }}
                   </RouterLink>
                   <div class="mt-1 flex flex-wrap gap-1.5">
-                    <span v-if="item.is_top" class="text-[11px] text-brand-600">置顶</span>
+                    <span v-if="item.is_top" class="text-[11px] text-link">置顶</span>
                     <span v-if="item.category" class="text-[11px] text-ink-faint">
                       {{ item.category.name }}
                     </span>
@@ -278,7 +278,7 @@ watch(
                   <div class="flex items-center justify-end gap-3 text-xs">
                     <button
                       type="button"
-                      class="text-brand-600 hover:text-brand-700"
+                      class="text-link hover:text-link-hover"
                       @click="togglePublish(item)"
                     >
                       {{ item.status === 'published' ? '转草稿' : '发布' }}
@@ -333,7 +333,7 @@ watch(
             <div class="mt-3 flex items-center gap-4 text-xs">
               <button
                 type="button"
-                class="text-brand-600 hover:text-brand-700"
+                class="text-link hover:text-link-hover"
                 @click="togglePublish(item)"
               >
                 {{ item.status === 'published' ? '转草稿' : '发布' }}

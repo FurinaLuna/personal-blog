@@ -95,7 +95,7 @@ onMounted(() => {
           :key="option"
           type="button"
           class="rounded-md px-3 py-1.5 text-sm transition-colors"
-          :class="kind === option ? 'bg-surface-muted font-medium text-brand-600' : 'text-ink-soft'"
+          :class="kind === option ? 'bg-surface-muted font-medium text-link' : 'text-ink-soft'"
           @click="kind = option; page = 1; attachments.run()"
         >
           {{ option === 'all' ? '全部' : option === 'image' ? '图片' : '附件' }}
@@ -217,7 +217,7 @@ onMounted(() => {
             <p class="mt-0.5 text-[11px] text-ink-faint">{{ formatDateTime(item.created_at) }}</p>
 
             <div class="mt-2 flex items-center gap-2 text-[11px]">
-              <button type="button" class="text-brand-600 hover:text-brand-700" @click="copyMarkdown(item)">
+              <button type="button" class="text-link hover:text-link-hover" @click="copyMarkdown(item)">
                 复制 MD
               </button>
               <a

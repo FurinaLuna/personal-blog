@@ -20,7 +20,16 @@ const toast = useToast()
 
 const sidebarOpen = ref(false)
 
-const NAV = [
+/** 侧边栏导航项的类型。adminOnly 可选（默认对所有人可见），exact 可选（默认前缀匹配）。 */
+interface NavItem {
+  to: string
+  label: string
+  icon: string
+  exact?: boolean
+  adminOnly?: boolean
+}
+
+const NAV: NavItem[] = [
   { to: '/admin', label: '仪表盘', exact: true, icon: 'grid' },
   { to: '/admin/articles', label: '文章', icon: 'doc' },
   { to: '/admin/comments', label: '评论', icon: 'chat' },
@@ -33,9 +42,31 @@ const NAV = [
   { to: '/admin/settings', label: '站点设置', icon: 'cog', adminOnly: true },
 ]
 
+/**
+ * 侧边栏图标：内联 SVG，不引图标库。
+ *
+ * 为什么不引 lucide / heroicons：本项目只有后台这一处需要图标，
+ * 引一个完整图标库只为 10 个图标，打包体积不划算。
+ * 内联 SVG 零依赖、可随主题色（currentColor）变色，暗色模式自动适配。
+ *
+ * 图标风格统一：1.8 描边、round 端点、24×24 viewBox——与前台卡片里的
+ * 元信息图标保持同一套视觉语言。
+ */
+const ICONS: Record<string, string> = {
+  grid: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/>',
+  doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.4-4.2A8 8 0 1 1 21 12Z"/>',
+  tag: '<path d="M20.6 13.4 13 21l-9-9V3h9z"/><circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+  cog: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+}
+
 const visibleNav = computed(() => NAV.filter((item) => !item.adminOnly || auth.isAdmin))
 
-function isActive(item: (typeof NAV)[number]): boolean {
+function isActive(item: NavItem): boolean {
   return item.exact ? route.path === item.to : route.path.startsWith(item.to)
 }
 
@@ -63,14 +94,17 @@ onMounted(() => {
     >
       <div class="flex h-16 items-center gap-2 border-b border-border px-4">
         <RouterLink to="/" class="flex items-center gap-2 text-sm font-semibold text-ink">
-          <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-xs font-bold text-white">
+          <span
+            class="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold text-white shadow-sm"
+            style="background-image: var(--gradient-brand)"
+          >
             后
           </span>
           博客后台
         </RouterLink>
       </div>
 
-      <nav class="space-y-1 p-3">
+      <nav class="space-y-0.5 p-3">
         <RouterLink
           v-for="item in visibleNav"
           :key="item.to"
@@ -83,6 +117,19 @@ onMounted(() => {
           "
           @click="sidebarOpen = false"
         >
+          <!-- eslint-disable vue/no-v-html — ICONS 是代码内定义的静态 SVG 路径字符串，不涉及用户输入，无 XSS 风险 -->
+          <svg
+            class="h-[18px] w-[18px] shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            v-html="ICONS[item.icon]"
+          />
+          <!-- eslint-enable vue/no-v-html -->
           {{ item.label }}
         </RouterLink>
       </nav>
@@ -90,9 +137,12 @@ onMounted(() => {
       <div class="absolute inset-x-0 bottom-0 border-t border-border p-3">
         <RouterLink
           to="/"
-          class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-soft hover:bg-surface-muted hover:text-ink"
+          class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-soft transition-colors hover:bg-surface-muted hover:text-ink"
         >
-          ← 回到前台
+          <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+          回到前台
         </RouterLink>
       </div>
     </aside>

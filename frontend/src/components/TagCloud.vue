@@ -32,7 +32,7 @@ function sizeClass(count: number): string {
       v-for="tag in tags"
       :key="tag.id"
       :to="{ path: '/', query: { tag: tag.slug } }"
-      class="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-ink-soft transition-colors hover:border-brand-300 hover:text-brand-600"
+      class="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-ink-soft transition-colors hover:border-brand-300 hover:text-link"
       :class="sizeClass(tag.article_count)"
     >
       <span>{{ tag.name }}</span>

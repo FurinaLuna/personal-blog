@@ -55,20 +55,25 @@ const brandName = computed(() => site.title)
 
 <template>
   <header
-    class="sticky top-0 z-40 border-b border-border bg-bg/85 backdrop-blur transition-shadow"
-    :class="scrolled ? 'shadow-sm' : ''"
+    class="sticky top-0 z-40 border-b border-border/80 bg-bg/80 backdrop-blur-md transition-shadow"
+    :class="scrolled ? 'shadow-md' : ''"
   >
     <div class="mx-auto flex h-16 max-w-shell items-center gap-4 px-4 sm:px-6">
       <RouterLink
         to="/"
-        class="flex shrink-0 items-center gap-2 text-base font-semibold tracking-tight text-ink"
+        class="flex shrink-0 items-center gap-2.5 text-base font-semibold tracking-tight text-ink transition-opacity hover:opacity-90"
       >
+        <!-- 品牌标记：品牌色渐变方块 + 首字。
+             渐变给标记一点立体感，比纯色更有「这是一个 logo」的暗示。
+             圆角用 rounded-lg 而不是 rounded-full——方形标记在小尺寸下
+             比圆形更易识别文字。 -->
         <span
-          class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white"
+          class="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-white shadow-sm"
+          style="background-image: var(--gradient-brand)"
         >
           {{ brandName.slice(0, 1) }}
         </span>
-        <span class="hidden font-display sm:inline">{{ brandName }}</span>
+        <span class="hidden font-display text-[17px] sm:inline">{{ brandName }}</span>
       </RouterLink>
 
       <nav class="hidden flex-1 items-center gap-1 md:flex" aria-label="主导航">

@@ -79,19 +79,19 @@ function goPage(next: number): void {
 <template>
   <div class="mx-auto max-w-3xl">
     <header class="mb-6">
-      <h1 class="font-display text-2xl font-semibold tracking-tight text-ink">搜索</h1>
+      <h1 class="font-display text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">搜索</h1>
       <p class="mt-1.5 text-sm text-ink-soft">按相关度排序：标题命中的排在正文命中之前。</p>
 
-      <form class="mt-4 flex gap-2" @submit.prevent="submit">
+      <form class="mt-5 flex gap-2" @submit.prevent="submit">
         <input
           v-model="draft"
-          class="input"
+          class="input py-2.5"
           type="search"
           placeholder="搜索标题、摘要或正文…"
           aria-label="搜索文章"
           maxlength="100"
         />
-        <button type="submit" class="btn--primary shrink-0">搜索</button>
+        <button type="submit" class="btn--primary shrink-0 px-5">搜索</button>
       </form>
     </header>
 
@@ -147,7 +147,7 @@ function goPage(next: number): void {
 
     <p class="mt-8 text-center text-sm text-ink-faint">
       也可以
-      <RouterLink to="/" class="text-brand-600 hover:text-brand-700">回首页浏览全部文章</RouterLink>
+      <RouterLink to="/" class="text-link hover:text-link-hover">回首页浏览全部文章</RouterLink>
     </p>
   </div>
 </template>

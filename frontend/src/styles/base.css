@@ -14,6 +14,10 @@
 
   body {
     @apply bg-bg text-ink font-sans antialiased;
+    /* 背景微质感：一层极淡的径向渐变给页面空间深度，
+       纯平背景在大屏上会显得「塑料感」。详见 tokens.css --bg-texture。 */
+    background-image: var(--bg-texture);
+    background-attachment: fixed;
   }
 
   /* 键盘 Tab 聚焦必须可见——这是可访问性的底线，不能因为"不好看"就去掉 */

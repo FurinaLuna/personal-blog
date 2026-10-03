@@ -238,19 +238,19 @@ watch(
       <!-- 标题区 -->
       <!-- 标题区跟正文列同宽：`<article>` 现在是 1280px 的两栏容器，
            标题若跟着撑满会比正文宽 500px，一眼看上去是散的 -->
-      <header class="article-column border-b border-border pb-6">
+      <header class="article-column border-b border-border pb-7">
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <RouterLink
             v-if="article.data.value.category"
             :to="{ path: '/', query: { category: article.data.value.category.slug } }"
-            class="rounded-md bg-brand-50 px-2 py-1 font-medium text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
+            class="inline-flex items-center rounded-md bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-100 dark:bg-brand-900/40 dark:text-brand-200"
           >
             {{ article.data.value.category.name }}
           </RouterLink>
           <!-- 非公开状态才显示徽标：已发布/定时发布对作者都是「你能看到但访客未必」 -->
           <span
             v-if="article.data.value.status !== 'published' || article.data.value.is_scheduled"
-            class="rounded-md px-2 py-1 font-medium"
+            class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium"
             :class="statusBadgeClass(article.data.value.status, article.data.value.is_scheduled)"
           >
             {{
@@ -263,36 +263,68 @@ watch(
         </div>
 
         <!-- text-balance 防止长标题换行后末行只剩一两个字（孤词） -->
-        <h1 class="mt-3 text-balance font-display text-2xl font-semibold leading-snug tracking-tight text-ink sm:text-[28px]">
+        <h1 class="mt-4 text-balance font-display text-[26px] font-semibold leading-[1.3] tracking-tight text-ink sm:text-[32px]">
           {{ article.data.value.title }}
         </h1>
 
-        <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
-          <time :datetime="article.data.value.published_at ?? article.data.value.created_at">
+        <div class="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink-faint">
+          <time class="inline-flex items-center gap-1.5" :datetime="article.data.value.published_at ?? article.data.value.created_at">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" stroke-linecap="round" />
+            </svg>
             {{ publishedLabel }}
           </time>
           <!-- 内容确实改过时才出现。读者很在意「这是旧文还是刚更新过」 -->
-          <time v-if="updatedLabel" :datetime="article.data.value.updated_at">
+          <time v-if="updatedLabel" class="inline-flex items-center gap-1.5" :datetime="article.data.value.updated_at">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 12a9 9 0 1 1-3-6.7L21 8" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M21 3v5h-5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
             修订于 {{ updatedLabel }}
           </time>
-          <span>{{ formatReadingTime(article.data.value.reading_time) }}</span>
-          <span>{{ formatCount(viewCount) }} 次阅读</span>
-          <span>{{ article.data.value.comment_count }} 条评论</span>
+          <span class="inline-flex items-center gap-1.5">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            {{ formatReadingTime(article.data.value.reading_time) }}
+          </span>
+          <span class="inline-flex items-center gap-1.5">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
+              <circle cx="12" cy="12" r="2.5" />
+            </svg>
+            {{ formatCount(viewCount) }} 次阅读
+          </span>
+          <span class="inline-flex items-center gap-1.5">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.4-4.2A8 8 0 1 1 21 12Z" />
+            </svg>
+            {{ article.data.value.comment_count }} 条评论
+          </span>
 
-          <div v-if="canEdit" class="ml-auto flex items-center gap-2">
+          <div v-if="canEdit" class="ml-auto flex items-center gap-3">
             <RouterLink
               :to="`/admin/articles/${article.data.value.id}/edit`"
-              class="text-brand-600 hover:text-brand-700"
+              class="inline-flex items-center gap-1 text-link transition-colors hover:text-link-hover"
             >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M12 20h9" stroke-linecap="round" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linejoin="round" />
+              </svg>
               编辑
             </RouterLink>
-            <button type="button" class="text-red-500 hover:text-red-600" @click="removeArticle">
+            <button type="button" class="inline-flex items-center gap-1 text-red-500 transition-colors hover:text-red-600" @click="removeArticle">
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
               删除
             </button>
           </div>
         </div>
 
-        <div v-if="article.data.value.tags.length" class="mt-4 flex flex-wrap gap-2">
+        <div v-if="article.data.value.tags.length" class="mt-5 flex flex-wrap gap-2">
           <RouterLink
             v-for="tag in article.data.value.tags"
             :key="tag.id"
@@ -312,7 +344,7 @@ watch(
             <span class="font-medium text-ink">系列 · {{ article.data.value.series.name }}</span>
             <RouterLink
               :to="`/series/${article.data.value.series.slug}`"
-              class="ml-auto text-brand-600 hover:text-brand-700"
+              class="ml-auto text-link hover:text-link-hover"
             >
               查看全部 →
             </RouterLink>
@@ -321,7 +353,7 @@ watch(
             <RouterLink
               v-if="article.data.value.series_prev"
               :to="`/article/${article.data.value.series_prev.slug}`"
-              class="min-w-0 truncate text-ink-soft hover:text-brand-600"
+              class="min-w-0 truncate text-ink-soft hover:text-link"
             >
               ← {{ article.data.value.series_prev.title }}
             </RouterLink>
@@ -329,7 +361,7 @@ watch(
             <RouterLink
               v-if="article.data.value.series_next"
               :to="`/article/${article.data.value.series_next.slug}`"
-              class="min-w-0 truncate text-right text-ink-soft hover:text-brand-600"
+              class="min-w-0 truncate text-right text-ink-soft hover:text-link"
             >
               {{ article.data.value.series_next.title }} →
             </RouterLink>
@@ -382,31 +414,38 @@ watch(
       <ReadingProgress />
 
       <!-- 点赞：仅已发布文章可点赞（草稿/归档后端都会拒绝，前端直接不渲染） -->
-      <div v-if="article.data.value.status === 'published'" class="mt-10 flex justify-center">
+      <div v-if="article.data.value.status === 'published'" class="mt-12 flex justify-center">
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm transition-colors"
+          class="inline-flex items-center gap-2.5 rounded-full border px-6 py-3 text-sm font-medium transition-all"
           :class="
             liked
-              ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-200'
-              : 'border-border text-ink-soft hover:border-brand-300 hover:text-brand-600'
+              ? 'border-brand-300 bg-brand-50 text-brand-700 shadow-sm dark:bg-brand-900/30 dark:text-brand-200'
+              : 'border-border bg-surface text-ink-soft hover:border-brand-300 hover:text-link hover:shadow-sm'
           "
           :disabled="likeAction.running.value"
           @click="like"
         >
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-            <path d="M7 22V11l5-9a2 2 0 0 1 2 2v6h5a2 2 0 0 1 2 2.2l-1.3 7A2 2 0 0 1 17.7 22H7Z" />
-            <path d="M7 11H4v11h3" />
+          <svg
+            class="h-4 w-4 transition-transform"
+            :class="liked ? 'scale-110' : ''"
+            viewBox="0 0 24 24"
+            :fill="liked ? 'currentColor' : 'none'"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <path d="M7 22V11l5-9a2 2 0 0 1 2 2v6h5a2 2 0 0 1 2 2.2l-1.3 7A2 2 0 0 1 17.7 22H7Z" stroke-linejoin="round" />
+            <path d="M7 11H4v11h3" stroke-linejoin="round" />
           </svg>
           {{ liked ? '已点赞' : '点赞' }}
-          <span class="text-xs text-ink-faint">{{ article.data.value.like_count }}</span>
+          <span class="text-xs text-ink-faint">{{ formatCount(article.data.value.like_count) }}</span>
         </button>
       </div>
 
       <!-- 上下篇：跟正文列同宽 —— 两张卡片若贴在 1280px 的两端，会离正文很远 -->
       <nav
         v-if="article.data.value.prev || article.data.value.next"
-        class="article-column mt-10 grid gap-3 border-t border-border pt-6 sm:grid-cols-2"
+        class="article-column mt-12 grid gap-3 border-t border-border pt-8 sm:grid-cols-2"
       >
         <RouterLink
           v-if="article.data.value.prev"
@@ -414,7 +453,7 @@ watch(
           class="card card--hover p-4"
         >
           <p class="text-xs text-ink-faint">← 上一篇</p>
-          <p class="mt-1.5 line-clamp-2 text-sm font-medium text-ink">
+          <p class="mt-1.5 line-clamp-2 text-sm font-medium leading-snug text-ink">
             {{ article.data.value.prev.title }}
           </p>
         </RouterLink>
@@ -426,15 +465,15 @@ watch(
           class="card card--hover p-4 sm:text-right"
         >
           <p class="text-xs text-ink-faint">下一篇 →</p>
-          <p class="mt-1.5 line-clamp-2 text-sm font-medium text-ink">
+          <p class="mt-1.5 line-clamp-2 text-sm font-medium leading-snug text-ink">
             {{ article.data.value.next.title }}
           </p>
         </RouterLink>
       </nav>
 
       <!-- 相关文章：同样跟正文列同宽 -->
-      <section v-if="related.length" class="article-column mt-10 border-t border-border pt-6">
-        <h2 class="text-sm font-semibold text-ink">相关阅读</h2>
+      <section v-if="related.length" class="article-column mt-12 border-t border-border pt-8">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-ink-soft">相关阅读</h2>
         <ul class="mt-4 grid gap-3 sm:grid-cols-2">
           <li v-for="item in related" :key="item.id">
             <RouterLink :to="`/article/${item.slug}`" class="card card--hover flex gap-3 p-3">

@@ -48,12 +48,20 @@ const intro = computed(() => {
 </script>
 
 <template>
-  <footer class="mt-20 border-t border-border bg-surface">
-    <div class="mx-auto max-w-shell px-4 py-10 sm:px-6">
-      <div class="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+  <footer class="mt-24 border-t border-border bg-surface/60">
+    <div class="mx-auto max-w-shell px-4 py-12 sm:px-6">
+      <div class="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
         <div class="max-w-md">
-          <p class="text-sm font-medium text-ink">{{ site.title }}</p>
-          <p class="mt-2 text-sm leading-relaxed text-ink-soft">
+          <div class="flex items-center gap-2.5">
+            <span
+              class="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold text-white shadow-sm"
+              style="background-image: var(--gradient-brand)"
+            >
+              {{ site.title.slice(0, 1) }}
+            </span>
+            <p class="text-sm font-semibold text-ink">{{ site.title }}</p>
+          </div>
+          <p class="mt-3 text-sm leading-relaxed text-ink-soft">
             {{ site.headline || '记录技术、生活，以及一切值得写下来的东西。' }}
           </p>
           <!-- 个人介绍（旧站「关于」页首段），只取第一段：
@@ -68,15 +76,15 @@ const intro = computed(() => {
           </p>
         </div>
 
-        <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-          <RouterLink to="/archive" class="text-ink-soft transition-colors hover:text-brand-600">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+          <RouterLink to="/archive" class="text-ink-soft transition-colors hover:text-link">
             归档
           </RouterLink>
-          <RouterLink to="/guestbook" class="text-ink-soft transition-colors hover:text-brand-600">
+          <RouterLink to="/guestbook" class="text-ink-soft transition-colors hover:text-link">
             留言板
           </RouterLink>
           <!-- RSS 是后端直出的真实文件，不走前端路由，所以用 <a> 而不是 RouterLink -->
-          <a href="/feed.xml" target="_blank" rel="noopener noreferrer" class="text-ink-soft transition-colors hover:text-brand-600">
+          <a href="/feed.xml" target="_blank" rel="noopener noreferrer" class="text-ink-soft transition-colors hover:text-link">
             RSS
           </a>
           <a
@@ -85,7 +93,7 @@ const intro = computed(() => {
             :href="link.href"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-ink-soft transition-colors hover:text-brand-600"
+            class="text-ink-soft transition-colors hover:text-link"
           >
             {{ link.label }}
           </a>
@@ -93,7 +101,7 @@ const intro = computed(() => {
       </div>
 
       <div
-        class="mt-8 flex flex-col gap-2 border-t border-border pt-5 text-xs text-ink-faint sm:flex-row sm:items-center sm:justify-between"
+        class="mt-10 flex flex-col gap-2 border-t border-border pt-6 text-xs text-ink-faint sm:flex-row sm:items-center sm:justify-between"
       >
         <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
           <p>© {{ year }} {{ site.title }}. 保留所有权利。</p>

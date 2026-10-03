@@ -102,7 +102,7 @@ onMounted(() => {
             </time>
             <RouterLink
               :to="`/article/${item.slug}`"
-              class="text-sm text-ink-soft transition-colors hover:text-brand-600"
+              class="text-sm text-ink-soft transition-colors hover:text-link"
             >
               {{ item.title }}
             </RouterLink>

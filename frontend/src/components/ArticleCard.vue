@@ -62,15 +62,21 @@ function warm(): void {
 </script>
 
 <template>
-  <article class="card card--hover group" :class="featured ? 'p-6 sm:p-8' : 'p-6'">
+  <article
+    class="card card--hover group overflow-hidden"
+    :class="featured ? 'p-6 sm:p-7' : 'p-5 sm:p-6'"
+  >
     <!-- 移动端封面在上（16:9 横幅），桌面端封面在右；flex-col-reverse 保持 DOM 顺序不变 -->
-    <div class="flex flex-col-reverse gap-4 sm:flex-row">
+    <div class="flex flex-col-reverse gap-4 sm:flex-row sm:gap-5">
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
           <span
             v-if="article.is_top"
-            class="inline-flex items-center rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
+            class="inline-flex items-center gap-1 rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-200"
           >
+            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8 5.8 21.3l2.4-7.4L2 9.4h7.6z" />
+            </svg>
             置顶
           </span>
           <span
@@ -83,19 +89,19 @@ function warm(): void {
           <RouterLink
             v-if="article.category"
             :to="{ path: '/', query: { category: article.category.slug } }"
-            class="text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
+            class="text-xs font-medium text-link transition-colors hover:text-link-hover"
           >
             {{ article.category.name }}
           </RouterLink>
         </div>
 
         <h2
-          class="mt-2 font-semibold leading-snug"
-          :class="featured ? 'font-display text-2xl sm:text-[28px]' : 'text-lg'"
+          class="mt-2.5 font-semibold leading-snug tracking-tight"
+          :class="featured ? 'font-display text-[22px] sm:text-[26px]' : 'text-lg sm:text-[17px]'"
         >
           <RouterLink
             :to="`/article/${article.slug}`"
-            class="text-ink transition-colors group-hover:text-brand-600"
+            class="text-ink transition-colors group-hover:text-link"
             @mouseenter="warm"
             @focusin="warm"
           >
@@ -110,7 +116,7 @@ function warm(): void {
              不给出处用户只能靠猜"这条为什么会出现"。 -->
         <p
           v-if="snippetSegments.length"
-          :class="featured ? 'mt-3 line-clamp-3 text-base' : 'mt-2 line-clamp-2 text-sm'"
+          :class="featured ? 'mt-3 line-clamp-3 text-[15px]' : 'mt-2 line-clamp-2 text-sm'"
           class="leading-relaxed text-ink-soft"
         >
           <template v-for="(segment, index) in snippetSegments" :key="index">
@@ -120,7 +126,7 @@ function warm(): void {
         </p>
         <p
           v-else-if="article.summary"
-          :class="featured ? 'mt-3 line-clamp-3 text-base' : 'mt-2 line-clamp-2 text-sm'"
+          :class="featured ? 'mt-3 line-clamp-3 text-[15px]' : 'mt-2 line-clamp-2 text-sm'"
           class="leading-relaxed text-ink-soft"
         >
           <template v-for="(segment, index) in summarySegments" :key="index">
@@ -129,9 +135,17 @@ function warm(): void {
           </template>
         </p>
 
-        <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
+        <div
+          class="mt-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint"
+        >
           <time :datetime="article.published_at ?? article.created_at">{{ publishedLabel }}</time>
-          <span>{{ formatReadingTime(article.reading_time) }}</span>
+          <span class="inline-flex items-center gap-1">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            {{ formatReadingTime(article.reading_time) }}
+          </span>
           <span class="inline-flex items-center gap-1">
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
@@ -163,7 +177,7 @@ function warm(): void {
         v-if="article.cover_image"
         :to="`/article/${article.slug}`"
         class="block shrink-0 overflow-hidden rounded-lg bg-surface-muted"
-        :class="featured ? 'sm:w-56' : 'sm:w-40'"
+        :class="featured ? 'sm:w-60' : 'sm:w-44'"
         @mouseenter="warm"
         @focusin="warm"
       >
@@ -174,13 +188,12 @@ function warm(): void {
         <img
           :src="article.cover_image"
           :srcset="buildSrcset(article.cover_variants) || undefined"
-          sizes="(min-width: 640px) 160px, 100vw"
+          sizes="(min-width: 640px) 176px, 100vw"
           :alt="article.title"
           :loading="priority ? 'eager' : 'lazy'"
           :fetchpriority="priority ? 'high' : 'auto'"
           decoding="async"
-          class="aspect-video w-full object-cover transition-transform duration-[var(--duration-slow)] group-hover:scale-[1.03] sm:aspect-[10/7]"
-          :class="featured ? 'sm:w-56' : 'sm:w-40'"
+          class="aspect-video w-full object-cover transition-transform duration-[var(--duration-slow)] ease-out group-hover:scale-[1.04] sm:aspect-[10/7]"
         />
       </RouterLink>
     </div>

@@ -24,7 +24,12 @@
   --c-border: 230 226 219;
   --c-ink: 28 25 23;
   --c-ink-soft: 87 83 78;
-  --c-ink-faint: 168 162 158;
+  /* 最浅的文字层级。此前是 168 162 158（在 bg 上仅 2.4:1），但这个令牌
+     被大量用在 12~14px 的**真实信息文本**上——文章元信息、评论时间戳、
+     分页范围、代码块语言标签——全部不满足 WCAG AA 的 4.5:1。
+     加深到 110 105 100 后：bg 5.2 / surface 5.4 / surface-muted 4.9，
+     三种底全部达标，与 ink-soft（87 83 78）仍保有可辨的层次差。 */
+  --c-ink-faint: 110 105 100;
 
   /* ---------- 品牌色 ----------
      从 tailwind.config.js 迁入（色值不变，零视觉变化），恢复
@@ -46,6 +51,17 @@
   --c-accent: 180 83 9;
   --c-accent-soft: 254 243 199;
 
+  /* ---------- 链接色 ----------
+     链接是**语义角色**而不是某个固定的品牌色阶：亮色下用 brand-600，
+     暗色下必须换更浅的档位（brand-400）——brand-600（36 73 216）在暗色
+     底上只有 2.7:1，作为可交互元素的识别色远低于 WCAG AA 的 4.5:1。
+     此前全站散写 text-brand-600，暗色下约 40 处纯文本链接集体不达标；
+     收敛成令牌后，换肤与无障碍审计都只需要看这一处。
+     hover 档：亮色加深一档（700），暗色提亮一档（300），方向相反但
+     意图一致——「往当前主题的强调方向走一步」。 */
+  --c-link: 36 73 216; /* = brand-600，亮色视觉不变 */
+  --c-link-hover: 29 58 174; /* = brand-700 */
+
   /* ---------- 代码块 ---------- */
   --c-code-bg: 247 245 241;
   --c-code-ink: 41 37 36;
@@ -59,6 +75,50 @@
   /* ---------- 效果 ---------- */
   /* 卡片浮起阴影的基色；暗色下置为纯黑，避免在深色背景上出现灰雾 */
   --c-shadow: 28 25 23;
+
+  /* 阴影阶梯：三档，各有职责。
+     sm  贴地浮起：卡片 hover、下拉菜单（几乎不抬，只给一点分离感）
+     md  中层浮起：弹窗、抽屉面板、电梯栏按钮（明显脱离页面但不抢戏）
+     lg  高层浮起：模态对话框、全屏遮罩上的面板（最强分离感）
+
+     为什么用多层阴影而不是单层 box-shadow：
+     单层阴影要么太实（边缘硬）要么太虚（没重量）。三层叠加——
+     近距小模糊给边缘硬度、中距中模糊给主体厚度、远距大模糊给环境光遮蔽——
+     才是真实物理世界里「物体离桌面多远」的观感。
+
+     色值用 rgb(var(--c-shadow) / alpha) 而不是写死 rgba：
+     暗色模式下 --c-shadow 变成纯黑，阴影自动跟着变深，不需要 dark: 变体。 */
+  --shadow-sm:
+    0 1px 2px rgb(var(--c-shadow) / 0.04),
+    0 1px 3px rgb(var(--c-shadow) / 0.06);
+  --shadow-md:
+    0 2px 4px rgb(var(--c-shadow) / 0.04),
+    0 4px 12px rgb(var(--c-shadow) / 0.08),
+    0 8px 24px rgb(var(--c-shadow) / 0.06);
+  --shadow-lg:
+    0 4px 8px rgb(var(--c-shadow) / 0.06),
+    0 12px 28px rgb(var(--c-shadow) / 0.10),
+    0 24px 48px rgb(var(--c-shadow) / 0.08);
+
+  /* 渐变：品牌色从 500→700 的微渐变，给 CTA 按钮和品牌标记一点立体感。
+     写在令牌里而不是组件里：全站只有一处定义，换肤时一起换。
+     为什么不用更宽的色阶（500→900）：过宽的渐变在小字/小图标上会出现
+     明显的色带，500→700 刚好给「有光从左上来」的暗示而不突兀。 */
+  --gradient-brand: linear-gradient(135deg, rgb(var(--c-brand-500)), rgb(var(--c-brand-700)));
+
+  /* 背景微噪点质感：纯平的背景在大屏上会显得「塑料感」，
+     一层极淡的径向渐变能给页面一点空间深度。
+     只在 :root 上定义一次，body 里引用——别在每个组件里各写一遍。 */
+  --bg-texture: radial-gradient(
+      1200px 600px at 80% -10%,
+      rgb(var(--c-brand-50) / 0.4) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      800px 400px at -10% 110%,
+      rgb(var(--c-accent-soft) / 0.3) 0%,
+      transparent 55%
+    );
 
   /* ---------- 字体 ----------
      字体栈的唯一来源。tailwind.config.js 的 fontFamily 直接引用这些变量
@@ -122,12 +182,20 @@
   --c-border: 55 52 46;
   --c-ink: 236 233 228;
   --c-ink-soft: 178 172 163;
-  --c-ink-faint: 138 132 123;
+  /* 同亮色块的理由：旧值 138 132 123 在 surface-muted 上只有 4.2:1
+     （代码块语言标签正是这个组合）。提到 146 140 131 后：
+     bg 5.6 / surface 5.0 / surface-muted 4.6，全部达标。 */
+  --c-ink-faint: 146 140 131;
 
   /* 品牌色阶亮暗共用一套色值——组件里需要区分的地方（如 dark:bg-brand-900/40）
      本来就用 dark: 变体显式标注，不依赖变量换值 */
   --c-accent: 251 191 36;
   --c-accent-soft: 66 50 22;
+
+  /* 链接色换档：brand-600 在暗底上只有 2.7:1，提到 brand-400 后
+     bg 6.0 / surface 5.5 / surface-muted 5.0，全部达标。 */
+  --c-link: 89 142 255; /* = brand-400 */
+  --c-link-hover: 142 182 255; /* = brand-300 */
 
   --c-code-bg: 16 15 13;
   --c-code-ink: 220 216 209;
@@ -137,4 +205,32 @@
   --c-success-border: 59 109 17;
 
   --c-shadow: 0 0 0;
+
+  /* 暗色阴影：基色是纯黑，所以透明度要比亮色高一档才能看见。
+     基色同样走 --c-shadow 令牌（亮色块里写的契约在这里也要成立）：
+     换基色时只改上面那行，这里的透明度阶梯不用动。 */
+  --shadow-sm:
+    0 1px 2px rgb(var(--c-shadow) / 0.3),
+    0 1px 3px rgb(var(--c-shadow) / 0.4);
+  --shadow-md:
+    0 2px 4px rgb(var(--c-shadow) / 0.3),
+    0 4px 12px rgb(var(--c-shadow) / 0.45),
+    0 8px 24px rgb(var(--c-shadow) / 0.35);
+  --shadow-lg:
+    0 4px 8px rgb(var(--c-shadow) / 0.4),
+    0 12px 28px rgb(var(--c-shadow) / 0.5),
+    0 24px 48px rgb(var(--c-shadow) / 0.4);
+
+  /* 暗色背景纹理：品牌色在深色底上用更低透明度，
+     否则会变成一块明显的色斑而不是环境光。 */
+  --bg-texture: radial-gradient(
+      1200px 600px at 80% -10%,
+      rgb(var(--c-brand-900) / 0.25) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      800px 400px at -10% 110%,
+      rgb(var(--c-accent) / 0.06) 0%,
+      transparent 55%
+    );
 }

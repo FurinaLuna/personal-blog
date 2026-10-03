@@ -80,7 +80,7 @@ onMounted(() => {
           :key="option"
           type="button"
           class="rounded-md px-3 py-1.5 text-sm transition-colors"
-          :class="filter === option ? 'bg-surface-muted font-medium text-brand-600' : 'text-ink-soft'"
+          :class="filter === option ? 'bg-surface-muted font-medium text-link' : 'text-ink-soft'"
           @click="filter = option; page = 1; comments.run()"
         >
           {{ option === 'pending' ? '待审核' : option === 'approved' ? '已通过' : '全部' }}
@@ -146,7 +146,7 @@ onMounted(() => {
           <div class="mt-3 flex flex-wrap items-center gap-3 text-xs">
             <RouterLink
               :to="`/article/${item.article_id}`"
-              class="text-ink-faint hover:text-brand-600"
+              class="text-ink-faint hover:text-link"
             >
               查看文章 #{{ item.article_id }}
             </RouterLink>

@@ -239,7 +239,7 @@ onBeforeUnmount(() => observer?.disconnect())
               indentClass(entry.depth),
               levelClass(entry.depth),
               activeId === entry.node.item.id
-                ? 'border-brand-500 text-brand-600'
+                ? 'border-brand-500 text-link'
                 : `border-transparent hover:text-ink ${linkClass(entry.depth)}`,
             ]"
             @click="jumpTo($event, entry.node.item.id)"

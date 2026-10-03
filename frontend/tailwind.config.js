@@ -38,6 +38,12 @@ export default {
           DEFAULT: 'rgb(var(--c-accent) / <alpha-value>)',
           soft: 'rgb(var(--c-accent-soft) / <alpha-value>)',
         },
+        // 链接是语义角色（亮暗各一档），不直接用品牌色阶——
+        // brand-600 在暗色底上只有 2.7:1，详见 tokens.css 的 --c-link 注释
+        link: {
+          DEFAULT: 'rgb(var(--c-link) / <alpha-value>)',
+          hover: 'rgb(var(--c-link-hover) / <alpha-value>)',
+        },
       },
       // 字体栈在 src/styles/tokens.css 里定义（单一来源），这里只做引用，
       // 避免「同一个字体栈写在两个文件里」——那种重复迟早只改一处
@@ -56,6 +62,14 @@ export default {
         // 正文列自己在组件里用 `article-column` 限宽（见 components.css）。
         article: '1280px',
       },
+      // 阴影走 CSS 变量（tokens.css），亮/暗双套自动切换。
+      // 不写在 Tailwind 默认的 shadow 工具类里，是因为默认值是写死的灰色，
+      // 暗色模式下需要换色——走变量才是「换肤只动 tokens.css」的承诺。
+      boxShadow: {
+        sm: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+      },
       typography: (theme) => ({
         DEFAULT: {
           css: {
@@ -69,10 +83,12 @@ export default {
             // 18 × 1.85 = 33.3px，比 1.75（31.5px）更接近参考站的 1.9。
             lineHeight: '1.85',
             a: {
-              color: theme('colors.brand.600'),
+              // 正文链接走语义令牌（亮暗各一档）；直接引 brand-600 的话
+              // 暗色模式下整片正文链接都是 2.7:1
+              color: 'rgb(var(--c-link))',
               textDecoration: 'none',
               borderBottom: `1px solid ${theme('colors.brand.200')}`,
-              '&:hover': { color: theme('colors.brand.700') },
+              '&:hover': { color: 'rgb(var(--c-link-hover))' },
             },
             'h2, h3, h4': { color: 'rgb(var(--c-ink))', fontWeight: '600' },
             // 正文里的 h1/h2 跟随页头标题用衬线，h3 以下保持无衬线——

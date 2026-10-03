@@ -104,7 +104,7 @@ onMounted(() => {
       </button>
     </form>
 
-    <RouterLink to="/" class="mt-5 block text-center text-xs text-ink-faint hover:text-brand-600">
+    <RouterLink to="/" class="mt-5 block text-center text-xs text-ink-faint hover:text-link">
       ← 返回前台
     </RouterLink>
   </div>

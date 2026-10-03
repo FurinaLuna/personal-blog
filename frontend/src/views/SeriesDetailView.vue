@@ -60,7 +60,7 @@ function goPage(next: number): void {
   <div class="space-y-6">
     <header v-if="detail.data.value?.series" class="border-b border-border pb-6">
       <div class="flex items-center gap-2 text-xs text-ink-faint">
-        <RouterLink to="/series" class="hover:text-brand-600">系列</RouterLink>
+        <RouterLink to="/series" class="hover:text-link">系列</RouterLink>
         <span>/</span>
         <span>{{ detail.data.value.series.article_count }} 篇</span>
       </div>

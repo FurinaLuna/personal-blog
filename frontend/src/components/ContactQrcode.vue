@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
     <button
       ref="trigger"
       type="button"
-      class="btn--icon flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-ink-soft shadow-lg transition-colors hover:text-brand-600"
+      class="btn--icon flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-ink-soft shadow-lg transition-colors hover:text-link"
       aria-haspopup="true"
       :aria-expanded="open"
       aria-label="联系站长"
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
                    未知 kind 走通用图标，绝不会渲染成空格子。 -->
               <svg
                 v-if="item.kind === 'wechat'"
-                class="h-5 w-5 shrink-0 text-brand-600"
+                class="h-5 w-5 shrink-0 text-link"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -276,7 +276,7 @@ onBeforeUnmount(() => {
               </svg>
               <svg
                 v-else-if="item.kind === 'qq'"
-                class="h-5 w-5 shrink-0 text-brand-600"
+                class="h-5 w-5 shrink-0 text-link"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
               </svg>
               <svg
                 v-else
-                class="h-5 w-5 shrink-0 text-brand-600"
+                class="h-5 w-5 shrink-0 text-link"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"

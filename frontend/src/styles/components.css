@@ -21,15 +21,32 @@
 
   .btn {
     @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg px-4 py-2
-      text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+      text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50;
   }
 
+  /* 主按钮用品牌渐变：比纯色更有「可点击」的暗示，hover 时微微提亮。
+     渐变方向 135deg 模拟自然光从左上来，按钮有了一点点立体感。
+     为什么不直接用 --gradient-brand：@apply 不能解析 CSS 变量里的渐变值，
+     所以这里用 background-image 直接写变量引用。 */
   .btn--primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn text-white;
+    background-image: var(--gradient-brand);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn--primary:hover:not(:disabled) {
+    box-shadow: var(--shadow-md);
+    filter: brightness(1.05);
+  }
+  .btn--primary:active:not(:disabled) {
+    filter: brightness(0.97);
+    transform: translateY(1px);
   }
 
   .btn--ghost {
     @apply btn border border-border bg-surface text-ink-soft hover:bg-surface-muted hover:text-ink;
+  }
+  .btn--ghost:hover:not(:disabled) {
+    box-shadow: var(--shadow-sm);
   }
 
   .btn--danger {
@@ -65,33 +82,61 @@
     @apply rounded-xl border border-border bg-surface;
     transition:
       box-shadow var(--duration-base) var(--ease-out-expo),
-      transform var(--duration-base) var(--ease-out-expo);
+      transform var(--duration-base) var(--ease-out-expo),
+      border-color var(--duration-base) var(--ease-out-expo);
   }
 
   .card--hover:hover {
-    /* 浮起 = 上移 2px + 阴影加深，比单纯加阴影更有「被拿起」的物理感 */
+    /* 浮起 = 上移 2px + 阴影加深 + 边框提亮，比单纯加阴影更有「被拿起」的物理感。
+       边框在 hover 时向品牌色偏移一点点，给卡片一个「被选中」的暗示，
+       但不直接变蓝——那样太跳。用 border-brand-200/60 这种中间态刚好。 */
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px -12px rgb(var(--c-shadow) / 0.25);
+    box-shadow: var(--shadow-md);
+    border-color: rgb(var(--c-brand-200) / 0.6);
+  }
+  .dark .card--hover:hover {
+    border-color: rgb(var(--c-brand-700) / 0.5);
   }
 
   /* ================================================================ 表单 */
 
   .input {
     @apply w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink
-      placeholder:text-ink-faint focus:border-brand-400 focus:outline-none
-      focus:ring-2 focus:ring-brand-500/25;
+      placeholder:text-ink-faint transition-colors focus:border-brand-400 focus:outline-none
+      focus:ring-2 focus:ring-brand-500/20;
   }
 
   /* ================================================================ 其他 */
 
   .chip {
     @apply inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted
-      px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-brand-300
-      hover:text-brand-600;
+      px-2.5 py-1 text-xs text-ink-soft transition-all hover:border-brand-300
+      hover:text-link hover:shadow-sm;
   }
 
   .skeleton {
-    @apply animate-pulse rounded bg-surface-muted;
+    @apply rounded bg-surface-muted;
+    /* shimmer 比 pulse 更像「内容正在加载」：pulse 是呼吸感，
+       而 shimmer 的扫光模拟了进度条的心理暗示，用户更容易接受等待。
+       用背景渐变 + background-position 动画，比 transform 更省 GPU。
+       prefers-reduced-motion 由 base.css 全局关闭。 */
+    background-image: linear-gradient(
+      90deg,
+      rgb(var(--c-surface-muted)) 0%,
+      rgb(var(--c-border) / 0.5) 50%,
+      rgb(var(--c-surface-muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
   }
 
   /* ================================================================ 文章版面 */
@@ -179,8 +224,14 @@
       hover:bg-surface-muted hover:text-ink;
   }
 
+  /* 激活态：背景用品牌色的极浅底，文字用品牌主色。
+     不加粗——加粗会让激活项比其他项宽 1~2px，导航项宽度不齐。
+     用 font-medium 而不是 font-semibold，视觉上有层次但不突兀。 */
   .nav-link--active {
-    @apply bg-surface-muted font-medium text-brand-600;
+    @apply bg-brand-50/70 font-medium text-brand-700;
+  }
+  .dark .nav-link--active {
+    @apply bg-brand-900/30 text-brand-200;
   }
 
   /* 列表入场动画：配合模板里的 animation-delay 做 stagger 渐入。

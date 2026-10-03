@@ -190,18 +190,18 @@ onMounted(() => {
   <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_260px]">
     <!-- 主内容：lg 以下侧边栏隐藏，主列收窄居中，避免平板宽度「贴左空旷」 -->
     <section class="mx-auto w-full max-w-content lg:mx-0 lg:max-w-none">
-      <div class="mb-5 flex flex-wrap items-center gap-3">
+      <div class="mb-6 flex flex-wrap items-center gap-3">
         <div>
           <!-- 首页唯一的 h1。
                这里曾经是一个「站名 + 标语 + 细线」的 hero（broadsheet 模板的
                标准头部），而顶栏是 sticky 的、已经用品牌标记 + 站名承担了身份 ——
                同一屏 100px 内把同样的字渲染两遍，hero 并没有挣到它那份空间。
                现在把第一屏让给真正有信息量的东西：文章本身。 -->
-          <h1 class="text-xl font-semibold text-ink">
+          <h1 class="font-display text-[22px] font-semibold tracking-tight text-ink sm:text-2xl">
             {{ activeFilterLabel || '最新文章' }}
           </h1>
           <p v-if="!hasFilter && !articles.loading.value" class="mt-1 text-sm text-ink-faint">
-            共 {{ articles.data.value.total }} 篇
+            共 {{ articles.data.value.total }} 篇 · 记录技术、生活与思考
           </p>
         </div>
 
@@ -221,17 +221,18 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 搜索框 -->
-      <form class="mb-6 flex gap-2" @submit.prevent="search">
+      <!-- 搜索框：首页搜索直接跳搜索页（相关度排序），不在本页做时间排序的伪搜索。
+           输入框用更大的内边距和圆角，让它在视觉上比普通输入框更「主要」。 -->
+      <form class="mb-7 flex gap-2" @submit.prevent="search">
         <input
           v-model="keyword"
-          class="input"
+          class="input py-2.5"
           type="search"
           placeholder="搜索标题、摘要或正文…"
           aria-label="搜索文章"
           maxlength="100"
         />
-        <button type="submit" class="btn--primary shrink-0">搜索</button>
+        <button type="submit" class="btn--primary shrink-0 px-5">搜索</button>
       </form>
 
       <LoadingSkeleton v-if="articles.loading.value && !articles.ready.value" :rows="4" />
@@ -268,8 +269,10 @@ onMounted(() => {
         <div v-if="rest.length" :class="lead ? 'mt-8' : ''">
           <!-- 措辞刻意用「更多」而不是「更早」：排序可以切成最热/标题，
                那时它们并不是「更早的文章」 -->
-          <h2 v-if="lead" class="mb-4 text-sm font-medium text-ink-faint">更多文章</h2>
-          <div class="space-y-6">
+          <h2 v-if="lead" class="mb-4 text-xs font-medium uppercase tracking-wider text-ink-faint">
+            更多文章
+          </h2>
+          <div class="space-y-5">
             <ArticleCard
               v-for="(item, index) in rest"
               :key="item.id"
@@ -292,9 +295,9 @@ onMounted(() => {
     </section>
 
     <!-- 侧边栏 -->
-    <aside class="space-y-6 lg:sticky lg:top-24 lg:self-start">
+    <aside class="space-y-5 lg:sticky lg:top-24 lg:self-start">
       <div v-if="categories.length" class="card p-4">
-        <h2 class="mb-3 text-sm font-medium text-ink">分类</h2>
+        <h2 class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">分类</h2>
         <!-- 分类多起来（本站 19 个）会把侧栏撑到 1075px，比任何常见视口都高：
              实测 1440×900 时预算只有 772px，超出 303px —— 而侧栏本身不可滚，
              于是「标签」「快捷入口」在首屏被截掉，用户也够不到分类列表的末尾。
@@ -328,25 +331,25 @@ onMounted(() => {
       </div>
 
       <div v-if="tags.length" class="card p-4">
-        <h2 class="mb-3 text-sm font-medium text-ink">标签</h2>
+        <h2 class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">标签</h2>
         <div class="flex flex-wrap gap-2">
           <RouterLink
             v-for="tag in tags"
             :key="tag.id"
             :to="{ path: '/', query: { tag: tag.slug } }"
             class="chip"
-            :class="activeTag === tag.slug ? 'border-brand-300 text-brand-600' : ''"
+            :class="activeTag === tag.slug ? 'border-brand-300 text-link' : ''"
           >
             {{ tag.name }}
           </RouterLink>
         </div>
-        <RouterLink to="/tags" class="mt-3 inline-block text-xs text-brand-600 hover:text-brand-700">
+        <RouterLink to="/tags" class="mt-3 inline-block text-xs text-link hover:text-link-hover">
           查看全部标签 →
         </RouterLink>
       </div>
 
       <div class="card p-4">
-        <h2 class="mb-3 text-sm font-medium text-ink">快捷入口</h2>
+        <h2 class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">快捷入口</h2>
         <div class="space-y-1 text-sm">
           <RouterLink to="/archive" class="nav-link block px-2 py-1.5">
             按月归档

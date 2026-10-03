@@ -73,6 +73,56 @@
 
 ---
 
+## 登记：2026-10-03 批次（无障碍令牌修复 + 链接语义令牌收敛 + 仓库整理）
+
+> 当批的验证登记。本批**只动前端**（后端零文件改动，基线沿用 2026-10-01
+> 全量实测：809 passed / 8 环境性 error / 5 skipped）。上方的批次登记保持原样。
+
+本批三项实质变更：
+
+1. **ink-faint 对比度修复（P2-2）**：亮色 `168 162 158` → `110 105 100`
+   （bg 5.2 / surface 5.4 / surface-muted 4.9）；暗色 `138 132 123` → `146 140 131`
+   （bg 5.6 / surface 5.0 / surface-muted 4.6）。该令牌被大量用于 12~14px
+   真实文本（文章元信息、评论时间戳、代码块语言标签），旧值在两种模式下
+   均有低于 WCAG AA 4.5:1 的组合。
+2. **链接语义令牌（新发现，同批修复）**：此前全站约 68 处散写
+   `text-brand-600`，暗色模式下 brand-600（36 73 216）在深底上仅 **2.7:1**——
+   包括正文 prose 链接（typography 插件全局配色）。收敛为 `--c-link` /
+   `--c-link-hover` 语义令牌（亮色 = brand-600/700 视觉不变；暗色 = brand-400/300，
+   bg 6.0 / surface 5.5 / surface-muted 5.0），Tailwind 注册 `text-link`，
+   68 处类名机械替换，徽标类的 `dark:text-brand-200` 显式覆盖不受影响。
+3. **暗色阴影令牌修正（P2-1）与清理（P3-1/P3-3）**：暗色阴影阶梯改回引用
+   `--c-shadow`（原硬编码 `rgb(0 0 0 / …)` 与令牌契约自相矛盾，计算结果不变）；
+   删除零引用的 `--gradient-brand-soft`；清理根目录残留的空 `storage/`
+   （真实上传目录是 `backend/storage/`）。
+
+| 检查 | 结果 | 备注 |
+|---|---|---|
+| `npx vitest run` | **55 files / 863 passed** | 新增 `src/styles/tokens.spec.ts`（14 例）：文字令牌 × 表面色 × 亮暗双模式的 WCAG AA 对比度契约，含公式自校验。此后改令牌色值若低于 4.5:1 直接红灯，不依赖肉眼 |
+| `vue-tsc --noEmit` / `eslint .` | exit 0 | 替换涉及 26 个 .vue/.css 文件 |
+| `vite build` | 成功 4.51s | **产物级验证**：dist CSS 中 `.text-link`、`hover\:text-link:hover`、`--c-link:`、`.dark` 均已生成——Tailwind 配置改动的确定性证据，不靠截图 |
+| 对比度实测（tokens.spec 断言值） | 本批所有新组合 ≥ 4.5:1 | 暗色链接修复前 2.7 → 修复后 6.0（bg） |
+| 调试残留扫描 | 干净 | 前后端源码无 TODO/FIXME/debugger/pdb；前端 15 处 console.* 全部是有注释依据的兜底日志（全局错误处理 + 静默降级路径） |
+| 依赖审计 | 无冗余 | 运行时依赖（axios/dompurify/highlight.js/marked/pinia/vue-router）逐一确认有真实消费点；highlight.js 为按需动态 import |
+| 后端 | **本批零改动** | ruff / lint_imports / pytest 状态沿用 2026-10-01 实测基线 |
+
+**关于 2026-09-28 批次登记的「8 errors」**：当时记为「沙箱不允许删目录」。
+2026-10-01 的独立探针把根因定位得更准：本机沙箱下 `tempfile.mkdtemp()`
+建出的目录**建完后即不可用**（往里 mkdir / 写文件报 `WinError 5`，
+`icacls` 连读权限都拒绝）——是**建**不出可用目录，而非**删**不掉。
+用按路径显式创建的等价 fixture 重跑同批用例 19/19 全过，产品代码无涉。
+
+**环境修复（2026-10-03 已完成）**：根目录 `.env` 此前是 `APP_ENV=development` +
+`SEED_DEMO_DATA=true`，与 compose 的生产默认值相反——直接 `docker compose up`
+等于以开发模式对外服务（`/docs` 敞开、堆栈外泄、启动门禁失效）并向生产库灌演示数据。
+已删除这两行（让 `docker-compose.yml` 的 `${APP_ENV:-production}` /
+`${SEED_DEMO_DATA:-false}` 默认值生效），并清掉一处重复的 `ADMIN_PASSWORD`。
+`docker compose config` 实测解析结果：`APP_ENV=production`、`DEBUG=false`、
+`DB_AUTO_CREATE=false`、`SEED_DEMO_DATA=false`——与门禁要求一致。
+注意 `.env` 本身已被 gitignore（含密钥，不入库），此修复只落在本机。
+
+---
+
 > 以下为 2026-09-12 的历史快照原文，未作任何修改。
 
 > 执行时间：2026-09-12 · 基线提交 `cbe5906`（测试期间未改动产品代码）

@@ -34,7 +34,7 @@ onMounted(() => {
       <h1 class="text-xl font-semibold text-ink">友情链接</h1>
       <p class="mt-1.5 text-sm text-ink-soft">
         这里是一些我常逛的站点。想交换链接的话，可以在
-        <RouterLink to="/guestbook" class="text-brand-600 hover:text-brand-700">留言板</RouterLink>
+        <RouterLink to="/guestbook" class="text-link hover:text-link-hover">留言板</RouterLink>
         里说一声。
       </p>
     </header>

@@ -173,7 +173,7 @@ onMounted(() => {
               <td class="px-5 py-3">
                 <div class="flex items-center gap-2">
                   <span class="font-medium text-ink">{{ item.nickname || item.username }}</span>
-                  <span v-if="item.id === auth.user?.id" class="text-[11px] text-brand-600">（我）</span>
+                  <span v-if="item.id === auth.user?.id" class="text-[11px] text-link">（我）</span>
                 </div>
                 <p class="mt-0.5 font-mono text-xs text-ink-faint">{{ item.username }}</p>
               </td>
@@ -238,7 +238,7 @@ onMounted(() => {
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-ink">
                 {{ item.nickname || item.username }}
-                <span v-if="item.id === auth.user?.id" class="text-[11px] text-brand-600">（我）</span>
+                <span v-if="item.id === auth.user?.id" class="text-[11px] text-link">（我）</span>
               </p>
               <p class="mt-0.5 truncate font-mono text-xs text-ink-faint">{{ item.username }}</p>
             </div>

@@ -118,7 +118,7 @@ onMounted(() => {
           :key="option"
           type="button"
           class="rounded-md px-3 py-1.5 text-sm transition-colors"
-          :class="filter === option ? 'bg-surface-muted font-medium text-brand-600' : 'text-ink-soft'"
+          :class="filter === option ? 'bg-surface-muted font-medium text-link' : 'text-ink-soft'"
           @click="filter = option; page = 1; messages.run()"
         >
           {{ option === 'pending' ? '待审核' : option === 'approved' ? '已通过' : '全部' }}
@@ -164,7 +164,7 @@ onMounted(() => {
             >
               {{ item.is_approved ? '已通过' : '待审核' }}
             </span>
-            <span v-if="item.reply_content" class="text-[11px] text-brand-600">已回复</span>
+            <span v-if="item.reply_content" class="text-[11px] text-link">已回复</span>
             <span class="ml-auto text-xs text-ink-faint" :title="formatDateTime(item.created_at)">
               {{ formatRelative(item.created_at) }}
             </span>
@@ -182,7 +182,7 @@ onMounted(() => {
               :href="item.author_site"
               target="_blank"
               rel="noopener noreferrer nofollow"
-              class="hover:text-brand-600"
+              class="hover:text-link"
             >
               {{ item.author_site }}
             </a>
@@ -245,7 +245,7 @@ onMounted(() => {
             <button
               v-if="replyingId !== item.id"
               type="button"
-              class="text-ink-faint hover:text-brand-600"
+              class="text-ink-faint hover:text-link"
               @click="openReply(item)"
             >
               {{ item.reply_content ? '编辑回复' : '回复' }}

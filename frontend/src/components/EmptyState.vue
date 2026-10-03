@@ -17,23 +17,24 @@ defineEmits<{ action: [] }>()
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-16 text-center">
-    <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-surface-muted text-ink-faint">
+  <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface/50 px-6 py-16 text-center">
+    <div class="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-muted text-ink-faint">
       <svg
-        class="h-6 w-6"
+        class="h-7 w-7"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
         stroke-width="1.6"
         stroke-linecap="round"
+        stroke-linejoin="round"
       >
         <path d="M4 6h16v12H4z" />
         <path d="M4 9h16M8 13h6" />
       </svg>
     </div>
     <p class="text-base font-medium text-ink">{{ title }}</p>
-    <p v-if="description" class="mt-1.5 max-w-sm text-sm text-ink-soft">{{ description }}</p>
-    <button v-if="actionLabel" type="button" class="btn--primary mt-5" @click="$emit('action')">
+    <p v-if="description" class="mt-1.5 max-w-sm text-sm leading-relaxed text-ink-soft">{{ description }}</p>
+    <button v-if="actionLabel" type="button" class="btn--primary mt-6" @click="$emit('action')">
       {{ actionLabel }}
     </button>
     <slot />

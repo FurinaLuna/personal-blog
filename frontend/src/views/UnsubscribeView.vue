@@ -73,7 +73,7 @@ onMounted(() => {
     <!-- 成功 -->
     <template v-else-if="succeeded">
       <div
-        class="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-surface-muted text-brand-600"
+        class="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-surface-muted text-link"
       >
         <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" />

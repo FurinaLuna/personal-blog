@@ -188,7 +188,7 @@ function onPaste(event: ClipboardEvent): void {
           :key="option"
           type="button"
           class="rounded-md px-2 py-1 text-xs transition-colors"
-          :class="mode === option ? 'bg-surface-muted font-medium text-brand-600' : 'text-ink-soft hover:text-ink'"
+          :class="mode === option ? 'bg-surface-muted font-medium text-link' : 'text-ink-soft hover:text-ink'"
           @click="mode = option"
         >
           {{ option === 'edit' ? '编辑' : option === 'split' ? '分栏' : '预览' }}

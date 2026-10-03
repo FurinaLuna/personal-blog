@@ -151,11 +151,11 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
             :href="safeExternalUrl(comment.author_site)!"
             target="_blank"
             rel="noopener noreferrer nofollow"
-            class="text-brand-600 hover:text-brand-700"
+            class="text-link hover:text-link-hover"
           >
             网站
           </a>
-          <button type="button" class="text-ink-faint transition-colors hover:text-brand-600" @click="startReply(comment)">
+          <button type="button" class="text-ink-faint transition-colors hover:text-link" @click="startReply(comment)">
             回复
           </button>
         </div>
@@ -185,7 +185,7 @@ const canComment = computed(() => site.profile.allow_guest_comment || auth.isAut
 
     <!-- 发表框 -->
     <div id="comment-form" class="card mt-6 p-4 sm:p-5">
-      <p v-if="replyHint" class="mb-3 flex items-center gap-2 text-sm text-brand-600">
+      <p v-if="replyHint" class="mb-3 flex items-center gap-2 text-sm text-link">
         {{ replyHint }}
         <button type="button" class="text-xs text-ink-faint hover:text-ink" @click="cancelReply">
           取消
