@@ -8,8 +8,13 @@
 
 from __future__ import annotations
 
+import re
+from datetime import UTC, datetime
+
+import pytest
 from httpx import AsyncClient
 
+from app.config import settings
 from tests.factories import make_article_payload
 
 STATS_URL = "/api/v1/stats/views/daily"
@@ -224,3 +229,103 @@ class TestVisitLogPruning:
             "/api/v1/stats/visit-logs/prune?retention_days=0", headers=admin_headers
         )
         assert response.status_code == 422
+
+
+# ----------------------------------------------------------------------
+# 以下用例自「wave3 全面验证批」归并而来（原 tests/test_wave3_verify.py）：
+# 覆盖 days 边界、记录口径与聚合的边界分支。
+
+
+class TestStatsBoundaries:
+    async def test_days_lower_and_upper_bounds_are_valid(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        assert len((await client.get(f"{STATS_URL}?days=1", headers=admin_headers)).json()) == 1
+        assert len((await client.get(f"{STATS_URL}?days=90", headers=admin_headers)).json()) == 90
+
+    async def test_days_non_integer_rejected(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        for bad in ("abc", "1.5", ""):
+            response = await client.get(f"{STATS_URL}?days={bad}", headers=admin_headers)
+            assert response.status_code == 422, f"days={bad!r} 应被拒绝"
+
+    async def test_missing_article_is_not_recorded(
+        self, client: AsyncClient, published_article: dict, admin_headers: dict[str, str]
+    ) -> None:
+        """404 详情页不产生访问日志——统计口径是"成功阅读"。"""
+        assert (await client.get("/api/v1/articles/no-such-slug-xyz")).status_code == 404
+        await client.get(f"/api/v1/articles/{published_article['slug']}")
+        today = await today_row(client, admin_headers)
+        assert today["views"] == 1
+
+    async def test_multiple_articles_aggregate_into_one_day(
+        self, client: AsyncClient, author_headers: dict[str, str], admin_headers: dict[str, str]
+    ) -> None:
+        first = (
+            await client.post(
+                "/api/v1/articles", json=make_article_payload(), headers=author_headers
+            )
+        ).json()
+        second = (
+            await client.post(
+                "/api/v1/articles", json=make_article_payload(), headers=author_headers
+            )
+        ).json()
+        for _ in range(2):
+            await client.get(f"/api/v1/articles/{first['slug']}")
+        await client.get(f"/api/v1/articles/{second['slug']}")
+
+        today = await today_row(client, admin_headers)
+        assert today["views"] == 3
+        assert today["unique_visitors"] == 1
+
+    async def test_distinct_ips_count_distinct_uv(
+        self,
+        client: AsyncClient,
+        published_article: dict,
+        admin_headers: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """两个不同来源 IP：PV=3、UV=2（验证 ip_hash 的 distinct 真的生效）。
+
+        ``trust_proxy_headers`` 默认关闭（防伪造），这里显式打开来注入
+        不同来源 IP——这正是该开关存在的意义。
+        """
+        monkeypatch.setattr(settings, "trust_proxy_headers", True)
+        for ip in ("203.0.113.7", "203.0.113.9", "203.0.113.7"):
+            response = await client.get(
+                f"/api/v1/articles/{published_article['slug']}",
+                headers={"X-Forwarded-For": ip},
+            )
+            assert response.status_code == 200
+
+        today = await today_row(client, admin_headers)
+        assert today["views"] == 3
+        assert today["unique_visitors"] == 2
+
+    async def test_visit_logs_cascade_when_article_deleted(
+        self, client: AsyncClient, published_article: dict, admin_headers: dict[str, str]
+    ) -> None:
+        """删文章必须连带清掉它的访问日志（FK ON DELETE CASCADE + PRAGMA foreign_keys=ON）。"""
+        await client.get(f"/api/v1/articles/{published_article['slug']}")
+        assert (await today_row(client, admin_headers))["views"] == 1
+
+        assert (
+            await client.delete(
+                f"/api/v1/articles/{published_article['id']}", headers=admin_headers
+            )
+        ).status_code == 204
+        assert (await today_row(client, admin_headers))["views"] == 0
+
+    async def test_series_is_iso_dates_ascending_ending_today(
+        self, client: AsyncClient, published_article: dict, admin_headers: dict[str, str]
+    ) -> None:
+        await client.get(f"/api/v1/articles/{published_article['slug']}")
+        rows = (await client.get(f"{STATS_URL}?days=30", headers=admin_headers)).json()
+        assert len(rows) == 30
+        dates = [row["date"] for row in rows]
+        assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) for d in dates)
+        assert dates == sorted(dates)
+        assert dates[-1] == datetime.now(UTC).date().isoformat()
+        assert dates[-1] != dates[0]

@@ -65,6 +65,23 @@ def _safe_temp_dir() -> Path:
 TEMP_ROOT = _safe_temp_dir()
 TEST_DB = TEMP_ROOT / "personal_blog_test.db"
 
+# 系统临时目录不可写时（TEMP_ROOT 已回退到仓库内），把 TMP/TEMP 一并指过去。
+#
+# 为什么只改 Python 侧不够：``_safe_temp_dir`` 解决的是 ``tempfile`` 模块的去向，
+# 但 SQLite **原生**临时文件（级联删除的 statement journal、溢出排序、CREATE INDEX）
+# 由 C 层按 TMP/TEMP 环境变量找位置，不经过 Python。实测在受限进程里
+# （沙箱 / 受限令牌的服务账号）：Python 落到仓库内一切正常，而任何需要
+# 临时文件的 SQL 语句都报 ``unable to open database file``——5 个级联删除
+# 用例稳定失败，看起来像外键坏了，其实只是临时文件建不出来。
+#
+# 与 ``SQLITE_TEMP_STORE=MEMORY`` 的关系：那个开关（2026-09-29 批次登记过）
+# 让 SQLite 干脆不用磁盘临时文件，适合 e2e_run.py 这类自带进程树的执行器；
+# 这里选择重指 TMP/TEMP 是因为它同时覆盖 Python 与 SQLite 两侧、且不改变
+# 「临时文件落盘」的生产语义。正常环境（/tmp 可写）走不到这个分支，行为不变。
+if TEMP_ROOT == REPO_TMP and os.environ.get("TMP") != str(REPO_TMP):
+    os.environ["TMP"] = str(REPO_TMP)
+    os.environ["TEMP"] = str(REPO_TMP)
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """把 pytest 自己的临时基目录挪出仓库。

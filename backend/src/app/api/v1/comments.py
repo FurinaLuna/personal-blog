@@ -91,7 +91,7 @@ async def moderate_comment(
 
     作者只能审核自己文章下的评论，站长不受限（归属校验在服务层）。
     """
-    approved = True if payload.is_approved is None else payload.is_approved
+    approved = payload.resolved_is_approved()
     comment = await CommentService(session).set_approved(comment_id, approved, operator=user)
     await session.commit()
     # 审核制下被回复者要等到过审这一刻才收到信；撤回（approved=False）不通知

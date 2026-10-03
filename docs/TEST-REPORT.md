@@ -123,6 +123,61 @@
 
 ---
 
+## 登记：2026-10-03 批次二（后端清理与测试基建：wave3 归并 + 受限环境 SQLite 临时文件修复）
+
+> 当批的验证登记。本批以后端与测试基建为主（前端仅依赖与出口微整），
+> 上方各批次登记保持原样。对应 `deliverables/architecture-audit-2026-09-25.md`
+> 中「把 test_wave3_verify.py 按主题拆分」的建议，本批落地。
+
+本批实质变更：
+
+1. **wave3 临时用例集归并**（860 行的 `tests/test_wave3_verify.py` 删除）：
+   36 个用例按领域原样迁入三个常驻文件——变体/回填/封面/跨功能 19 例进
+   `test_attachments.py`，统计边界 7 例进 `test_stats.py`，退订 token/真实
+   SMTP/发信隔离 10 例进 `test_notifications.py`（其中的重复助手
+   `_guest_comment`/`_post_comment`/`_approve` 与 `_clear_variants` 收敛为
+   单份模块级定义）。归并后 pytest 总数不变：**822 collected**，一条不丢。
+2. **受限环境 SQLite 临时文件修复（conftest.py）**：`_safe_temp_dir` 只解决
+   Python `tempfile` 的去向，SQLite 原生临时文件仍按 TMP/TEMP 找位置——在
+   系统临时目录不可写的进程里（沙箱 / 受限令牌），5 条级联删除用例稳定报
+   `unable to open database file`。现在检测到回退时把 TMP/TEMP 一并重指到
+   仓库内 `.pytest-tmp`，正常环境不触发。与 `SQLITE_TEMP_STORE=MEMORY`
+   （2026-09-29 批次的手动开关）互补：那个仍留给 `e2e_run.py` 这类独立
+   进程树用。
+3. **服务层口径统一**：`FriendLinkService` 改为直接返回 `FriendLinkRead`
+   （与其余 15 个 Service 一致），`links.py` 路由删掉 5 处手工
+   `model_validate`；`RevisionService` 补进 `services/__init__.py` 桶出口；
+   审核「不传视为放行」的默认值从两条路由的三元式收敛为
+   `CommentModerate` / `GuestbookModerate` 的 `resolved_is_approved()`；
+   删除 21 行的 `article_service.py` 空壳模块（`_is_year_month` 随唯一
+   使用方搬进 `article_query_service.py`，测试导入同步更新）。
+4. **前端微整**：补 `utils/pagination.spec.ts`（4 例）；从 `@/api` 桶出口
+   移除零消费的 `request`；删除零引用依赖 `@vue/eslint-config-typescript`
+   与空的 `src/assets/` 目录；顺手把 dompurify 从 3.4.15 升到 3.4.16——
+   上线评估时 `npm audit`（官方源）报唯一一条 GHSA-p98j-92pf-mc4p
+   （low，仅影响 IN_PLACE 模式，本项目的字符串模式本不受影响），
+   升级后 `npm audit --audit-level=low` 归零。
+5. **杂物清理**：孤儿 `coldstart.db-{shm,wal}`、根目录残留的
+   `personal_blog_test.db` 与两份 `blog.db.bak-*`（移入 `backend/backups/`）、
+   测试运行泄漏的 3MB 临时上传文件。
+
+| 检查 | 结果 | 备注 |
+|---|---|---|
+| `ruff check .` / `ruff format --check .` | All checks passed / 164 files already formatted | 含归并后的三个测试文件 |
+| `scripts/lint_imports.py` | Contracts: 2 kept, 0 broken | 分层契约未被破坏 |
+| `pytest`（全量） | **822 collected / 817 passed / 5 skipped / 0 failed**（exit 0） | 5 skip 为既有的 AVIF 编码器缺失与 PG-only 条件跳过；无需 `SQLITE_TEMP_STORE=MEMORY`，TMP/TEMP 重指修复直接生效 |
+| `pytest tests/test_{attachments,stats,notifications}.py` | 96 passed | 三个归并目标文件单独回归 |
+| `vue-tsc --noEmit` / `eslint .` | exit 0 | — |
+| `vitest run` | **56 files / 867 passed** | 新增 `pagination.spec.ts` 4 例；dompurify 3.4.16 下全绿 |
+| `vite build` | 成功 4.90s | 产物级验证照常 |
+| `npm audit --omit=dev --audit-level=low`（官方源） | **0 vulnerabilities** | dompurify 升级前 1 low（IN_PLACE advisory，对本项目用法不适用） |
+| 受限环境复现验证 | 修复前 5 例稳定失败（级联删除 `unable to open database file`）→ 修复后同 5 例全绿 | 根因探针：受限进程对系统 TEMP 写入 `Errno 13`，`tempfile.gettempdir()` 回退 CWD |
+
+**净变化**：21 个文件（20 改 + 1 新），约 +1079 / −1098——测试容量不变的前提下，
+代码与测试组织更收敛；临时用例集消失，全部用例在领域文件里长期保鲜。
+
+---
+
 > 以下为 2026-09-12 的历史快照原文，未作任何修改。
 
 > 执行时间：2026-09-12 · 基线提交 `cbe5906`（测试期间未改动产品代码）

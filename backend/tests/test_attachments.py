@@ -2,21 +2,53 @@
 
 from __future__ import annotations
 
+import io
+import re
 import struct
 import zlib
+from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
+from PIL import Image, features
 
+from app.config import settings
 from app.db.session import async_session_factory
 from app.models import Attachment
 from app.services.attachment_service import MAX_IMAGE_PIXELS, AttachmentService
 from app.utils.exceptions import UnsupportedMediaTypeError
-from tests.factories import make_jpeg_bytes, make_png_bytes, unique_suffix
+from tests.factories import make_article_payload, make_jpeg_bytes, make_png_bytes, unique_suffix
+
+BACKFILL_URL = "/api/v1/attachments/backfill-variants"
+UPLOAD_URL = "/api/v1/attachments/upload"
 
 
 def _files(name: str, content: bytes, mime: str) -> dict[str, tuple[str, bytes, str]]:
     return {"file": (name, content, mime)}
+
+
+def make_gif_bytes(size: tuple[int, int] = (1920, 1080)) -> bytes:
+    """真实 GIF 字节流（走同样的真实解码校验）。"""
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color=(30, 200, 120)).save(buffer, format="GIF")
+    return buffer.getvalue()
+
+
+async def upload_image(
+    client: AsyncClient, headers: dict[str, str], *, name: str, data: bytes, mime: str = "image/png"
+) -> dict:
+    response = await client.post(UPLOAD_URL, files=_files(name, data, mime), headers=headers)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _clear_variants(attachment_id: int) -> None:
+    """把变体列抹回 NULL，模拟功能上线前的存量数据。"""
+    async with async_session_factory() as session:
+        record = await session.get(Attachment, attachment_id)
+        assert record is not None
+        record.variants = None
+        await session.commit()
 
 
 class TestUploadImage:
@@ -367,15 +399,6 @@ class TestImageVariants:
 class TestVariantBackfill:
     """存量图片回填：幂等筛选、权限、真实落盘。"""
 
-    @staticmethod
-    async def _clear_variants(attachment_id: int) -> None:
-        """把变体列抹回 NULL，模拟功能上线前的存量数据。"""
-        async with async_session_factory() as session:
-            record = await session.get(Attachment, attachment_id)
-            assert record is not None
-            record.variants = None
-            await session.commit()
-
     async def test_backfill_regenerates_for_legacy_image(
         self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
     ) -> None:
@@ -386,7 +409,7 @@ class TestVariantBackfill:
                 headers=author_headers,
             )
         ).json()
-        await self._clear_variants(body["id"])
+        await _clear_variants(body["id"])
 
         result = (
             await client.post("/api/v1/attachments/backfill-variants", headers=admin_headers)
@@ -414,7 +437,7 @@ class TestVariantBackfill:
                 headers=author_headers,
             )
         ).json()
-        await self._clear_variants(body["id"])
+        await _clear_variants(body["id"])
 
         first = (
             await client.post("/api/v1/attachments/backfill-variants", headers=admin_headers)
@@ -440,7 +463,7 @@ class TestVariantBackfill:
                 headers=author_headers,
             )
         ).json()
-        await self._clear_variants(body["id"])
+        await _clear_variants(body["id"])
 
         first = (
             await client.post("/api/v1/attachments/backfill-variants", headers=admin_headers)
@@ -464,3 +487,362 @@ class TestVariantBackfill:
     async def test_guest_cannot_backfill(self, client: AsyncClient) -> None:
         response = await client.post("/api/v1/attachments/backfill-variants")
         assert response.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# 以下用例自「wave3 全面验证批」归并而来（原 tests/test_wave3_verify.py）：
+# 覆盖 TestImageVariants / TestVariantBackfill 之外的边界、异常与集成分支。
+
+
+class TestImageVariantBoundaries:
+    async def test_gif_skips_variants_entirely(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """GIF 是动图：抽帧生成静态变体会丢失动画，必须整体跳过。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"anim-{unique_suffix()}.gif",
+            data=make_gif_bytes((1920, 1080)),
+            mime="image/gif",
+        )
+        assert body["kind"] == "image"
+        assert body["variants"] == []
+
+    async def test_middle_tiers_only_for_1000px(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """1000px 宽：只生成 480/800 两档（1600 会放大，必须跳过）。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"mid-{unique_suffix()}.png",
+            data=make_png_bytes((1000, 600)),
+        )
+        assert [v["width"] for v in body["variants"]] == [480, 800]
+
+    async def test_width_equal_to_tier_is_not_upscaled(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """800px 宽：等于档位也跳过（`width <= target` 边界），只剩 480 一档。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"eq-{unique_suffix()}.png",
+            data=make_png_bytes((800, 400)),
+        )
+        assert [v["width"] for v in body["variants"]] == [480]
+
+    async def test_variant_naming_shares_one_stem(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """三档共用同一 stem、仅宽度后缀不同——便于按一组资产统一管理。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"stem-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        stems = set()
+        for variant in body["variants"]:
+            filename = variant["url"].rsplit("/", 1)[-1]
+            match = re.fullmatch(r"([0-9a-f]{8})-(\d+)\.(avif|webp)", filename)
+            assert match, f"变体命名不符合 {{stem}}-{{width}}{{ext}}：{filename}"
+            assert int(match.group(2)) == variant["width"]
+            stems.add(match.group(1))
+        assert len(stems) == 1, f"三档应共用同一 stem，实际 {stems}"
+
+    async def test_variant_prefers_avif_when_encoder_available(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """有 AVIF 编码器时必须用 AVIF，且文件真实可解码、宽度与档位一致。"""
+        has_avif = features.check("avif")
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"avif-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        expected_ext = ".avif" if has_avif else ".webp"
+        for variant in body["variants"]:
+            assert variant["url"].endswith(expected_ext), variant["url"]
+            response = await client.get(variant["url"])
+            assert response.status_code == 200
+            decoded = Image.open(io.BytesIO(response.content))
+            assert decoded.width == variant["width"]
+        if not has_avif:
+            pytest.skip("本机 Pillow 无 AVIF 编码器（降级分支由下一个用例强制覆盖）")
+
+    async def test_variant_falls_back_to_webp_without_avif_encoder(
+        self, client: AsyncClient, author_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """强制关闭 AVIF 能力：必须降级为 WEBP 而不是报错或产出坏文件。"""
+        monkeypatch.setattr("app.services.attachment_service.features.check", lambda _name: False)
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"webp-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        assert [v["width"] for v in body["variants"]] == [480, 800, 1600]
+        for variant in body["variants"]:
+            assert variant["url"].endswith(".webp")
+            response = await client.get(variant["url"])
+            assert response.status_code == 200
+            assert Image.open(io.BytesIO(response.content)).format == "WEBP"
+
+    async def test_delete_also_removes_thumbnail(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """删除要把缩略图一起清掉，否则磁盘只进不出。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"thumb-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        assert (await client.get(body["thumbnail_url"])).status_code == 200
+        assert (
+            await client.delete(f"/api/v1/attachments/{body['id']}", headers=author_headers)
+        ).status_code == 200
+        assert (await client.get(body["thumbnail_url"])).status_code == 404
+
+
+class TestBackfillBoundaries:
+    """回填的边界与异常分支（基础行为见上面的 ``TestVariantBackfill``）。"""
+
+    @staticmethod
+    async def _original_path(attachment_id: int) -> Path:
+        """推导附件原文件在磁盘上的路径。"""
+        async with async_session_factory() as session:
+            record = await session.get(Attachment, attachment_id)
+            assert record is not None
+            return (
+                settings.upload_dir
+                / record.created_at.strftime("%Y%m")
+                / Path(record.stored_name).name
+            )
+
+    @classmethod
+    async def _rm_original(cls, attachment_id: int) -> Path:
+        """删掉磁盘上的原文件（模拟存储损坏/外部清理）。"""
+        path = await cls._original_path(attachment_id)
+        path.unlink(missing_ok=True)
+        return path
+
+    async def test_limit_validation_bounds(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        for bad in (0, 101):
+            response = await client.post(f"{BACKFILL_URL}?limit={bad}", headers=admin_headers)
+            assert response.status_code == 422, f"limit={bad} 应被拒绝"
+        assert (
+            await client.post(f"{BACKFILL_URL}?limit=1", headers=admin_headers)
+        ).status_code == 200
+
+    async def test_skips_when_original_file_missing(
+        self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
+    ) -> None:
+        """原文件缺失：记 skipped、不 500、记录保持 NULL 以便下次重试。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"missing-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        await _clear_variants(body["id"])
+        removed = await self._rm_original(body["id"])
+        assert not removed.exists()
+
+        result = (await client.post(BACKFILL_URL, headers=admin_headers)).json()
+        assert result["skipped"] >= 1
+        assert result["processed"] >= 1
+
+        async with async_session_factory() as session:
+            record = await session.get(Attachment, body["id"])
+            assert record is not None and record.variants is None
+
+    async def test_skips_when_original_file_corrupted(
+        self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
+    ) -> None:
+        """原文件存在但内容已损坏：跳过并保持 NULL，绝不能 500 打断整轮回填。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"corrupt-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        await _clear_variants(body["id"])
+        path = await self._original_path(body["id"])
+        path.write_bytes(b"this is not a real image at all")
+
+        response = await client.post(BACKFILL_URL, headers=admin_headers)
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["skipped"] >= 1
+        async with async_session_factory() as session:
+            record = await session.get(Attachment, body["id"])
+            assert record is not None and record.variants is None
+
+    async def test_backfill_never_converges_while_small_images_exist(
+        self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
+    ) -> None:
+        """小图/GIF 的 variants 落库即 NULL（永远填不上），因此每轮都会被重新「处理」。
+
+        这直接推翻前端提示「可反复调用直到 processed 为 0」——只要库里存在小图
+        或 GIF，processed 永远不会归零。
+        """
+        small = await upload_image(
+            client,
+            author_headers,
+            name=f"tiny-{unique_suffix()}.png",
+            data=make_png_bytes((120, 90)),
+        )
+        assert small["variants"] == []
+
+        first = (await client.post(BACKFILL_URL, headers=admin_headers)).json()
+        second = (await client.post(BACKFILL_URL, headers=admin_headers)).json()
+        assert first["processed"] >= 1 and first["updated"] == 0
+        assert second["processed"] >= 1, "第二轮仍被重复处理：回填不收敛"
+
+    async def test_fixed_limit_can_starve_real_legacy_image(
+        self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
+    ) -> None:
+        """批额度被「永远回填不了」的记录占满时，真正的存量大图会被饿死。
+
+        ``list_images_without_variants`` 是 ``WHERE variants IS NULL ORDER BY id LIMIT n``，
+        而小图/GIF 的 variants 恒为 NULL，会一直占据每批的名额。
+        """
+        small = await upload_image(
+            client,
+            author_headers,
+            name=f"starve-small-{unique_suffix()}.png",
+            data=make_png_bytes((120, 90)),
+        )
+        wide = await upload_image(
+            client,
+            author_headers,
+            name=f"starve-wide-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        assert small["id"] < wide["id"]  # 小图 id 更小，必然先被选中
+        await _clear_variants(wide["id"])  # 大图模拟成「功能上线前的存量图」
+
+        result = (await client.post(f"{BACKFILL_URL}?limit=1", headers=admin_headers)).json()
+        assert result["processed"] == 1 and result["updated"] == 0
+        async with async_session_factory() as session:
+            record = await session.get(Attachment, wide["id"])
+            assert record is not None
+            assert record.variants is None, "存量大图被小图永久挤占名额（饿死）"
+
+    async def test_gif_is_selected_then_skipped(
+        self, client: AsyncClient, admin_headers: dict[str, str], author_headers: dict[str, str]
+    ) -> None:
+        """GIF 落库时 variants 为 NULL，必然被回填筛选命中，然后因不支持而 skipped。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"gifback-{unique_suffix()}.gif",
+            data=make_gif_bytes((1600, 900)),
+            mime="image/gif",
+        )
+        async with async_session_factory() as session:
+            record = await session.get(Attachment, body["id"])
+            assert record is not None and record.variants is None
+
+        result = (await client.post(BACKFILL_URL, headers=admin_headers)).json()
+        assert result["processed"] >= 1
+        assert result["skipped"] >= 1
+
+    async def test_list_api_exposes_ascending_variant_urls(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """媒体库列表也必须带变体 URL（前端靠它渲染），且按宽度升序、前缀为 /media。"""
+        body = await upload_image(
+            client,
+            author_headers,
+            name=f"listv-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        library = (await client.get("/api/v1/attachments", headers=author_headers)).json()
+        mine = next(item for item in library["items"] if item["id"] == body["id"])
+        widths = [v["width"] for v in mine["variants"]]
+        assert widths == sorted(widths) == [480, 800, 1600]
+        for variant in mine["variants"]:
+            assert variant["url"].startswith("/media/uploads/")
+            assert (await client.get(variant["url"])).status_code == 200
+
+
+class TestCoverVariantsIntegration:
+    """封面变体与文章域的集成：列表/详情都要带 cover_variants，外链要安全跳过。"""
+
+    async def test_article_list_and_detail_carry_cover_variants(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        image = await upload_image(
+            client,
+            author_headers,
+            name=f"cover-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        created = await client.post(
+            "/api/v1/articles",
+            json=make_article_payload(cover_image=image["url"]),
+            headers=author_headers,
+        )
+        assert created.status_code == 201, created.text
+        article = created.json()
+
+        listing = (await client.get("/api/v1/articles?page_size=50")).json()
+        in_list = next(item for item in listing["items"] if item["id"] == article["id"])
+        assert [v["width"] for v in in_list["cover_variants"]] == [480, 800, 1600]
+
+        detail = (await client.get(f"/api/v1/articles/{article['slug']}")).json()
+        assert [v["width"] for v in detail["cover_variants"]] == [480, 800, 1600]
+        for variant in detail["cover_variants"]:
+            assert (await client.get(variant["url"])).status_code == 200
+
+    async def test_external_cover_image_has_no_variants(
+        self, client: AsyncClient, author_headers: dict[str, str]
+    ) -> None:
+        """外链封面不属于本站存储，不应去查库、也不能报错。"""
+        created = await client.post(
+            "/api/v1/articles",
+            json=make_article_payload(cover_image="https://cdn.example.com/cover.png"),
+            headers=author_headers,
+        )
+        assert created.status_code == 201, created.text
+        article = created.json()
+        detail = (await client.get(f"/api/v1/articles/{article['slug']}")).json()
+        assert detail["cover_variants"] == []
+
+
+class TestCrossFeatureIntegration:
+    """跨功能集成：回填出的变体与文章封面必须来自同一份 URL 空间。"""
+
+    async def test_backfill_after_variant_column_reset_keeps_urls_consistent(
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        author_headers: dict[str, str],
+    ) -> None:
+        image = await upload_image(
+            client,
+            author_headers,
+            name=f"integr-{unique_suffix()}.png",
+            data=make_png_bytes((1920, 1080)),
+        )
+        await _clear_variants(image["id"])
+
+        await client.post(BACKFILL_URL, headers=admin_headers)
+
+        created = await client.post(
+            "/api/v1/articles",
+            json=make_article_payload(cover_image=image["url"]),
+            headers=author_headers,
+        )
+        article = created.json()
+        detail = (await client.get(f"/api/v1/articles/{article['slug']}")).json()
+        assert [v["width"] for v in detail["cover_variants"]] == [480, 800, 1600]
+        for variant in detail["cover_variants"]:
+            assert (await client.get(variant["url"])).status_code == 200

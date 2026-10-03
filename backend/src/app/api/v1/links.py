@@ -31,15 +31,13 @@ router = APIRouter(prefix="/links", tags=["友链"])
 @router.get("", response_model=list[FriendLinkRead], summary="友链列表（公开，仅启用的）")
 async def list_links(session: SessionDep) -> list[FriendLinkRead]:
     """前台友链页。只含 ``is_active=true``，按展示顺序升序。"""
-    links = await FriendLinkService(session).list_active()
-    return [FriendLinkRead.model_validate(link) for link in links]
+    return await FriendLinkService(session).list_active()
 
 
 @router.get("/manage", response_model=list[FriendLinkRead], summary="友链列表（站长，含未启用）")
 async def list_managed_links(_: AdminUser, session: SessionDep) -> list[FriendLinkRead]:
     """后台列表。含未启用条目，排序口径与前台一致。"""
-    links = await FriendLinkService(session).list_all()
-    return [FriendLinkRead.model_validate(link) for link in links]
+    return await FriendLinkService(session).list_all()
 
 
 @router.post(
@@ -54,7 +52,7 @@ async def create_link(
     link = await FriendLinkService(session).create(payload)
     # 写路由显式提交（原因见 db/session.py get_session 说明）
     await session.commit()
-    return FriendLinkRead.model_validate(link)
+    return link
 
 
 @router.patch("/{link_id}", response_model=FriendLinkRead, summary="修改友链（站长）")
@@ -64,7 +62,7 @@ async def update_link(
     """部分更新：只改请求体里真的带了的字段。"""
     link = await FriendLinkService(session).update(link_id, payload)
     await session.commit()
-    return FriendLinkRead.model_validate(link)
+    return link
 
 
 @router.delete("/{link_id}", response_model=Message, summary="删除友链（站长）")

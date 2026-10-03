@@ -13,6 +13,7 @@ from app.services.comment_service import CommentService
 from app.services.feed_service import FeedService
 from app.services.friend_link_service import FriendLinkService
 from app.services.guestbook_service import GuestbookReplyResult, GuestbookService
+from app.services.revision_service import RevisionService
 from app.services.series_service import SeriesService
 from app.services.site_service import SiteService
 from app.services.taxonomy_service import TaxonomyService
@@ -28,6 +29,7 @@ __all__ = [
     "FriendLinkService",
     "GuestbookReplyResult",
     "GuestbookService",
+    "RevisionService",
     "SeriesService",
     "SiteService",
     "TaxonomyService",

@@ -863,7 +863,7 @@ class TestArchive:
 
     def test_year_month_validator(self) -> None:
         """纯函数单测：``2026-13`` 这种看似合法的输入必须被拦住。"""
-        from app.services.article_service import _is_year_month
+        from app.services.article_query_service import _is_year_month
 
         assert _is_year_month("2026-09")
         assert _is_year_month("2026-12")

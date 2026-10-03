@@ -25,7 +25,6 @@ from app.schemas.article import ArticleDetail, ArticleNeighbor, ArticleSummary
 from app.schemas.attachment import ImageVariant
 from app.schemas.common import Page, PageParams
 from app.schemas.site import ArchiveGroup, ArchiveItem
-from app.services.article_service import _is_year_month
 from app.services.attachment_service import AttachmentService
 from app.utils.exceptions import BadRequestError, NotFoundError
 from app.utils.text import build_snippet
@@ -76,6 +75,18 @@ def visible_link_statuses(viewer: User | None) -> tuple[ArticleStatus, ...]:
     又不会让访客的查询无谓地扫到草稿分区。
     """
     return ALL_STATUSES if viewer is not None else LINK_STATUSES
+
+
+def _is_year_month(value: str) -> bool:
+    """校验 ``YYYY-MM``，顺便确认月份在 1-12 之间（``2026-13`` 要拦住）。
+
+    ``list_by_month`` 的参数校验纯函数；历史位置在 ``article_service.py``，
+    读写拆分后跟随唯一使用方搬到这里。
+    """
+    if len(value) != 7 or value[4] != "-":
+        return False
+    year, month = value[:4], value[5:]
+    return year.isdigit() and month.isdigit() and 1 <= int(month) <= 12
 
 
 def build_article_filter(

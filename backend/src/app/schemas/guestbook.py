@@ -104,3 +104,11 @@ class GuestbookModerate(BaseModel):
     """站长审核：放行 / 撤回（口径与 ``CommentModerate`` 一致）。"""
 
     is_approved: bool | None = None
+
+    def resolved_is_approved(self) -> bool:
+        """审核口径：不传（``None``）视为放行，显式 ``False`` 才是撤回。
+
+        语义与 ``CommentModerate.resolved_is_approved`` 逐字一致——
+        两个入口对「什么都不传」必须给出同一种反应。
+        """
+        return True if self.is_approved is None else self.is_approved

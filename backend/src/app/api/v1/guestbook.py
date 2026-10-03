@@ -109,7 +109,7 @@ async def moderate_message(
     审核本身**不发信**：对访客来说「我的留言过审了」不是他关心的事件，
     「站长回复了」才是（见 ``notification_service`` 的说明）。
     """
-    approved = True if payload.is_approved is None else payload.is_approved
+    approved = payload.resolved_is_approved()
     message = await GuestbookService(session).set_approved(message_id, approved)
     await session.commit()
     return message

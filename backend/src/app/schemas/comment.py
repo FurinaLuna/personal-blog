@@ -68,3 +68,11 @@ class CommentModerate(BaseModel):
     """站长审核 / 删除以外的人工调整。"""
 
     is_approved: bool | None = None
+
+    def resolved_is_approved(self) -> bool:
+        """审核口径：不传（``None``）视为放行，显式 ``False`` 才是撤回。
+
+        与 ``GuestbookModerate`` 同一语义——两个入口必须对「什么都不传」
+        给出同一种反应，判定留在 schema 层，路由不再各写一遍三元式。
+        """
+        return True if self.is_approved is None else self.is_approved

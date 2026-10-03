@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FriendLink
 from app.repositories import FriendLinkRepository
-from app.schemas.friend_link import FriendLinkCreate, FriendLinkUpdate
+from app.schemas.friend_link import FriendLinkCreate, FriendLinkRead, FriendLinkUpdate
 from app.utils.exceptions import ConflictError, NotFoundError
 
 # 允许被 PATCH 显式置为 null 的字段。
@@ -39,26 +39,26 @@ class FriendLinkService:
 
     # ---------------------------------------------------------------- 查询
 
-    async def list_active(self) -> list[FriendLink]:
+    async def list_active(self) -> list[FriendLinkRead]:
         """前台列表：只有已启用的条目。"""
-        return await self.links.list_active()
+        return [FriendLinkRead.model_validate(link) for link in await self.links.list_active()]
 
-    async def list_all(self) -> list[FriendLink]:
+    async def list_all(self) -> list[FriendLinkRead]:
         """后台列表：含未启用的条目，排序与前台一致。"""
-        return await self.links.list_all()
+        return [FriendLinkRead.model_validate(link) for link in await self.links.list_all()]
 
     # ---------------------------------------------------------------- 写入
 
-    async def create(self, payload: FriendLinkCreate) -> FriendLink:
+    async def create(self, payload: FriendLinkCreate) -> FriendLinkRead:
         """新建友链。
 
         Raises:
             ConflictError: 该地址已被收录。
         """
         await self._ensure_url_available(payload.url)
-        return await self.links.create(**payload.model_dump())
+        return FriendLinkRead.model_validate(await self.links.create(**payload.model_dump()))
 
-    async def update(self, link_id: int, payload: FriendLinkUpdate) -> FriendLink:
+    async def update(self, link_id: int, payload: FriendLinkUpdate) -> FriendLinkRead:
         """部分更新：只改请求里真的带了的字段。
 
         ``exclude_unset`` 区分「没传这个字段」与「传了 null」——这正是
@@ -82,7 +82,7 @@ class FriendLinkService:
             for key, value in data.items()
             if value is not None or key in _CLEARABLE_FIELDS
         }
-        return await self.links.update(link, **changed)
+        return FriendLinkRead.model_validate(await self.links.update(link, **changed))
 
     async def delete(self, link_id: int) -> None:
         """删除友链（物理删除）。

@@ -3,15 +3,7 @@
  * 模块按后端领域一一对应：articles / attachments / auth / comments / guestbook /
  * links / notifications / series / site / stats / taxonomy，一个文件一个领域，不混装。
  */
-export {
-  ApiError,
-  api,
-  http,
-  onCredentialsCleared,
-  request,
-  setAuthRequiredProbe,
-  tokenStore,
-} from './http'
+export { ApiError, api, http, onCredentialsCleared, setAuthRequiredProbe, tokenStore } from './http'
 export { articleApi } from './articles'
 export { attachmentApi } from './attachments'
 export { authApi } from './auth'

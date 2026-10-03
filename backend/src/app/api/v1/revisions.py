@@ -17,8 +17,7 @@ from fastapi import APIRouter
 from app.api.deps import AuthorUser, SessionDep
 from app.schemas.article import ArticleDetail
 from app.schemas.revision import RevisionRead
-from app.services import ArticleQueryService
-from app.services.revision_service import RevisionService
+from app.services import ArticleQueryService, RevisionService
 
 router = APIRouter(prefix="/articles", tags=["文章版本"])
 
