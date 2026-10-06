@@ -11,7 +11,7 @@
 
 前后端分离架构：后端 FastAPI 全异步 + 分层设计，前端 Vue 3 + TypeScript。
 **写出来能跑、改起来可验证** —— 822 个后端测试（SQLite 与 PostgreSQL 双方言各跑一遍）、
-54 个前端 spec 文件，外加三个真实浏览器端到端脚本（冒烟 47 项 / 交互 25 项 / 全功能回归 66 项）
+56 个前端 spec 文件 / 867 个用例，外加三个真实浏览器端到端脚本（冒烟 47 项 / 交互 25 项 / 全功能回归 66 项）
 与两套数据库方言的真实链路端到端（SQLite 64 条 / PostgreSQL 63 条）。
 
 内容也不是空的：仓库自带一个 **Hexo 旧站迁移工具**（`tools/hexo_import/`，141 条用例），
@@ -33,6 +33,7 @@
 - [API 概览](#api-概览)
 - [测试与验证](#测试与验证)
 - [部署](#部署)
+  - [完整部署指南（docs/DEPLOY.md）](docs/DEPLOY.md)
 - [贡献指南](#贡献指南)
 - [许可证](#许可证)
 
@@ -138,7 +139,7 @@
 | 状态 | Pinia | 认证 / 站点档案 / 主题三个 store |
 | 样式 | Tailwind CSS | 语义色变量集中定义，换肤只改一个文件 |
 | Markdown | marked + DOMPurify + highlight.js | 渲染与消毒分离，消毒排在增强之前 |
-| 测试 | pytest / Vitest | 后端 822 例（SQLite + PostgreSQL 双方言）、前端 54 个 spec 文件 / 849 例 |
+| 测试 | pytest / Vitest | 后端 822 例（SQLite + PostgreSQL 双方言）、前端 56 个 spec 文件 / 867 例 |
 | 端到端 | Chrome DevTools Protocol | 复用本机 Chrome，不引入 Playwright 的数百 MB 依赖 |
 
 ## 快速开始
@@ -353,10 +354,11 @@ personal-blog/
 │   │   ├── styles/                 # ★ 样式：tokens / base / components / prose / vendor
 │   │   ├── utils/                  # Markdown 渲染 / 格式化 / 预取 / 建站时长 / 状态元数据
 │   │   └── views/                  # 前台 14 页 + 后台 11 页
-│   └── src/**/*.spec.ts            # 54 个 spec 文件 / 849 个 Vitest 用例
+│   └── src/**/*.spec.ts            # 56 个 spec 文件 / 867 个 Vitest 用例
 ├── deploy/                         # Dockerfile × 2 + nginx.conf / nginx.https.conf /
 │                                   #   nginx-common.inc / nginx-server.inc / security-headers.inc
 ├── docs/
+│   ├── DEPLOY.md                   # ★ 部署指南（从零到线上：域名/HTTPS/备份/回滚/检查清单）
 │   ├── DESIGN.md                   # ★ 完整设计与实现方案（五大模块）
 │   ├── ASSESSMENT.md               # 全面评估（风险 / 升级 / 功能 / 性能）
 │   ├── CODE-REVIEW.md              # 代码评审（臃肿 / 冗余 / 重复 / 内聚耦合）
@@ -498,7 +500,7 @@ make full-check     # 全功能回归 + 数据基线核对（需先 make dev）
 | `pytest`（`TEST_DATABASE_URL` 指向 PostgreSQL） | 与 SQLite **共用同一套 822 条用例**，差别只在 `sqlite_only` 那几条跳过数（SQLite 跳 5 条，PG 跳 1 条）。⚠️ 本机没起 PostgreSQL，所以此处的**具体通过数以上面 CI 的 `backend-postgres` 作业为准**，不在 README 里钉一个必然过期的数字 |
 | `vue-tsc --noEmit` | 0 报错（全仓库） |
 | `eslint .` | 0 报错 |
-| `vitest run` | **54 files / 849 passed**（含 `useTocTree` / `useScrollY` / `ElevatorBar` / `useSiteName`（经 `useHead`）/ `uptime` / `SiteUptime` 等新增 spec） |
+| `vitest run` | **56 files / 867 passed**（含 `useTocTree` / `useScrollY` / `ElevatorBar` / `useSiteName`（经 `useHead`）/ `uptime` / `SiteUptime` 等新增 spec） |
 | `vite build` | 成功（vendor 分包 gzip ~43 KB、markdown 分包 gzip ~31 KB、主包 gzip ~30 KB） |
 | `alembic upgrade head` / `downgrade base` | 18 条迁移升至 head = **15 张表**（含 `article_tags` 关联表与 `article_revisions` / `notification_opt_outs` / `visit_logs` 这类附属表）+ `alembic_version`；本轮新增的 `contact_qrcodes` 是 `site_profile` 上的加列，不新增表。SQLite 另有 FTS5 的 5 张虚拟/影子表，PostgreSQL 上另有 `pg_trgm` 扩展与 3 条 GIN 索引。降回 base 只剩 `alembic_version`，复升结构一致；**SQLite 与 PostgreSQL 两种方言都跑升→降→升** |
 | `tools/smoke-check.mjs` | **47/47**。含移动端几何实测：390×844 下电梯栏与目录按钮竖直间距 **24px**（阈值 12px）、水平重叠 40px；**E-H1** 首页分类列表独立滚动（有高度上限 + 自身可滚 + 不串联页面）；**E-H2** 站点名在标签页 / `og:site_name` / 页脚三处一致（不再各自写死）；**E-H3** 页脚建站时长格式 |
@@ -548,127 +550,17 @@ docker compose up -d --build
 少了必填项 `docker compose up` 会直接报错并告诉你缺哪个，
 **不会**带着仓库里的公开默认密钥启动。容器默认按生产跑
 （`APP_ENV=production`、`DEBUG=false`、`DB_AUTO_CREATE=false`、`SEED_DEMO_DATA=false`），
-表结构由容器入口自动执行 `alembic upgrade head`。
-上线前别忘了把 `.env` 里的 `SITE_BASE_URL` 改成正式域名。
+表结构由容器入口自动执行 `alembic upgrade head`，管理员账号首次启动自动创建。
 
-裸机部署（不用 Docker）走 `backend/.env`，流程见
-[`docs/DESIGN.md`](docs/DESIGN.md) 第 5 章。
-
-前端 <http://localhost:8080>。后端**不发布**端口，只经 Nginx 反代
+前端 <http://localhost:8080>，后台在 `/admin`。后端**不发布**端口，只经 Nginx 反代
 （`/api`、`/media`、`/feed.xml`、`/sitemap.xml`）从 compose 内网访问 ——
 映射到宿主机就等于绕开了 Nginx 那层的限流、CSP 与安全响应头。
 需要调试时：`docker compose exec backend curl -s 127.0.0.1:8000/health`。
 
-生产上线前的完整检查清单、回滚条件见
-[`docs/DESIGN.md`](docs/DESIGN.md) 第 5 章，部署注意事项见 [SECURITY.md](SECURITY.md)。
-
-### 备份与恢复
-
-**自动备份（部署默认就开着）**：compose 里有一个 `backup` 服务，用与数据库
-**同一个镜像**（`pg_dump` 的版本必须 >= 服务端，同镜像让这条约束天然成立），
-每 24 小时落一份 dump 到宿主的 `./backups/`：
-
-```bash
-docker compose logs -f backup                          # 看备份有没有在跑
-BACKUP_ONCE=1 docker compose run --rm backup           # 立刻备份一次（不启动循环）
-BACKUP_HOST_DIR=/mnt/backup/blog docker compose up -d  # 备份放到别的盘
-```
-
-- `BACKUP_INTERVAL_SECONDS`（默认 `86400`）与 `BACKUP_KEEP`（默认 `14`）都在 `.env` 里可调；
-- 容器重启会**立刻补一次**备份，所以不会出现"重启之后再也没备份过"；
-  它是间隔计时器而不是墙钟调度，要卡死在凌晨 3 点跑请用宿主 cron 调 `make backup`；
-- 每份 dump 落盘前先写 `.part`、再用 `pg_restore -l` 校验归档可读，通过才改名 ——
-  **宁可什么都没有，也不要一个"看起来像备份"的坏文件**；
-- 备份落在宿主目录而不是 docker 卷里，是为了能 scp 到别的机器：
-  备份和库放在同一个卷里，等于一起丢。
-
-手动/带外备份走 `make backup`（`backend/scripts/backup_db.py`），覆盖两种方言：
-
-| 方言 | 做法 | 产物 |
-|---|---|---|
-| SQLite | `VACUUM INTO`（**不是**复制文件：开了 WAL 直接 `cp` 会得到不一致的快照） | `backend/backups/blog-<时间戳>.db` |
-| PostgreSQL | `pg_dump -Fc`；宿主没有 `pg_dump` 时自动改用 `docker exec <容器> pg_dump` | `backend/backups/blog-<时间戳>.dump` |
-
-两条路径的产物**刻意完全一致**（custom 格式、`blog-<时间戳>.dump` 命名、
-只保留最近 14 份、两种后缀一起参与轮转），所以下面的恢复命令对两者都成立。
-
-**恢复**（生产是 PG，所以重点写 PG）：
-
-```bash
-# 1) 停掉写入方，避免恢复期间还有新数据进来
-docker compose stop backend
-
-# 2) 恢复到一个空库（--clean --if-exists 会先删同名对象）
-docker compose exec -T db pg_restore --clean --if-exists -U blog -d blog < backups/blog-<时间戳>.dump
-
-# 3) 起回来并确认
-docker compose start backend && curl -fsS http://localhost:8080/api/v1/articles >/dev/null && echo OK
-```
-
-SQLite 的恢复更简单：停服务，把 `.db` 文件放回 `DATABASE_URL` 指向的位置即可
-（`-wal` / `-shm` 一起删掉，否则会与新文件不匹配）。
-
-> **备份没验证过等于没有备份**。本项目对这条的落实方式是：
-> ① 备份脚本每次改动都真的做一次 `pg_dump` → `pg_restore` 到空库 → 核对表数量与
-> `alembic_version`（最新一次见 `docs/devlog/2026-09-24.md`）；
-> ② 这条演练已经固化进 `tools/deploy-check.mjs`，每次 CI 都会重跑一遍。
-
-### HTTPS
-
-默认部署是**纯 HTTP**（证书与续期属于部署环境，硬塞进仓库只会让人以为已经配好了）。
-两种接法，仓库对两种都给了可直接用的配置。
-
-**接法一（推荐）：外层终止 TLS**。Cloudflare / 宿主机上的 Caddy / 云负载均衡
-回源到 `127.0.0.1:8080`，把 `TRUST_PROXY_HEADERS` 保持开启。
-HSTS 在 `deploy/nginx.conf` 里是**条件式**的：只有外层把 `X-Forwarded-Proto: https`
-传进来时才发出。这样做是因为无条件发 HSTS 会把"本站只能用 HTTPS"写进访客浏览器
-一整年，而服务端**撤不掉** —— 一个纯 HTTP 的部署会因此把自己锁死。
-所以接了 TLS 之后，记得确认外层确实设置了 `X-Forwarded-Proto`
-（Cloudflare 与主流反代默认都会设）。
-
-**接法二：仓库自带的自管证书模板**（`deploy/nginx.https.conf` + `docker-compose.tls.yml`）。
-不需要手写 nginx 配置，四步：
-
-```bash
-# 1) 先按纯 HTTP 起一次（80 端口要用来做 ACME 挑战）
-docker compose up -d --build
-
-# 2) 用 certbot 容器签发，产物落到 ./deploy/certs（就是容器里的 /etc/letsencrypt）
-docker run --rm \
-  -v "$PWD/certbot-webroot:/webroot" \
-  -v "$PWD/deploy/certs:/etc/letsencrypt" \
-  certbot/certbot certonly --webroot -w /webroot \
-  -d example.com --email you@example.com --agree-tos --no-eff-email
-
-# 3) 把 nginx.https.conf 里的 example.com 换成你的域名，再换到 HTTPS 版
-sed -i 's|live/example.com|live/你的域名|g' deploy/nginx.https.conf
-docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
-
-# 4) 续期：宿主 cron 每天跑一次。注意 cron 里没有 $PWD，写成绝对路径
-0 3 * * * cd /srv/personal-blog && docker run --rm \
-  -v /srv/personal-blog/certbot-webroot:/webroot \
-  -v /srv/personal-blog/deploy/certs:/etc/letsencrypt \
-  certbot/certbot renew --quiet \
-  && docker compose -f docker-compose.yml -f docker-compose.tls.yml exec -T frontend nginx -s reload
-```
-
-几个刻意的设计，改之前请先读 `deploy/nginx.https.conf` 里的注释：
-
-- **两套配置共用同一份站点内容**（`deploy/nginx-server.inc`）：HTTP 版与 HTTPS 版的
-  差别只有"外壳"（listen、证书、跳转）。抄成两份的话，"改了 HTTP 版、HTTPS 版没改"
-  不会报任何错，只会行为不同。
-- **80 端口只做 ACME 挑战 + 跳转**，且跳转写在 `location` 里而不是 server 级 ——
-  server 级 `return 301` 属于 rewrite 阶段，会在 location 匹配**之前**执行，
-  于是续期挑战也被跳走，而 certbot 只会说"校验失败"，不会告诉你被自己重定向了。
-- **HSTS 在 HTTPS 版是无条件的**（那一套自己就是 TLS 终点）。注意
-  `includeSubDomains` 的含义是"该域名及其所有子域只能用 HTTPS"，
-  同域名下还挂着别的纯 HTTP 服务时请去掉它。
-- 换配置**必须重新 build**（nginx 配置是构建期 COPY 进镜像的，`restart` 不生效），
-  所以第 3、4 步都带着两个 `-f`；退回纯 HTTP 用
-  `docker compose down && docker compose up -d --build`。
-
-上了 HTTPS 之后记得同步改 `.env` 的 `SITE_BASE_URL`（它决定 RSS、
-sitemap 与 Open Graph 里的绝对地址）与 `CORS_ORIGINS`。
+**完整部署指南见 [`docs/DEPLOY.md`](docs/DEPLOY.md)** —— 从零到线上照着做即可，
+含域名与 HTTPS（两种接法）、备份与恢复演练、常见问题、更新与回滚、上线前检查清单。
+裸机部署（不用 Docker）走 `backend/.env`，流程见 [`docs/DESIGN.md`](docs/DESIGN.md) 第 5 章；
+部署注意事项见 [SECURITY.md](SECURITY.md)。
 
 ### 部署产物验证
 

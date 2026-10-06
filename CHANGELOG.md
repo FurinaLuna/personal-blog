@@ -715,6 +715,15 @@
   不含该列的裸 INSERT 会 NOT NULL 失败。SQLite 的 ALTER COLUMN 改不了默认值，
   故不新增迁移、只在模型侧对齐（迁移漂移至此清零）
 
+- **文档：新增 [`docs/DEPLOY.md`](docs/DEPLOY.md) 部署指南**（2026-10-03）：
+  从一台空服务器到线上可用，按顺序照做即可 —— 三步部署、域名与 HTTPS（Cloudflare
+  与仓库自带证书两种接法）、备份与恢复演练、常见问题排查表、更新与回滚、上线前检查清单。
+  同一批把 README 的「部署 / 备份与恢复 / HTTPS」三节（约 160 行，与 compose 注释、
+  `docs/DESIGN.md` 第 5 章三处重复）收敛为「三步 + 指向指南」；
+  设计与安全依据仍保留在 `docs/DESIGN.md` 第 5 章与 `SECURITY.md`（正文一句没删）。
+  另清理了仓库根目录积累的本地运行产物（E2E 临时目录、pytest/ruff/import-linter 缓存、
+  两份 git 输出日志，均已在 `.gitignore` 内），顶层不再散落这些目录。
+
 ### 计划中
 
 - 服务层读写分离（`ArticleService` 进一步拆分）与全站 API 限流扩容方案
